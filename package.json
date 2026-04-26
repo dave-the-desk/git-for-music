@@ -1,0 +1,18 @@
+{
+  "name": "git-for-music",
+  "private": true,
+  "version": "0.0.1",
+  "scripts": {
+    "dev": "pnpm --filter @git-for-music/web dev",
+    "build": "pnpm --filter @git-for-music/web build",
+    "lint": "pnpm --filter @git-for-music/web lint",
+    "db:generate": "pnpm --filter @git-for-music/db generate",
+    "db:push": "pnpm --filter @git-for-music/db db:push",
+    "db:migrate": "pnpm --filter @git-for-music/db migrate",
+    "db:studio": "pnpm --filter @git-for-music/db studio"
+  },
+  "engines": {
+    "node": ">=20",
+    "pnpm": ">=9"
+  }
+}

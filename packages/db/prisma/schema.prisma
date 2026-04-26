@@ -1,0 +1,271 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Auth / Identity ────────────────────────────────────────────────────────
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  avatarUrl String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  groupMemberships GroupMember[]
+  comments         Comment[]
+  annotations      Annotation[]
+  processingJobs   ProcessingJob[]
+}
+
+// ─── Group ───────────────────────────────────────────────────────────────────
+
+model Group {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  members  GroupMember[]
+  projects Project[]
+}
+
+model GroupMember {
+  id       String          @id @default(cuid())
+  role     GroupMemberRole @default(MEMBER)
+  joinedAt DateTime        @default(now())
+
+  group   Group  @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  groupId String
+  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId  String
+
+  @@unique([groupId, userId])
+}
+
+enum GroupMemberRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+// ─── Project ─────────────────────────────────────────────────────────────────
+
+model Project {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  group   Group  @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  groupId String
+
+  demos                 Demo[]
+  equipmentRequirements ProjectEquipmentRequirement[]
+
+  @@unique([groupId, slug])
+}
+
+// ─── Demo ────────────────────────────────────────────────────────────────────
+
+model Demo {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId String
+
+  versions DemoVersion[]
+  tracks   Track[]
+  comments Comment[]
+}
+
+// DemoVersion is the git-like snapshot/branch node.
+// parentId=null means it is the root commit of that branch.
+model DemoVersion {
+  id          String   @id @default(cuid())
+  label       String
+  description String?
+  parentId    String?
+  isMerge     Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  demo   Demo   @relation(fields: [demoId], references: [id], onDelete: Cascade)
+  demoId String
+
+  parent   DemoVersion?  @relation("VersionTree", fields: [parentId], references: [id])
+  children DemoVersion[] @relation("VersionTree")
+
+  trackVersions TrackVersion[]
+}
+
+// ─── Track / Audio ───────────────────────────────────────────────────────────
+
+model Track {
+  id        String   @id @default(cuid())
+  name      String
+  position  Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  demo   Demo   @relation(fields: [demoId], references: [id], onDelete: Cascade)
+  demoId String
+
+  versions TrackVersion[]
+}
+
+// TrackVersion is immutable — original audio is never overwritten.
+// Audio edits and reverts produce new TrackVersions.
+model TrackVersion {
+  id         String   @id @default(cuid())
+  storageKey String
+  durationMs Int?
+  sampleRate Int?
+  channels   Int?
+  mimeType   String?
+  sizeBytes  BigInt?
+  checksum   String?
+  isDerived  Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  track   Track  @relation(fields: [trackId], references: [id], onDelete: Cascade)
+  trackId String
+
+  demoVersion   DemoVersion @relation(fields: [demoVersionId], references: [id])
+  demoVersionId String
+
+  segments       Segment[]
+  processingJobs ProcessingJob[]
+  annotations    Annotation[]
+  lyricSegments  LyricSegment[]
+}
+
+// Segment is a timeline edit region within a TrackVersion.
+model Segment {
+  id        String  @id @default(cuid())
+  startMs   Float
+  endMs     Float
+  gainDb    Float   @default(0)
+  fadeInMs  Float   @default(0)
+  fadeOutMs Float   @default(0)
+  isMuted   Boolean @default(false)
+  position  Int     @default(0)
+
+  trackVersion   TrackVersion @relation(fields: [trackVersionId], references: [id], onDelete: Cascade)
+  trackVersionId String
+}
+
+// ─── Processing ──────────────────────────────────────────────────────────────
+
+enum ProcessingJobStatus {
+  PENDING
+  PROCESSING
+  COMPLETE
+  FAILED
+}
+
+enum ProcessingJobType {
+  WAVEFORM
+  TRANSCODE
+  NORMALIZE
+  STEM_SPLIT
+}
+
+model ProcessingJob {
+  id        String              @id @default(cuid())
+  type      ProcessingJobType
+  status    ProcessingJobStatus @default(PENDING)
+  progress  Int                 @default(0)
+  error     String?
+  result    Json?
+  createdAt DateTime            @default(now())
+  updatedAt DateTime            @updatedAt
+
+  trackVersion   TrackVersion @relation(fields: [trackVersionId], references: [id], onDelete: Cascade)
+  trackVersionId String
+
+  createdBy   User   @relation(fields: [createdById], references: [id])
+  createdById String
+}
+
+// ─── Collaboration ───────────────────────────────────────────────────────────
+
+model Comment {
+  id        String   @id @default(cuid())
+  body      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  demo   Demo   @relation(fields: [demoId], references: [id], onDelete: Cascade)
+  demoId String
+
+  author   User   @relation(fields: [authorId], references: [id])
+  authorId String
+
+  parent   Comment?  @relation("CommentThread", fields: [parentId], references: [id])
+  parentId String?
+  replies  Comment[] @relation("CommentThread")
+}
+
+// Annotation is a timestamped note on a specific TrackVersion.
+model Annotation {
+  id          String   @id @default(cuid())
+  body        String
+  timestampMs Float
+  createdAt   DateTime @default(now())
+
+  trackVersion   TrackVersion @relation(fields: [trackVersionId], references: [id], onDelete: Cascade)
+  trackVersionId String
+
+  author   User   @relation(fields: [authorId], references: [id])
+  authorId String
+}
+
+model LyricSegment {
+  id        String   @id @default(cuid())
+  startMs   Float
+  endMs     Float
+  text      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  trackVersion   TrackVersion @relation(fields: [trackVersionId], references: [id], onDelete: Cascade)
+  trackVersionId String
+}
+
+// ─── Equipment ───────────────────────────────────────────────────────────────
+
+model EquipmentItem {
+  id           String  @id @default(cuid())
+  name         String
+  category     String?
+  manufacturer String?
+  model        String?
+  notes        String?
+
+  projectRequirements ProjectEquipmentRequirement[]
+}
+
+model ProjectEquipmentRequirement {
+  id       String  @id @default(cuid())
+  quantity Int     @default(1)
+  notes    String?
+
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId String
+
+  equipment   EquipmentItem @relation(fields: [equipmentId], references: [id])
+  equipmentId String
+}
