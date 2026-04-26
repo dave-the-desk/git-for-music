@@ -25,6 +25,17 @@ export default async function GroupPage({
     where: { slug: groupId },
     select: {
       name: true,
+      projects: {
+        orderBy: {
+          updatedAt: 'desc',
+        },
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          description: true,
+        },
+      },
       members: {
         orderBy: {
           joinedAt: 'asc',
@@ -61,12 +72,19 @@ export default async function GroupPage({
     name: member.user.name,
     email: member.user.email,
   }));
+  const projects = group.projects.map((project: { id: any; name: any; slug: any; description: any; }) => ({
+    id: project.id,
+    name: project.name,
+    slug: project.slug,
+    description: project.description,
+  }));
 
   return (
     <GroupPageClient
       groupName={group.name}
       groupSlug={groupId}
       members={members}
+      projects={projects}
       canInviteMembers={canInviteMembers}
     />
   );

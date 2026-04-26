@@ -2,6 +2,8 @@
 
 import { useState } from 'react';
 import type { FormEvent } from 'react';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 
 type GroupMemberListItem = {
   id: string;
@@ -15,10 +17,23 @@ type GroupPageClientProps = {
   groupName: string;
   groupSlug: string;
   members: GroupMemberListItem[];
+  projects: {
+    id: string;
+    name: string;
+    slug: string;
+    description: string | null;
+  }[];
   canInviteMembers: boolean;
 };
 
-export function GroupPageClient({ groupName, groupSlug, members, canInviteMembers }: GroupPageClientProps) {
+export function GroupPageClient({
+  groupName,
+  groupSlug,
+  members,
+  projects,
+  canInviteMembers,
+}: GroupPageClientProps) {
+  const router = useRouter();
   const [memberList, setMemberList] = useState(members);
   const [isMembersOpen, setIsMembersOpen] = useState(false);
   const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
@@ -28,12 +43,24 @@ export function GroupPageClient({ groupName, groupSlug, members, canInviteMember
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [inviteSuccess, setInviteSuccess] = useState<string | null>(null);
   const [isSubmittingInvite, setIsSubmittingInvite] = useState(false);
+  const [isCreateProjectModalOpen, setIsCreateProjectModalOpen] = useState(false);
+  const [projectName, setProjectName] = useState('');
+  const [projectDescription, setProjectDescription] = useState('');
+  const [createProjectError, setCreateProjectError] = useState<string | null>(null);
+  const [isSubmittingProject, setIsSubmittingProject] = useState(false);
 
   function closeInviteModal() {
     setIsInviteModalOpen(false);
     setInviteQuery('');
     setInviteError(null);
     setInviteSuccess(null);
+  }
+
+  function closeCreateProjectModal() {
+    setIsCreateProjectModalOpen(false);
+    setProjectName('');
+    setProjectDescription('');
+    setCreateProjectError(null);
   }
 
   async function submitInvite(event: FormEvent<HTMLFormElement>) {
@@ -61,6 +88,41 @@ export function GroupPageClient({ groupName, groupSlug, members, canInviteMember
       setInviteError('Something went wrong. Please try again.');
     } finally {
       setIsSubmittingInvite(false);
+    }
+  }
+
+  async function createProject(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setCreateProjectError(null);
+    setIsSubmittingProject(true);
+
+    try {
+      const response = await fetch(`/api/groups/${groupSlug}/projects`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: projectName,
+          description: projectDescription,
+        }),
+      });
+
+      const data = (await response.json()) as {
+        id?: string;
+        slug?: string;
+        error?: string;
+      };
+
+      if (!response.ok || !data.id || !data.slug) {
+        setCreateProjectError(data.error ?? 'Could not create project');
+        return;
+      }
+
+      closeCreateProjectModal();
+      router.refresh();
+    } catch {
+      setCreateProjectError('Something went wrong. Please try again.');
+    } finally {
+      setIsSubmittingProject(false);
     }
   }
 
@@ -97,14 +159,47 @@ export function GroupPageClient({ groupName, groupSlug, members, canInviteMember
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-4">
         <h1 className="text-2xl font-bold">{groupName}</h1>
-        <button
-          type="button"
-          onClick={() => setIsMembersOpen(true)}
-          className="rounded-md border border-gray-700 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800"
-        >
-          Members
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setIsMembersOpen(true)}
+            className="rounded-md border border-gray-700 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800"
+          >
+            Members
+          </button>
+          <button
+            type="button"
+            onClick={() => setIsCreateProjectModalOpen(true)}
+            className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500"
+          >
+            Create Project
+          </button>
+        </div>
       </div>
+
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold text-white">Projects</h2>
+        {projects.length > 0 ? (
+          <div className="divide-y divide-gray-800 rounded-lg border border-gray-800 bg-gray-900">
+            {projects.map((project) => (
+              <Link
+                key={project.id}
+                href={`/groups/${groupSlug}/projects/${project.slug}`}
+                className="block px-6 py-4 transition-colors hover:bg-gray-800/60 focus:bg-gray-800/60 focus:outline-none"
+              >
+                <p className="font-medium text-white">{project.name}</p>
+                {project.description ? (
+                  <p className="mt-1 text-sm text-gray-300">{project.description}</p>
+                ) : null}
+              </Link>
+            ))}
+          </div>
+        ) : (
+          <div className="rounded-lg border border-gray-800 bg-gray-900 px-6 py-8 text-sm text-gray-400">
+            No projects yet. Create one to get started.
+          </div>
+        )}
+      </section>
 
       {isMembersOpen ? (
         <div className="fixed inset-0 z-50">
@@ -218,6 +313,67 @@ export function GroupPageClient({ groupName, groupSlug, members, canInviteMember
                   className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
                 >
                   {isSubmittingInvite ? 'Submitting...' : 'Submit'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+
+      {isCreateProjectModalOpen ? (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center px-6">
+          <button
+            type="button"
+            aria-label="Close create project modal"
+            onClick={closeCreateProjectModal}
+            className="absolute inset-0 bg-black/60"
+          />
+
+          <div className="relative z-10 w-full max-w-lg rounded-lg border border-gray-800 bg-gray-900 p-6 shadow-2xl">
+            <h2 className="text-lg font-semibold text-white">Create project</h2>
+            <p className="mt-1 text-sm text-gray-400">
+              Enter a project name and, if you want, an optional description.
+            </p>
+
+            <form className="mt-5 space-y-4" onSubmit={createProject}>
+              <label className="block">
+                <span className="mb-1 block text-sm text-gray-300">Project name</span>
+                <input
+                  type="text"
+                  required
+                  value={projectName}
+                  onChange={(event) => setProjectName(event.currentTarget.value)}
+                  className="w-full rounded-md border border-gray-700 bg-gray-950 px-3 py-2 text-sm outline-none ring-indigo-500 focus:ring"
+                  placeholder="First EP Sessions"
+                />
+              </label>
+
+              <label className="block">
+                <span className="mb-1 block text-sm text-gray-300">Description (optional)</span>
+                <textarea
+                  value={projectDescription}
+                  onChange={(event) => setProjectDescription(event.currentTarget.value)}
+                  className="min-h-24 w-full rounded-md border border-gray-700 bg-gray-950 px-3 py-2 text-sm outline-none ring-indigo-500 focus:ring"
+                  placeholder="Songs, notes, and references for the June recording cycle."
+                />
+              </label>
+
+              {createProjectError ? <p className="text-sm text-red-400">{createProjectError}</p> : null}
+
+              <div className="flex items-center justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={closeCreateProjectModal}
+                  className="rounded-md border border-gray-700 px-4 py-2 text-sm font-medium text-gray-200 hover:bg-gray-800"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmittingProject}
+                  className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
+                >
+                  {isSubmittingProject ? 'Creating...' : 'Create'}
                 </button>
               </div>
             </form>
