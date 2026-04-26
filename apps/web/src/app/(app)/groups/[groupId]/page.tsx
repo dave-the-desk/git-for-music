@@ -4,6 +4,16 @@ import { notFound } from 'next/navigation';
 import { SESSION_COOKIE_NAME } from '@/lib/auth/session';
 import { GroupPageClient } from './group-page-client';
 
+type GroupMemberWithUser = {
+  id: string;
+  role: 'OWNER' | 'ADMIN' | 'MEMBER';
+  user: {
+    id: string;
+    name: string | null;
+    email: string;
+  };
+};
+
 export default async function GroupPage({
   params,
 }: {
@@ -40,10 +50,11 @@ export default async function GroupPage({
 
   const cookieStore = await cookies();
   const sessionCookie = cookieStore.get(SESSION_COOKIE_NAME);
-  const currentMember = group.members.find((member) => member.user.id === sessionCookie?.value);
+  const groupMembers = group.members as GroupMemberWithUser[];
+  const currentMember = groupMembers.find((member) => member.user.id === sessionCookie?.value);
   const canInviteMembers = currentMember?.role === 'OWNER';
 
-  const members = group.members.map((member) => ({
+  const members = groupMembers.map((member) => ({
     id: member.id,
     role: member.role,
     userId: member.user.id,
