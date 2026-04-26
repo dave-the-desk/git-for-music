@@ -6,12 +6,9 @@
   "types": "./src/index.ts",
   "scripts": {
     "generate": "prisma generate",
-    "db:push": "prisma db push",
-    "migrate": "prisma migrate dev",
-    "studio": "prisma studio"
-  },
-  "prisma": {
-    "schema": "prisma/schema.prisma"
+    "db:push": "set -a; . ../../.env; set +a; prisma db push",
+    "migrate": "set -a; . ../../.env; set +a; prisma migrate dev",
+    "studio": "set -a; . ../../.env; set +a; prisma studio"
   },
   "dependencies": {
     "@prisma/client": "^6.0.0"

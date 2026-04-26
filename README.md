@@ -44,6 +44,7 @@ Open [http://localhost:3000](http://localhost:3000).
 ## Common commands
 
 ```bash
+# Run from repo root
 pnpm dev            # Start web dev server
 pnpm build          # Build web app
 pnpm lint           # Lint web app
@@ -53,6 +54,8 @@ pnpm db:push        # Push schema to dev database (no migration file)
 pnpm db:migrate     # Create + apply a named migration
 pnpm db:studio      # Open Prisma Studio
 ```
+
+`pnpm db:*` commands load database env vars from the root `.env`.
 
 ## Docker services
 
