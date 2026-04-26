@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { NotificationBell } from '@/components/notifications/NotificationBell';
 
 export default function AppLayout({
   children,
@@ -33,6 +34,9 @@ export default function AppLayout({
           >
             Groups
           </Link>
+          <div className="ml-auto">
+            <NotificationBell />
+          </div>
         </div>
       </nav>
       <main className="mx-auto max-w-7xl px-6 py-8">{children}</main>

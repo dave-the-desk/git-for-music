@@ -22,6 +22,7 @@ model User {
   comments         Comment[]
   annotations      Annotation[]
   processingJobs   ProcessingJob[]
+  notifications    Notification[]
 }
 
 // ─── Group ───────────────────────────────────────────────────────────────────
@@ -218,6 +219,27 @@ model Comment {
   parent   Comment?  @relation("CommentThread", fields: [parentId], references: [id])
   parentId String?
   replies  Comment[] @relation("CommentThread")
+}
+
+model Notification {
+  id         String    @id @default(cuid())
+  userId     String
+  type       String
+  title      String
+  message    String
+  entityType String?
+  entityId   String?
+  groupId    String?
+  projectId  String?
+  demoId     String?
+  readAt     DateTime?
+  createdAt  DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt, createdAt])
+  @@index([groupId])
+  @@index([demoId])
 }
 
 // Annotation is a timestamped note on a specific TrackVersion.
