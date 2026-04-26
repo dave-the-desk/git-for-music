@@ -1,14 +1,13 @@
 'use client';
 
+import Link from 'next/link';
 import { FormEvent, useState } from 'react';
 import { useRouter } from 'next/navigation';
 
-export default function SignupPage() {
+export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState('');
-  const [name, setName] = useState('');
   const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -18,20 +17,20 @@ export default function SignupPage() {
     setIsSubmitting(true);
 
     try {
-      const response = await fetch('/api/auth/signup', {
+      const response = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, name, password, confirmPassword }),
+        body: JSON.stringify({ email, password }),
       });
 
       const data = (await response.json()) as { id?: string; error?: string };
 
       if (!response.ok || !data.id) {
-        setError(data.error ?? 'Could not create account');
+        setError(data.error ?? 'Could not log in');
         return;
       }
 
-      router.push('/login');
+      router.push('/home');
     } catch {
       setError('Something went wrong. Please try again.');
     } finally {
@@ -41,8 +40,8 @@ export default function SignupPage() {
 
   return (
     <div className="mx-auto max-w-md">
-      <h1 className="mb-2 text-2xl font-bold">Create an account</h1>
-      <p className="mb-6 text-sm text-gray-400">Enter your details to create your git-for-music account.</p>
+      <h1 className="mb-2 text-2xl font-bold">Log in</h1>
+      <p className="mb-6 text-sm text-gray-400">Enter your email and password to access your account.</p>
 
       <form className="space-y-4" onSubmit={onSubmit}>
         <label className="block">
@@ -52,17 +51,6 @@ export default function SignupPage() {
             required
             value={email}
             onChange={(event) => setEmail(event.currentTarget.value)}
-            className="w-full rounded-md border border-gray-700 bg-gray-900 px-3 py-2 text-sm outline-none ring-indigo-500 focus:ring"
-          />
-        </label>
-
-        <label className="block">
-          <span className="mb-1 block text-sm text-gray-300">Name</span>
-          <input
-            type="text"
-            required
-            value={name}
-            onChange={(event) => setName(event.currentTarget.value)}
             className="w-full rounded-md border border-gray-700 bg-gray-900 px-3 py-2 text-sm outline-none ring-indigo-500 focus:ring"
           />
         </label>
@@ -78,17 +66,6 @@ export default function SignupPage() {
           />
         </label>
 
-        <label className="block">
-          <span className="mb-1 block text-sm text-gray-300">Confirm password</span>
-          <input
-            type="password"
-            required
-            value={confirmPassword}
-            onChange={(event) => setConfirmPassword(event.currentTarget.value)}
-            className="w-full rounded-md border border-gray-700 bg-gray-900 px-3 py-2 text-sm outline-none ring-indigo-500 focus:ring"
-          />
-        </label>
-
         {error ? <p className="text-sm text-red-400">{error}</p> : null}
 
         <button
@@ -96,9 +73,16 @@ export default function SignupPage() {
           disabled={isSubmitting}
           className="w-full rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
         >
-          {isSubmitting ? 'Creating account...' : 'Create account'}
+          {isSubmitting ? 'Logging in...' : 'Log in'}
         </button>
       </form>
+
+      <p className="mt-6 text-sm text-gray-400">
+        Don&apos;t have an account,{' '}
+        <Link href="/signup" className="font-medium text-indigo-300 underline hover:text-indigo-200">
+          Create one here
+        </Link>
+      </p>
     </div>
   );
 }

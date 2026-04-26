@@ -20,6 +20,9 @@ export default function RootLayout({
             <Link href="/" className="text-lg font-semibold tracking-tight text-white">
               git-for-music
             </Link>
+            <Link href="/login" className="text-sm text-gray-400 hover:text-white">
+              Log in
+            </Link>
             <Link href="/signup" className="text-sm text-gray-400 hover:text-white">
               Sign up
             </Link>
