@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@git-for-music/db';
 import { hashPassword } from '@/lib/auth/password';
+import { SESSION_COOKIE_NAME, SESSION_MAX_AGE_SECONDS } from '@/lib/auth/session';
 
 function isValidEmail(email: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
@@ -55,5 +56,17 @@ export async function POST(req: NextRequest) {
     },
   });
 
-  return NextResponse.json(user, { status: 201 });
+  const response = NextResponse.json(user, { status: 201 });
+
+  response.cookies.set({
+    name: SESSION_COOKIE_NAME,
+    value: user.id,
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
+    path: '/',
+    maxAge: SESSION_MAX_AGE_SECONDS,
+  });
+
+  return response;
 }

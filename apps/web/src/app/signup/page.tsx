@@ -31,7 +31,7 @@ export default function SignupPage() {
         return;
       }
 
-      router.push('/login');
+      router.push('/home');
     } catch {
       setError('Something went wrong. Please try again.');
     } finally {

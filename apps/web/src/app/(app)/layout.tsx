@@ -1,10 +1,19 @@
+'use client';
+
 import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 
 export default function AppLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const pathname = usePathname();
+
+  function isActive(href: string) {
+    return pathname === href || pathname.startsWith(`${href}/`);
+  }
+
   return (
     <>
       <nav className="border-b border-gray-800 bg-gray-900 px-6 py-3">
@@ -12,10 +21,16 @@ export default function AppLayout({
           <Link href="/" className="text-lg font-semibold tracking-tight text-white">
             git-for-music
           </Link>
-          <Link href="/home" className="text-sm text-gray-400 hover:text-white">
+          <Link
+            href="/home"
+            className={`text-sm transition-colors hover:text-white ${isActive('/home') ? 'font-medium text-white' : 'text-gray-400'}`}
+          >
             Home
           </Link>
-          <Link href="/groups" className="text-sm text-gray-400 hover:text-white">
+          <Link
+            href="/groups"
+            className={`text-sm transition-colors hover:text-white ${isActive('/groups') ? 'font-medium text-white' : 'text-gray-400'}`}
+          >
             Groups
           </Link>
         </div>
