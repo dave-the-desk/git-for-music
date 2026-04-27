@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { TransportControls } from './TransportControls';
 import { TimelineRuler, PX_PER_SECOND } from './TimelineRuler';
 import { TrackWaveform, type TrackWaveformHandle } from './TrackWaveform';
+import { RecordingControls } from './RecordingControls';
 
 const TRACK_LABEL_WIDTH = 160;
 const TRACK_HEIGHT = 72;
@@ -366,6 +367,8 @@ export function DemoDawClient({
               </button>
             </div>
           </form>
+
+          <RecordingControls demoId={demoId} onSaved={() => router.refresh()} />
         </section>
 
         {/* Version History sidebar */}

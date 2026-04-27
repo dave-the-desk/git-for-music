@@ -92,7 +92,7 @@ export default async function GroupPage({
     name: member.user.name,
     email: member.user.email,
   }));
-  const projects = group.projects.map((project: { id: any; name: any; slug: any; description: any; }) => ({
+  const projects = group.projects.map((project: { id: string; name: string; slug: string; description: string | null; }) => ({
     id: project.id,
     name: project.name,
     slug: project.slug,
