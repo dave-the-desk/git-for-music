@@ -1,6 +1,6 @@
 import { prisma } from '@git-for-music/db';
 import { cookies } from 'next/headers';
-import { notFound } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
 import { SESSION_COOKIE_NAME } from '@/lib/auth/session';
 import { GroupPageClient } from './group-page-client';
 
@@ -20,9 +20,31 @@ export default async function GroupPage({
   params: Promise<{ groupId: string }>;
 }) {
   const { groupId } = await params;
+  const cookieStore = await cookies();
+  const sessionCookie = cookieStore.get(SESSION_COOKIE_NAME);
 
-  const group = await prisma.group.findUnique({
-    where: { slug: groupId },
+  if (!sessionCookie?.value) {
+    redirect('/login');
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { id: sessionCookie.value },
+    select: { id: true },
+  });
+
+  if (!user) {
+    redirect('/login');
+  }
+
+  const group = await prisma.group.findFirst({
+    where: {
+      slug: groupId,
+      members: {
+        some: {
+          userId: user.id,
+        },
+      },
+    },
     select: {
       name: true,
       projects: {
@@ -59,10 +81,8 @@ export default async function GroupPage({
     notFound();
   }
 
-  const cookieStore = await cookies();
-  const sessionCookie = cookieStore.get(SESSION_COOKIE_NAME);
   const groupMembers = group.members as GroupMemberWithUser[];
-  const currentMember = groupMembers.find((member) => member.user.id === sessionCookie?.value);
+  const currentMember = groupMembers.find((member) => member.user.id === user.id);
   const canInviteMembers = currentMember?.role === 'OWNER';
 
   const members = groupMembers.map((member) => ({
