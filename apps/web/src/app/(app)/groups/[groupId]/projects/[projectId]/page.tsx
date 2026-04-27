@@ -1,4 +1,5 @@
 import { prisma } from '@git-for-music/db';
+import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
 export default async function ProjectPage({
@@ -17,6 +18,7 @@ export default async function ProjectPage({
     },
     select: {
       id: true,
+      name: true,
     },
   });
 
@@ -24,5 +26,15 @@ export default async function ProjectPage({
     notFound();
   }
 
-  return <div />;
+  return (
+    <div className="space-y-4">
+      <Link
+        href={`/groups/${groupId}`}
+        className="inline-flex rounded-md border border-gray-700 px-3 py-1.5 text-sm text-gray-200 hover:bg-gray-800"
+      >
+        Back
+      </Link>
+      <h1 className="text-2xl font-bold text-white">{project.name}</h1>
+    </div>
+  );
 }
