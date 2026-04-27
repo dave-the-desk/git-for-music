@@ -134,16 +134,17 @@ model Track {
 // TrackVersion is immutable — original audio is never overwritten.
 // Audio edits and reverts produce new TrackVersions.
 model TrackVersion {
-  id         String   @id @default(cuid())
-  storageKey String
-  durationMs Int?
-  sampleRate Int?
-  channels   Int?
-  mimeType   String?
-  sizeBytes  BigInt?
-  checksum   String?
-  isDerived  Boolean  @default(false)
-  createdAt  DateTime @default(now())
+  id            String   @id @default(cuid())
+  storageKey    String
+  startOffsetMs Float    @default(0)
+  durationMs    Int?
+  sampleRate    Int?
+  channels      Int?
+  mimeType      String?
+  sizeBytes     BigInt?
+  checksum      String?
+  isDerived     Boolean  @default(false)
+  createdAt     DateTime @default(now())
 
   track   Track  @relation(fields: [trackId], references: [id], onDelete: Cascade)
   trackId String

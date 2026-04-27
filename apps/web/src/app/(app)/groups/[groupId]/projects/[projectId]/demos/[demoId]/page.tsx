@@ -2,7 +2,7 @@ import { prisma } from '@git-for-music/db';
 import { cookies } from 'next/headers';
 import { notFound, redirect } from 'next/navigation';
 import { SESSION_COOKIE_NAME } from '@/lib/auth/session';
-import { DemoWorkspaceClient } from './demo-workspace-client';
+import { DemoDawClient } from '@/components/daw/DemoDawClient';
 
 export default async function DemoPage({
   params,
@@ -76,6 +76,7 @@ export default async function DemoPage({
               storageKey: true,
               mimeType: true,
               durationMs: true,
+              startOffsetMs: true,
               createdAt: true,
               track: {
                 select: {
@@ -96,7 +97,7 @@ export default async function DemoPage({
   }
 
   return (
-    <DemoWorkspaceClient
+    <DemoDawClient
       groupSlug={demo.project.group.slug}
       projectSlug={demo.project.slug}
       demoId={demo.id}
@@ -118,6 +119,7 @@ export default async function DemoPage({
           storageKey: trackVersion.storageKey,
           mimeType: trackVersion.mimeType,
           durationMs: trackVersion.durationMs,
+          startOffsetMs: trackVersion.startOffsetMs,
           createdAt: trackVersion.createdAt.toISOString(),
         })),
       }))}
