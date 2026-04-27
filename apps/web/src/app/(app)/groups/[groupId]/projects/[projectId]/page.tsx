@@ -1,8 +1,8 @@
 import { prisma } from '@git-for-music/db';
 import { cookies } from 'next/headers';
-import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 import { SESSION_COOKIE_NAME } from '@/lib/auth/session';
+import { ProjectPageClient } from './project-page-client';
 
 export default async function ProjectPage({
   params,
@@ -40,8 +40,20 @@ export default async function ProjectPage({
     },
     select: {
       id: true,
+      slug: true,
       name: true,
       description: true,
+      demos: {
+        orderBy: {
+          updatedAt: 'desc',
+        },
+        select: {
+          id: true,
+          name: true,
+          description: true,
+          updatedAt: true,
+        },
+      },
     },
   });
 
@@ -50,51 +62,18 @@ export default async function ProjectPage({
   }
 
   return (
-    <div className="space-y-6">
-      <Link
-        href={`/groups/${groupId}`}
-        className="inline-flex rounded-md border border-gray-700 px-3 py-1.5 text-sm text-gray-200 hover:bg-gray-800"
-      >
-        Back
-      </Link>
-
-      <section>
-        <h1 className="text-2xl font-bold text-white">{project.name}</h1>
-        {project.description ? (
-          <p className="mt-2 text-sm text-gray-300">{project.description}</p>
-        ) : (
-          <p className="mt-2 text-sm text-gray-500">No description yet.</p>
-        )}
-      </section>
-
-      <section>
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-white">Demos</h2>
-          <button
-            type="button"
-            className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white opacity-80"
-          >
-            Create Demo
-          </button>
-        </div>
-        <div className="rounded-lg border border-gray-800 bg-gray-900 px-6 py-8 text-sm text-gray-400">
-          No demos yet. Demo creation is coming soon.
-        </div>
-      </section>
-
-      <section>
-        <h2 className="text-lg font-semibold text-white">Recent Activity</h2>
-        <div className="mt-3 rounded-lg border border-gray-800 bg-gray-900 px-6 py-8 text-sm text-gray-400">
-          Activity feed placeholder.
-        </div>
-      </section>
-
-      <section>
-        <h2 className="text-lg font-semibold text-white">Equipment Requirements</h2>
-        <div className="mt-3 rounded-lg border border-gray-800 bg-gray-900 px-6 py-8 text-sm text-gray-400">
-          Equipment requirements placeholder.
-        </div>
-      </section>
-    </div>
+    <ProjectPageClient
+      groupSlug={groupId}
+      projectSlug={project.slug}
+      projectId={project.id}
+      projectName={project.name}
+      projectDescription={project.description}
+      demos={project.demos.map((demo) => ({
+        id: demo.id,
+        name: demo.name,
+        description: demo.description,
+        updatedAt: demo.updatedAt.toISOString(),
+      }))}
+    />
   );
 }

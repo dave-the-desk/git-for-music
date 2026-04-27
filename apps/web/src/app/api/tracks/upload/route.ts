@@ -1,7 +1,32 @@
+import { createHash } from 'node:crypto';
+import { mkdir, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import { prisma } from '@git-for-music/db';
 import { NextRequest, NextResponse } from 'next/server';
 import type { ApiError } from '@git-for-music/shared';
+import { getAuthenticatedUserFromRequest } from '@/lib/auth/current-user';
+import { createDemoVersionWithCopiedTracks } from '@/lib/demos/versioning';
+
+export const runtime = 'nodejs';
+
+function sanitizeFileName(fileName: string) {
+  return fileName
+    .replace(/[^a-zA-Z0-9._-]/g, '-')
+    .replace(/-+/g, '-')
+    .slice(0, 120);
+}
+
+function fileNameWithoutExtension(fileName: string) {
+  const extension = path.extname(fileName);
+  return fileName.slice(0, fileName.length - extension.length) || fileName;
+}
 
 export async function POST(req: NextRequest) {
+  const user = await getAuthenticatedUserFromRequest(req);
+  if (!user) {
+    return NextResponse.json<ApiError>({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   const contentType = req.headers.get('content-type') ?? '';
 
   if (!contentType.startsWith('multipart/form-data')) {
@@ -11,9 +36,157 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // TODO: stream to R2, create TrackVersion, enqueue WAVEFORM job
+  const formData = await req.formData();
+  const demoId = formData.get('demoId');
+  const name = formData.get('name');
+  const incomingTrackId = formData.get('trackId');
+  const file = formData.get('file');
+
+  if (typeof demoId !== 'string' || !demoId.trim()) {
+    return NextResponse.json<ApiError>({ error: 'demoId is required' }, { status: 400 });
+  }
+
+  if (!(file instanceof File)) {
+    return NextResponse.json<ApiError>({ error: 'Audio file is required' }, { status: 400 });
+  }
+
+  const demo = await prisma.demo.findFirst({
+    where: {
+      id: demoId,
+      project: {
+        group: {
+          members: {
+            some: {
+              userId: user.id,
+            },
+          },
+        },
+      },
+    },
+    select: {
+      id: true,
+      currentVersionId: true,
+    },
+  });
+
+  if (!demo) {
+    return NextResponse.json<ApiError>({ error: 'Demo not found' }, { status: 404 });
+  }
+
+  const currentVersionId = demo.currentVersionId;
+  if (!currentVersionId) {
+    return NextResponse.json<ApiError>(
+      { error: 'Demo has no current version yet' },
+      { status: 400 },
+    );
+  }
+
+  let existingTrackId: string | null = null;
+  if (typeof incomingTrackId === 'string' && incomingTrackId) {
+    const existingTrack = await prisma.track.findFirst({
+      where: {
+        id: incomingTrackId,
+        demoId: demo.id,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!existingTrack) {
+      return NextResponse.json<ApiError>({ error: 'Track not found' }, { status: 404 });
+    }
+
+    existingTrackId = existingTrack.id;
+  }
+
+  const rawBuffer = Buffer.from(await file.arrayBuffer());
+  const timestamp = Date.now();
+  const originalName = sanitizeFileName(file.name || `track-${timestamp}.wav`);
+  const uploadDir = path.join(process.cwd(), 'public', 'uploads', 'demos', demo.id);
+  const storedName = `${timestamp}-${originalName}`;
+  const absolutePath = path.join(uploadDir, storedName);
+  const storageKey = `/uploads/demos/${demo.id}/${storedName}`;
+  const checksum = createHash('sha256').update(rawBuffer).digest('hex');
+
+  await mkdir(uploadDir, { recursive: true });
+  await writeFile(absolutePath, rawBuffer);
+
+  const createdTrackVersion = await prisma.$transaction(async (tx) => {
+    const nextVersion = await createDemoVersionWithCopiedTracks(tx, {
+      demoId: demo.id,
+      sourceVersionId: currentVersionId,
+      parentId: currentVersionId,
+      label: `Upload: ${typeof name === 'string' && name.trim() ? name.trim() : fileNameWithoutExtension(originalName)}`,
+      description: 'Added audio track',
+    });
+
+    let trackId: string;
+    if (existingTrackId) {
+      trackId = existingTrackId;
+    } else {
+      const highestPositionTrack = await tx.track.findFirst({
+        where: {
+          demoId: demo.id,
+        },
+        orderBy: {
+          position: 'desc',
+        },
+        select: {
+          position: true,
+        },
+      });
+
+      const createdTrack = await tx.track.create({
+        data: {
+          demoId: demo.id,
+          name:
+            typeof name === 'string' && name.trim()
+              ? name.trim()
+              : fileNameWithoutExtension(originalName),
+          position: (highestPositionTrack?.position ?? -1) + 1,
+        },
+        select: {
+          id: true,
+        },
+      });
+      trackId = createdTrack.id;
+    }
+
+    const trackVersion = await tx.trackVersion.create({
+      data: {
+        trackId,
+        demoVersionId: nextVersion.id,
+        storageKey,
+        mimeType: file.type || 'audio/mpeg',
+        sizeBytes: BigInt(file.size),
+        checksum,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    await tx.demo.update({
+      where: {
+        id: demo.id,
+      },
+      data: {
+        currentVersionId: nextVersion.id,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    return {
+      trackVersionId: trackVersion.id,
+      demoVersionId: nextVersion.id,
+    };
+  });
+
   return NextResponse.json(
-    { trackVersionId: 'placeholder-tv-id', status: 'queued' },
-    { status: 202 },
+    { trackVersionId: createdTrackVersion.trackVersionId, demoVersionId: createdTrackVersion.demoVersionId, status: 'ready' },
+    { status: 201 },
   );
 }

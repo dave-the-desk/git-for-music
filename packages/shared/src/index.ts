@@ -19,6 +19,7 @@ export interface CreateVersionRequest {
   label: string;
   description?: string;
   parentId?: string;
+  sourceVersionId?: string;
 }
 
 export interface CreateCommentRequest {

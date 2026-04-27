@@ -83,13 +83,15 @@ model Demo {
   id          String   @id @default(cuid())
   name        String
   description String?
+  currentVersionId String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   projectId String
 
-  versions DemoVersion[]
+  versions       DemoVersion[] @relation("DemoVersions")
+  currentVersion DemoVersion?  @relation("CurrentDemoVersion", fields: [currentVersionId], references: [id])
   tracks   Track[]
   comments Comment[]
 }
@@ -104,8 +106,9 @@ model DemoVersion {
   isMerge     Boolean  @default(false)
   createdAt   DateTime @default(now())
 
-  demo   Demo   @relation(fields: [demoId], references: [id], onDelete: Cascade)
+  demo   Demo   @relation("DemoVersions", fields: [demoId], references: [id], onDelete: Cascade)
   demoId String
+  currentForDemos Demo[] @relation("CurrentDemoVersion")
 
   parent   DemoVersion?  @relation("VersionTree", fields: [parentId], references: [id])
   children DemoVersion[] @relation("VersionTree")
