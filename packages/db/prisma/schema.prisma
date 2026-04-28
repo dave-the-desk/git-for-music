@@ -129,6 +129,7 @@ model Track {
   demoId String
 
   versions TrackVersion[]
+  comments Comment[]
 }
 
 // TrackVersion is immutable — original audio is never overwritten.
@@ -211,11 +212,16 @@ model ProcessingJob {
 model Comment {
   id        String   @id @default(cuid())
   body      String
+  isResolved Boolean  @default(false)
+  timestampMs Float?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   demo   Demo   @relation(fields: [demoId], references: [id], onDelete: Cascade)
   demoId String
+
+  track   Track?  @relation(fields: [trackId], references: [id], onDelete: Cascade)
+  trackId String?
 
   author   User   @relation(fields: [authorId], references: [id])
   authorId String
@@ -223,6 +229,10 @@ model Comment {
   parent   Comment?  @relation("CommentThread", fields: [parentId], references: [id])
   parentId String?
   replies  Comment[] @relation("CommentThread")
+
+  @@index([demoId, createdAt])
+  @@index([trackId, createdAt])
+  @@index([trackId, timestampMs])
 }
 
 model Notification {

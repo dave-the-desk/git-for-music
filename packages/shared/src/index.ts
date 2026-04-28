@@ -28,6 +28,35 @@ export interface CreateCommentRequest {
   parentId?: string;
 }
 
+export interface CreateDemoCommentRequest {
+  body: string;
+  trackId?: string;
+  timestampMs?: number;
+}
+
+export interface UpdateCommentRequest {
+  body?: string;
+  isResolved?: boolean;
+}
+
+export interface CommentAuthor {
+  id: string;
+  name: string | null;
+  avatarUrl: string | null;
+}
+
+export interface DemoComment {
+  id: string;
+  demoId: string;
+  trackId: string | null;
+  body: string;
+  isResolved: boolean;
+  timestampMs: number | null;
+  createdAt: string;
+  updatedAt: string;
+  author: CommentAuthor;
+}
+
 export interface UploadTrackRequest {
   demoId: string;
   trackId?: string;

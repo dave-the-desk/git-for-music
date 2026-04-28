@@ -3,6 +3,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import type { CreateDemoCommentRequest, DemoComment as SharedDemoComment } from '@git-for-music/shared';
 import { TransportControls } from './TransportControls';
 import { TimelineRuler, PX_PER_SECOND } from './TimelineRuler';
 import { TrackWaveform, type TrackWaveformHandle } from './TrackWaveform';
@@ -14,6 +15,13 @@ const TRACK_LABEL_WIDTH = 160;
 const TRACK_HEIGHT = 72;
 const TICK_INTERVAL_MS = 16;
 const SNAP_MS = 50;
+
+function formatTimeMs(ms: number) {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+}
 
 export type DawTrack = {
   trackId: string;
@@ -60,6 +68,14 @@ type RenameState = {
   error: string | null;
 };
 
+type CommentComposerState = {
+  trackId: string;
+  open: boolean;
+  value: string;
+  submitting: boolean;
+  error: string | null;
+};
+
 type DemoDawClientProps = {
   groupSlug: string;
   projectSlug: string;
@@ -93,6 +109,10 @@ export function DemoDawClient({
   const [uploadName, setUploadName] = useState('');
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [versionHistoryExpanded, setVersionHistoryExpanded] = useState(false);
+  const [comments, setComments] = useState<SharedDemoComment[]>([]);
+  const [commentsLoading, setCommentsLoading] = useState(false);
+  const [commentsError, setCommentsError] = useState<string | null>(null);
+  const [commentComposerState, setCommentComposerState] = useState<Record<string, CommentComposerState>>({});
 
   const [temporaryRecordingTrack, setTemporaryRecordingTrack] = useState<TemporaryRecordingTrack | null>(null);
   const [recordingStream, setRecordingStream] = useState<MediaStream | null>(null);
@@ -120,6 +140,26 @@ export function DemoDawClient({
     if (!selectedVersion) return [];
     return [...selectedVersion.tracks].sort((a, b) => a.trackPosition - b.trackPosition);
   }, [selectedVersion]);
+
+  const commentsByTrackId = useMemo(() => {
+    const grouped = comments.reduce<Record<string, SharedDemoComment[]>>((acc, comment) => {
+      if (!comment.trackId) return acc;
+      if (!acc[comment.trackId]) acc[comment.trackId] = [];
+      acc[comment.trackId]!.push(comment);
+      return acc;
+    }, {});
+
+    for (const trackComments of Object.values(grouped)) {
+      trackComments.sort((a, b) => {
+        const aPoint = a.timestampMs ?? Number.POSITIVE_INFINITY;
+        const bPoint = b.timestampMs ?? Number.POSITIVE_INFINITY;
+        if (aPoint !== bPoint) return aPoint - bPoint;
+        return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+      });
+    }
+
+    return grouped;
+  }, [comments]);
 
   const totalDurationMs = useMemo(() => {
     const ends = selectedTracks.map((t) => {
@@ -151,6 +191,47 @@ export function DemoDawClient({
       if (recordingPreviewUrlRef.current) URL.revokeObjectURL(recordingPreviewUrlRef.current);
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadComments() {
+      setCommentsLoading(true);
+      setCommentsError(null);
+
+      try {
+        const res = await fetch(`/api/demos/${demoId}/comments`, {
+          headers: {
+            Accept: 'application/json',
+          },
+        });
+        const data = (await res.json()) as SharedDemoComment[] | { error?: string };
+
+        if (cancelled) return;
+
+        if (!res.ok) {
+          setCommentsError('error' in data ? data.error ?? 'Could not load comments' : 'Could not load comments');
+          setComments([]);
+          return;
+        }
+
+        setComments(Array.isArray(data) ? data : []);
+      } catch {
+        if (!cancelled) {
+          setCommentsError('Something went wrong while loading comments');
+          setComments([]);
+        }
+      } finally {
+        if (!cancelled) setCommentsLoading(false);
+      }
+    }
+
+    void loadComments();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [demoId]);
 
   // --- Transport ---
   //
@@ -358,6 +439,91 @@ export function DemoDawClient({
     setRenameState(null);
   }
 
+  function getComposerState(trackId: string) {
+    return commentComposerState[trackId] ?? {
+      trackId,
+      open: false,
+      value: '',
+      submitting: false,
+      error: null,
+    };
+  }
+
+  function updateComposerState(trackId: string, next: Partial<CommentComposerState>) {
+    setCommentComposerState((prev) => {
+      const current = prev[trackId] ?? {
+        trackId,
+        open: false,
+        value: '',
+        submitting: false,
+        error: null,
+      };
+      return {
+        ...prev,
+        [trackId]: {
+          ...current,
+          ...next,
+        },
+      };
+    });
+  }
+
+  function openCommentComposer(trackId: string) {
+    updateComposerState(trackId, { open: true, error: null });
+  }
+
+  function closeCommentComposer(trackId: string) {
+    updateComposerState(trackId, { open: false, value: '', error: null });
+  }
+
+  async function submitComment(track: DawTrack) {
+    const composer = getComposerState(track.trackId);
+    const body = composer.value.trim();
+
+    if (!body) {
+      updateComposerState(track.trackId, { error: 'Comment body cannot be empty' });
+      return;
+    }
+
+    updateComposerState(track.trackId, { submitting: true, error: null });
+
+    try {
+      const payload: CreateDemoCommentRequest = {
+        body,
+        trackId: track.trackId,
+        timestampMs: currentTimeMs,
+      };
+
+      const res = await fetch(`/api/demos/${demoId}/comments`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const data = (await res.json()) as SharedDemoComment | { error?: string };
+
+      if (!res.ok) {
+        updateComposerState(track.trackId, {
+          submitting: false,
+          error: 'error' in data ? data.error ?? 'Could not save comment' : 'Could not save comment',
+        });
+        return;
+      }
+
+      setComments((prev) => [...prev, data as SharedDemoComment]);
+      closeCommentComposer(track.trackId);
+    } catch {
+      updateComposerState(track.trackId, {
+        submitting: false,
+        error: 'Something went wrong while saving the comment',
+      });
+    } finally {
+      updateComposerState(track.trackId, { submitting: false });
+    }
+  }
+
   // --- Recording ---
 
   function handleRecordingStreamReady(stream: MediaStream, startOffsetMs: number) {
@@ -558,6 +724,10 @@ export function DemoDawClient({
         {/* DAW Timeline — min-w-0 prevents it from pushing the sidebar off screen */}
         <section className="min-w-0 space-y-3 rounded-lg border border-gray-800 bg-gray-950 p-4">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-400">Timeline</h2>
+          <div className="flex items-center gap-3 text-xs">
+            {commentsLoading ? <p className="text-gray-500">Loading comments…</p> : null}
+            {commentsError ? <p className="text-red-400">{commentsError}</p> : null}
+          </div>
 
           {hasTimelineContent ? (
             /* overflow-x-auto is on this wrapper so ruler + tracks scroll together */
@@ -587,17 +757,19 @@ export function DemoDawClient({
                 const isMuted = mutedTrackVersionIds.has(track.trackVersionId);
                 const effectiveOffset = offsetOverrides[track.trackVersionId] ?? track.startOffsetMs;
                 const isRenaming = renameState?.trackId === track.trackId;
+                const trackComments = commentsByTrackId[track.trackId] ?? [];
+                const composer = getComposerState(track.trackId);
 
                 return (
                   <div
                     key={track.trackVersionId}
                     className="flex border-b border-gray-800 last:border-b-0"
-                    style={{ minWidth: TRACK_LABEL_WIDTH + totalTimelineWidth, height: TRACK_HEIGHT }}
+                    style={{ minWidth: TRACK_LABEL_WIDTH + totalTimelineWidth }}
                   >
                     {/* Label column */}
                     <div
-                      className="flex shrink-0 flex-col justify-center gap-1 border-r border-gray-800 bg-gray-900 px-2"
-                      style={{ width: TRACK_LABEL_WIDTH }}
+                      className="flex shrink-0 flex-col gap-2 border-r border-gray-800 bg-gray-900 px-2 py-2"
+                      style={{ width: TRACK_LABEL_WIDTH, minHeight: TRACK_HEIGHT }}
                     >
                       {isRenaming ? (
                         <div className="flex flex-col gap-1">
@@ -640,45 +812,140 @@ export function DemoDawClient({
                           </div>
                         </div>
                       ) : (
-                        <div className="flex items-center justify-between gap-1">
-                          <p
-                            className={`flex-1 truncate text-sm font-medium ${isMuted ? 'text-gray-500 line-through' : 'text-white'}`}
-                            onDoubleClick={() => startRename(track)}
-                            title="Double-click to rename"
-                          >
-                            {track.trackName}
-                          </p>
-                          <button
-                            type="button"
-                            onClick={() => startRename(track)}
-                            title="Rename track"
-                            className="shrink-0 text-gray-600 hover:text-gray-300"
-                          >
-                            {/* Pencil icon */}
-                            <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" aria-hidden>
-                              <path d="M12.854.146a.5.5 0 0 0-.707 0L10.5 1.793 14.207 5.5l1.647-1.646a.5.5 0 0 0 0-.708zm.646 6.061L9.793 2.5 3.293 9H3.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.207zm-7.468 7.468A.5.5 0 0 1 6 13.5V13h-.5a.5.5 0 0 1-.5-.5V12h-.5a.5.5 0 0 1-.5-.5V11h-.5a.5.5 0 0 1-.5-.5V10h-.5a.499.499 0 0 1-.175-.032l-.179.178a.5.5 0 0 0-.11.168l-2 5a.5.5 0 0 0 .65.65l5-2a.5.5 0 0 0 .168-.11z"/>
-                            </svg>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => toggleMute(track.trackVersionId)}
-                            title={isMuted ? 'Unmute track' : 'Mute track'}
-                            className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] font-bold transition-colors ${
-                              isMuted
-                                ? 'bg-yellow-500/20 text-yellow-400 ring-1 ring-yellow-500/40'
-                                : 'text-gray-600 hover:bg-gray-800 hover:text-gray-400'
-                            }`}
-                          >
-                            M
-                          </button>
-                        </div>
+                        <>
+                          <div className="flex items-center justify-between gap-1">
+                            <p
+                              className={`flex-1 truncate text-sm font-medium ${isMuted ? 'text-gray-500 line-through' : 'text-white'}`}
+                              onDoubleClick={() => startRename(track)}
+                              title="Double-click to rename"
+                            >
+                              {track.trackName}
+                            </p>
+                            <button
+                              type="button"
+                              onClick={() => startRename(track)}
+                              title="Rename track"
+                              className="shrink-0 text-gray-600 hover:text-gray-300"
+                            >
+                              {/* Pencil icon */}
+                              <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" aria-hidden>
+                                <path d="M12.854.146a.5.5 0 0 0-.707 0L10.5 1.793 14.207 5.5l1.647-1.646a.5.5 0 0 0 0-.708zm.646 6.061L9.793 2.5 3.293 9H3.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.207zm-7.468 7.468A.5.5 0 0 1 6 13.5V13h-.5a.5.5 0 0 1-.5-.5V12h-.5a.5.5 0 0 1-.5-.5V11h-.5a.5.5 0 0 1-.5-.5V10h-.5a.499.499 0 0 1-.175-.032l-.179.178a.5.5 0 0 0-.11.168l-2 5a.5.5 0 0 0 .65.65l5-2a.5.5 0 0 0 .168-.11z"/>
+                              </svg>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => toggleMute(track.trackVersionId)}
+                              title={isMuted ? 'Unmute track' : 'Mute track'}
+                              className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] font-bold transition-colors ${
+                                isMuted
+                                  ? 'bg-yellow-500/20 text-yellow-400 ring-1 ring-yellow-500/40'
+                                  : 'text-gray-600 hover:bg-gray-800 hover:text-gray-400'
+                              }`}
+                            >
+                              M
+                            </button>
+                          </div>
+
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="text-[10px] uppercase tracking-wide text-gray-500">
+                                Comments {trackComments.length > 0 ? `(${trackComments.length})` : ''}
+                              </p>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  composer.open ? closeCommentComposer(track.trackId) : openCommentComposer(track.trackId)
+                                }
+                                className="text-[10px] font-medium text-indigo-400 hover:text-indigo-300"
+                              >
+                                {composer.open ? 'Cancel' : 'Add comment'}
+                              </button>
+                            </div>
+
+                            {trackComments.length > 0 ? (
+                              <div className="max-h-28 space-y-1 overflow-y-auto pr-1">
+                                {trackComments.map((comment) => (
+                                  <div
+                                    key={comment.id}
+                                    className="rounded border border-gray-800 bg-gray-950/80 px-2 py-1"
+                                  >
+                                    <div className="flex items-center justify-between gap-2">
+                                      <p className="truncate text-[10px] font-medium text-gray-300">
+                                        {comment.author.name ?? 'Unknown'}
+                                      </p>
+                                      {comment.isResolved ? (
+                                        <span className="shrink-0 rounded bg-emerald-900/60 px-1 py-0.5 text-[9px] text-emerald-200">
+                                          Resolved
+                                        </span>
+                                      ) : null}
+                                    </div>
+                                    <p className="mt-0.5 break-words text-[11px] leading-snug text-gray-200">
+                                      {comment.body}
+                                    </p>
+                                    {comment.timestampMs != null ? (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleSeek(comment.timestampMs ?? 0)}
+                                        className="mt-1 text-[10px] font-medium text-indigo-400 hover:text-indigo-300"
+                                      >
+                                        At {formatTimeMs(comment.timestampMs)}
+                                      </button>
+                                    ) : null}
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="text-[11px] text-gray-500">No notes yet.</p>
+                            )}
+
+                            {composer.open ? (
+                              <div className="space-y-1">
+                                <textarea
+                                  rows={2}
+                                  value={composer.value}
+                                  onChange={(e) =>
+                                    updateComposerState(track.trackId, {
+                                      value: e.currentTarget.value,
+                                      error: null,
+                                    })
+                                  }
+                                  placeholder="Leave a note"
+                                  className="w-full rounded border border-gray-700 bg-gray-950 px-2 py-1 text-[11px] text-white outline-none ring-indigo-500 focus:ring"
+                                />
+                                <p className="text-[10px] text-gray-500">
+                                  Anchored at {formatTimeMs(currentTimeMs)}
+                                </p>
+                                {composer.error ? (
+                                  <p className="text-[10px] text-red-400">{composer.error}</p>
+                                ) : null}
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => void submitComment(track)}
+                                    disabled={composer.submitting}
+                                    className="rounded bg-indigo-600 px-2 py-1 text-[10px] font-medium text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
+                                  >
+                                    {composer.submitting ? 'Saving…' : 'Submit'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => closeCommentComposer(track.trackId)}
+                                    className="text-[10px] text-gray-500 hover:text-gray-300"
+                                  >
+                                    Close
+                                  </button>
+                                </div>
+                              </div>
+                            ) : null}
+                          </div>
+                        </>
                       )}
                     </div>
 
                     {/* Waveform area — pointer events handle horizontal drag */}
                     <div
                       className={`relative shrink-0 select-none bg-gray-950 transition-opacity ${isMuted ? 'opacity-40' : ''}`}
-                      style={{ width: totalTimelineWidth, height: TRACK_HEIGHT, cursor: 'grab' }}
+                      style={{ width: totalTimelineWidth, minHeight: TRACK_HEIGHT, cursor: 'grab' }}
                       onPointerDown={(e) => handleWaveformPointerDown(e, track)}
                       onPointerMove={(e) => handleWaveformPointerMove(e, track)}
                       onPointerUp={(e) => void handleWaveformPointerUp(e, track)}
