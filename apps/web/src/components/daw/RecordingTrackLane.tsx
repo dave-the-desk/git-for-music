@@ -164,8 +164,6 @@ export function RecordingTrackLane({
 
     ro.observe(container);
     return () => ro.disconnect();
-    // redrawAllPeaks only accesses refs — safe to omit from deps
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ── RAF capture loop ───────────────────────────────────────────────────────

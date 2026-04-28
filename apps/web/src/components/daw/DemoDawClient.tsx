@@ -12,6 +12,7 @@ import { RecordingTrackLane } from './RecordingTrackLane';
 const TRACK_LABEL_WIDTH = 160;
 const TRACK_HEIGHT = 72;
 const TICK_INTERVAL_MS = 16;
+const SNAP_MS = 50;
 
 export type DawTrack = {
   trackId: string;
@@ -51,6 +52,13 @@ export type TemporaryRecordingTrack = {
   error?: string;
 };
 
+type RenameState = {
+  trackId: string;
+  value: string;
+  saving: boolean;
+  error: string | null;
+};
+
 type DemoDawClientProps = {
   groupSlug: string;
   projectSlug: string;
@@ -86,7 +94,6 @@ export function DemoDawClient({
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTimeMs, setCurrentTimeMs] = useState(0);
   const [durationByTrackVersionId, setDurationByTrackVersionId] = useState<Record<string, number>>({});
-  // Client-side mute — trackVersionId → muted
   const [mutedTrackVersionIds, setMutedTrackVersionIds] = useState<Set<string>>(() => new Set());
 
   const [isUploading, setIsUploading] = useState(false);
@@ -99,6 +106,14 @@ export function DemoDawClient({
   const [temporaryRecordingTrack, setTemporaryRecordingTrack] = useState<TemporaryRecordingTrack | null>(null);
   const [recordingStream, setRecordingStream] = useState<MediaStream | null>(null);
   const recordingPreviewUrlRef = useRef<string | null>(null);
+
+  // Optimistic offset overrides while dragging or after a successful save (before refresh)
+  const [offsetOverrides, setOffsetOverrides] = useState<Record<string, number>>({});
+  const [dragError, setDragError] = useState<string | null>(null);
+  const dragRef = useRef<{ trackVersionId: string; originalOffset: number; startX: number } | null>(null);
+
+  // Inline rename state
+  const [renameState, setRenameState] = useState<RenameState | null>(null);
 
   const clockRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startWallTimeRef = useRef<number>(0);
@@ -118,13 +133,14 @@ export function DemoDawClient({
   const totalDurationMs = useMemo(() => {
     const ends = selectedTracks.map((t) => {
       const dur = durationByTrackVersionId[t.trackVersionId] ?? t.durationMs ?? 0;
-      return t.startOffsetMs + dur;
+      const offset = offsetOverrides[t.trackVersionId] ?? t.startOffsetMs;
+      return offset + dur;
     });
     if (temporaryRecordingTrack) {
       ends.push(temporaryRecordingTrack.startOffsetMs + temporaryRecordingTrack.durationMs);
     }
     return ends.length ? Math.max(...ends) : 0;
-  }, [selectedTracks, durationByTrackVersionId, temporaryRecordingTrack]);
+  }, [selectedTracks, durationByTrackVersionId, offsetOverrides, temporaryRecordingTrack]);
 
   const totalTimelineWidth = Math.max((totalDurationMs / 1000) * PX_PER_SECOND, 400);
 
@@ -133,7 +149,12 @@ export function DemoDawClient({
     stopTransport();
   }, [currentVersionId]);
 
-  // Revoke preview URL on unmount if still held
+  // Clear drag overrides when switching versions
+  useEffect(() => {
+    setOffsetOverrides({});
+    setDragError(null);
+  }, [selectedVersionId]);
+
   useEffect(() => {
     return () => {
       if (recordingPreviewUrlRef.current) URL.revokeObjectURL(recordingPreviewUrlRef.current);
@@ -144,8 +165,6 @@ export function DemoDawClient({
   //
   // Single global clock: one setInterval drives currentTimeMs for every track.
   // WaveSurfer instances follow this clock — they never manage their own playback.
-  // clockRef holds the interval handle; startWallTimeRef + startPlayheadMsRef
-  // allow accurate elapsed-time calculation without drift.
 
   function stopTransport() {
     if (clockRef.current) {
@@ -182,11 +201,11 @@ export function DemoDawClient({
 
     seekAllTracks(startMs);
 
-    // Only start unmuted tracks
     selectedTracks.forEach((t) => {
       const wf = waveformRefs.current[t.trackVersionId];
       const dur = durationByTrackVersionId[t.trackVersionId] ?? t.durationMs ?? 0;
-      if (!mutedTrackVersionIds.has(t.trackVersionId) && startMs < t.startOffsetMs + dur) {
+      const offset = offsetOverrides[t.trackVersionId] ?? t.startOffsetMs;
+      if (!mutedTrackVersionIds.has(t.trackVersionId) && startMs < offset + dur) {
         wf?.play();
       }
     });
@@ -206,10 +225,9 @@ export function DemoDawClient({
       selectedTracks.forEach((t) => {
         const wf = waveformRefs.current[t.trackVersionId];
         const dur = durationByTrackVersionId[t.trackVersionId] ?? t.durationMs ?? 0;
-        const relativeMs = newTimeMs - t.startOffsetMs;
-        if (relativeMs >= 0 && relativeMs < dur) {
-          // track should be playing; WaveSurfer drives itself
-        } else if (relativeMs >= dur) {
+        const offset = offsetOverrides[t.trackVersionId] ?? t.startOffsetMs;
+        const relativeMs = newTimeMs - offset;
+        if (relativeMs >= dur) {
           wf?.pause();
         }
       });
@@ -234,7 +252,6 @@ export function DemoDawClient({
 
   function toggleMute(trackVersionId: string) {
     const willMute = !mutedTrackVersionIds.has(trackVersionId);
-    // Apply immediately to WaveSurfer so audio responds at once
     waveformRefs.current[trackVersionId]?.setMuted(willMute);
     setMutedTrackVersionIds((prev) => {
       const next = new Set(prev);
@@ -244,18 +261,114 @@ export function DemoDawClient({
     });
   }
 
-  // --- Recording ---
-  //
-  // Recording lifecycle:
-  //   stream ready  → open visualizer lane, start backing tracks in sync
-  //   duration tick → grow the timeline block every 100 ms
-  //   stopped       → transition lane to preview, pause (don't stop) transport
-  //                   so the user can immediately play back what they just recorded
-  //   save          → upload blob → router.refresh() creates the new DemoVersion
-  //   discard       → revoke the blob URL, remove the temp lane, no version created
+  // --- Track drag (horizontal offset) ---
 
-  // Called the moment the microphone stream opens (before any audio is recorded).
-  // We start the global transport here so backing tracks play in sync with the recording.
+  function handleWaveformPointerDown(e: React.PointerEvent<HTMLDivElement>, track: DawTrack) {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const currentOffset = offsetOverrides[track.trackVersionId] ?? track.startOffsetMs;
+    const dur = durationByTrackVersionId[track.trackVersionId] ?? track.durationMs ?? 0;
+    const leftPx = (currentOffset / 1000) * PX_PER_SECOND;
+    const widthPx = dur > 0 ? (dur / 1000) * PX_PER_SECOND : 200;
+
+    // Only initiate drag if the pointer started within the waveform block
+    if (x < leftPx || x > leftPx + widthPx) return;
+
+    e.currentTarget.setPointerCapture(e.pointerId);
+    dragRef.current = {
+      trackVersionId: track.trackVersionId,
+      originalOffset: currentOffset,
+      startX: e.clientX,
+    };
+    setDragError(null);
+  }
+
+  function handleWaveformPointerMove(e: React.PointerEvent<HTMLDivElement>, track: DawTrack) {
+    const drag = dragRef.current;
+    if (!drag || drag.trackVersionId !== track.trackVersionId) return;
+
+    const deltaX = e.clientX - drag.startX;
+    const deltaMs = (deltaX / PX_PER_SECOND) * 1000;
+    const rawMs = drag.originalOffset + deltaMs;
+    const snapped = Math.max(0, Math.round(rawMs / SNAP_MS) * SNAP_MS);
+
+    setOffsetOverrides((prev) => ({ ...prev, [track.trackVersionId]: snapped }));
+  }
+
+  async function handleWaveformPointerUp(e: React.PointerEvent<HTMLDivElement>, track: DawTrack) {
+    const drag = dragRef.current;
+    if (!drag || drag.trackVersionId !== track.trackVersionId) return;
+
+    dragRef.current = null;
+    const finalOffset = offsetOverrides[track.trackVersionId] ?? track.startOffsetMs;
+
+    if (finalOffset === drag.originalOffset) return;
+
+    try {
+      const res = await fetch(`/api/tracks/versions/${track.trackVersionId}/offset`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ startOffsetMs: finalOffset }),
+      });
+      if (!res.ok) {
+        const data = (await res.json()) as { error?: string };
+        setOffsetOverrides((prev) => ({ ...prev, [track.trackVersionId]: drag.originalOffset }));
+        setDragError(data.error ?? 'Could not save track position');
+      } else {
+        // Keep override active — router.refresh will update prop data with the saved value.
+        router.refresh();
+      }
+    } catch {
+      setOffsetOverrides((prev) => ({ ...prev, [track.trackVersionId]: drag.originalOffset }));
+      setDragError('Something went wrong saving track position');
+    }
+  }
+
+  function handleWaveformPointerCancel(track: DawTrack) {
+    const drag = dragRef.current;
+    if (!drag || drag.trackVersionId !== track.trackVersionId) return;
+    setOffsetOverrides((prev) => ({ ...prev, [track.trackVersionId]: drag.originalOffset }));
+    dragRef.current = null;
+  }
+
+  // --- Inline rename ---
+
+  function startRename(track: DawTrack) {
+    setRenameState({ trackId: track.trackId, value: track.trackName, saving: false, error: null });
+  }
+
+  async function commitRename() {
+    if (!renameState) return;
+    const trimmed = renameState.value.trim();
+    if (!trimmed) {
+      setRenameState(null);
+      return;
+    }
+    setRenameState((prev) => (prev ? { ...prev, saving: true, error: null } : null));
+    try {
+      const res = await fetch(`/api/tracks/${renameState.trackId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: trimmed }),
+      });
+      if (!res.ok) {
+        const data = (await res.json()) as { error?: string };
+        setRenameState((prev) => (prev ? { ...prev, saving: false, error: data.error ?? 'Could not rename track' } : null));
+        return;
+      }
+      setRenameState(null);
+      router.refresh();
+    } catch {
+      setRenameState((prev) => (prev ? { ...prev, saving: false, error: 'Something went wrong' } : null));
+    }
+  }
+
+  function cancelRename() {
+    setRenameState(null);
+  }
+
+  // --- Recording ---
+
   function handleRecordingStreamReady(stream: MediaStream, startOffsetMs: number) {
     setRecordingStream(stream);
     setTemporaryRecordingTrack({
@@ -265,7 +378,6 @@ export function DemoDawClient({
       durationMs: 0,
       status: 'recording',
     });
-    // Stop any running transport cleanly, then restart from the recording position
     if (clockRef.current) {
       clearInterval(clockRef.current);
       clockRef.current = null;
@@ -274,22 +386,16 @@ export function DemoDawClient({
     playTransport(startOffsetMs);
   }
 
-  // Fired every 100 ms by RecordingControls so the timeline block grows in real time
   function handleRecordingDurationUpdate(durationMs: number) {
     setTemporaryRecordingTrack((prev) => (prev ? { ...prev, durationMs } : prev));
   }
 
-  // Called after MediaRecorder.onstop assembles the final blob.
-  // We null out recordingStream so RecordingTrackLane stops the RAF capture loop,
-  // but keep the blob URL alive for the preview player.
   function handleRecordingStopped(blob: Blob, previewUrl: string, durationMs: number) {
     recordingPreviewUrlRef.current = previewUrl;
     setRecordingStream(null);
     setTemporaryRecordingTrack((prev) =>
       prev ? { ...prev, status: 'preview', blob, previewUrl, durationMs } : prev,
     );
-    // Pause (not stop) so the playhead stays at the end of the recording —
-    // the user can press Play to hear the full take with backing tracks immediately.
     pauseTransport();
   }
 
@@ -297,8 +403,6 @@ export function DemoDawClient({
     setTemporaryRecordingTrack((prev) => (prev ? { ...prev, name } : prev));
   }
 
-  // Discard is non-destructive: nothing was committed to DemoVersion yet,
-  // so we just free the blob URL and remove the temporary lane.
   function handleDiscardRecording() {
     if (recordingPreviewUrlRef.current) {
       URL.revokeObjectURL(recordingPreviewUrlRef.current);
@@ -408,29 +512,20 @@ export function DemoDawClient({
   const hasTimelineContent = selectedTracks.length > 0 || temporaryRecordingTrack !== null;
 
   return (
-    <div className="flex h-full flex-col gap-4">
+    <div className="flex flex-col gap-4">
       {/* Header */}
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <Link
-            href={`/groups/${groupSlug}/projects/${projectSlug}`}
-            className="inline-flex rounded-md border border-gray-700 px-3 py-1.5 text-sm text-gray-200 hover:bg-gray-800"
-          >
-            Back to Project
-          </Link>
-          <h1 className="mt-3 text-2xl font-bold text-white">{demoName}</h1>
-          {demoDescription ? <p className="mt-1 text-sm text-gray-300">{demoDescription}</p> : null}
-        </div>
-        <TransportControls
-          isPlaying={isPlaying}
-          currentTimeMs={currentTimeMs}
-          onPlay={() => playTransport()}
-          onPause={pauseTransport}
-          onStop={stopTransport}
-        />
+      <div>
+        <Link
+          href={`/groups/${groupSlug}/projects/${projectSlug}`}
+          className="inline-flex rounded-md border border-gray-700 px-3 py-1.5 text-sm text-gray-200 hover:bg-gray-800"
+        >
+          Back to Project
+        </Link>
+        <h1 className="mt-3 text-2xl font-bold text-white">{demoName}</h1>
+        {demoDescription ? <p className="mt-1 text-sm text-gray-300">{demoDescription}</p> : null}
       </div>
 
-      {/* Upload form — below description, above timeline */}
+      {/* Upload form */}
       <form onSubmit={onUploadTrack} className="space-y-3 rounded-md border border-gray-800 bg-gray-900 p-4">
         <p className="text-sm font-medium text-white">Add Audio Track</p>
         <div className="flex flex-wrap gap-3">
@@ -466,13 +561,40 @@ export function DemoDawClient({
         </div>
       </form>
 
+      {/* Transport row: [Record] | [Stop] [Play/Pause] [Time] */}
+      <TransportControls
+        isPlaying={isPlaying}
+        currentTimeMs={currentTimeMs}
+        onPlay={() => playTransport()}
+        onPause={pauseTransport}
+        onStop={stopTransport}
+        leadingSlot={
+          <RecordingControls
+            currentTimeMs={currentTimeMs}
+            isDisabled={temporaryRecordingTrack !== null}
+            onStreamReady={handleRecordingStreamReady}
+            onDurationUpdate={handleRecordingDurationUpdate}
+            onStopped={handleRecordingStopped}
+          />
+        }
+      />
+
+      {dragError ? (
+        <p className="text-sm text-red-400">{dragError}</p>
+      ) : null}
+
+      {/* Main workspace: timeline + version history sidebar */}
       <div className="grid gap-4 lg:grid-cols-[1fr_280px]">
-        {/* DAW Timeline */}
-        <section className="space-y-3 rounded-lg border border-gray-800 bg-gray-950 p-4">
+
+        {/* DAW Timeline — min-w-0 prevents it from pushing the sidebar off screen */}
+        <section className="min-w-0 space-y-3 rounded-lg border border-gray-800 bg-gray-950 p-4">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-400">Timeline</h2>
 
           {hasTimelineContent ? (
+            /* overflow-x-auto is on this wrapper so ruler + tracks scroll together */
             <div className="overflow-x-auto rounded-md border border-gray-800">
+              {/* All rows share the same totalTimelineWidth so they scroll in sync */}
+
               {/* Timeline ruler row */}
               <div className="flex" style={{ minWidth: TRACK_LABEL_WIDTH + totalTimelineWidth }}>
                 <div
@@ -494,40 +616,103 @@ export function DemoDawClient({
               {/* Saved track rows */}
               {selectedTracks.map((track) => {
                 const isMuted = mutedTrackVersionIds.has(track.trackVersionId);
+                const effectiveOffset = offsetOverrides[track.trackVersionId] ?? track.startOffsetMs;
+                const isRenaming = renameState?.trackId === track.trackId;
+
                 return (
                   <div
                     key={track.trackVersionId}
                     className="flex border-b border-gray-800 last:border-b-0"
-                    style={{ height: TRACK_HEIGHT }}
+                    style={{ minWidth: TRACK_LABEL_WIDTH + totalTimelineWidth, height: TRACK_HEIGHT }}
                   >
                     {/* Label column */}
                     <div
-                      className="flex shrink-0 items-center justify-between gap-2 border-r border-gray-800 bg-gray-900 px-3"
+                      className="flex shrink-0 flex-col justify-center gap-1 border-r border-gray-800 bg-gray-900 px-2"
                       style={{ width: TRACK_LABEL_WIDTH }}
                     >
-                      <p
-                        className={`truncate text-sm font-medium ${isMuted ? 'text-gray-500 line-through' : 'text-white'}`}
-                      >
-                        {track.trackName}
-                      </p>
-                      <button
-                        type="button"
-                        onClick={() => toggleMute(track.trackVersionId)}
-                        title={isMuted ? 'Unmute track' : 'Mute track'}
-                        className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] font-bold transition-colors ${
-                          isMuted
-                            ? 'bg-yellow-500/20 text-yellow-400 ring-1 ring-yellow-500/40'
-                            : 'text-gray-600 hover:bg-gray-800 hover:text-gray-400'
-                        }`}
-                      >
-                        M
-                      </button>
+                      {isRenaming ? (
+                        <div className="flex flex-col gap-1">
+                          <input
+                            autoFocus
+                            type="text"
+                            value={renameState.value}
+                            onChange={(e) =>
+                              setRenameState((prev) =>
+                                prev ? { ...prev, value: e.currentTarget.value } : null,
+                              )
+                            }
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') void commitRename();
+                              if (e.key === 'Escape') cancelRename();
+                            }}
+                            disabled={renameState.saving}
+                            className="w-full rounded border border-indigo-500 bg-gray-950 px-1.5 py-0.5 text-xs text-white outline-none"
+                          />
+                          {renameState.error ? (
+                            <p className="text-[10px] text-red-400">{renameState.error}</p>
+                          ) : null}
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => void commitRename()}
+                              disabled={renameState.saving}
+                              className="text-[10px] text-indigo-400 hover:text-indigo-300 disabled:opacity-60"
+                            >
+                              {renameState.saving ? 'Saving…' : 'Save'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={cancelRename}
+                              className="text-[10px] text-gray-500 hover:text-gray-300"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-between gap-1">
+                          <p
+                            className={`flex-1 truncate text-sm font-medium ${isMuted ? 'text-gray-500 line-through' : 'text-white'}`}
+                            onDoubleClick={() => startRename(track)}
+                            title="Double-click to rename"
+                          >
+                            {track.trackName}
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => startRename(track)}
+                            title="Rename track"
+                            className="shrink-0 text-gray-600 hover:text-gray-300"
+                          >
+                            {/* Pencil icon */}
+                            <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" aria-hidden>
+                              <path d="M12.854.146a.5.5 0 0 0-.707 0L10.5 1.793 14.207 5.5l1.647-1.646a.5.5 0 0 0 0-.708zm.646 6.061L9.793 2.5 3.293 9H3.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.207zm-7.468 7.468A.5.5 0 0 1 6 13.5V13h-.5a.5.5 0 0 1-.5-.5V12h-.5a.5.5 0 0 1-.5-.5V11h-.5a.5.5 0 0 1-.5-.5V10h-.5a.499.499 0 0 1-.175-.032l-.179.178a.5.5 0 0 0-.11.168l-2 5a.5.5 0 0 0 .65.65l5-2a.5.5 0 0 0 .168-.11z"/>
+                            </svg>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => toggleMute(track.trackVersionId)}
+                            title={isMuted ? 'Unmute track' : 'Mute track'}
+                            className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] font-bold transition-colors ${
+                              isMuted
+                                ? 'bg-yellow-500/20 text-yellow-400 ring-1 ring-yellow-500/40'
+                                : 'text-gray-600 hover:bg-gray-800 hover:text-gray-400'
+                            }`}
+                          >
+                            M
+                          </button>
+                        </div>
+                      )}
                     </div>
 
-                    {/* Waveform area */}
+                    {/* Waveform area — pointer events handle horizontal drag */}
                     <div
-                      className={`relative shrink-0 bg-gray-950 transition-opacity ${isMuted ? 'opacity-40' : ''}`}
-                      style={{ width: totalTimelineWidth, height: TRACK_HEIGHT }}
+                      className={`relative shrink-0 select-none bg-gray-950 transition-opacity ${isMuted ? 'opacity-40' : ''}`}
+                      style={{ width: totalTimelineWidth, height: TRACK_HEIGHT, cursor: 'grab' }}
+                      onPointerDown={(e) => handleWaveformPointerDown(e, track)}
+                      onPointerMove={(e) => handleWaveformPointerMove(e, track)}
+                      onPointerUp={(e) => void handleWaveformPointerUp(e, track)}
+                      onPointerCancel={() => handleWaveformPointerCancel(track)}
                     >
                       {/* Global playhead */}
                       <div
@@ -541,7 +726,7 @@ export function DemoDawClient({
                         }}
                         trackVersionId={track.trackVersionId}
                         storageKey={track.storageKey}
-                        startOffsetMs={track.startOffsetMs}
+                        startOffsetMs={effectiveOffset}
                         durationMs={durationByTrackVersionId[track.trackVersionId] ?? track.durationMs ?? 0}
                         onDurationReady={handleDurationReady}
                       />
@@ -568,18 +753,6 @@ export function DemoDawClient({
               This version has no tracks yet. Upload or record a track to get started.
             </div>
           )}
-
-          {/* Recording controls */}
-          <div className="flex items-center gap-3 border-t border-gray-800 pt-3">
-            <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">Record</span>
-            <RecordingControls
-              currentTimeMs={currentTimeMs}
-              isDisabled={temporaryRecordingTrack !== null}
-              onStreamReady={handleRecordingStreamReady}
-              onDurationUpdate={handleRecordingDurationUpdate}
-              onStopped={handleRecordingStopped}
-            />
-          </div>
         </section>
 
         {/* Version History sidebar */}

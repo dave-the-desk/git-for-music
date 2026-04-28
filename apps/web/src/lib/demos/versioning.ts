@@ -3,6 +3,7 @@ import type { Prisma } from '@git-for-music/db';
 const TRACK_VERSION_FIELDS = {
   trackId: true,
   storageKey: true,
+  startOffsetMs: true,
   durationMs: true,
   sampleRate: true,
   channels: true,
@@ -49,6 +50,7 @@ export async function cloneTrackVersionsToDemoVersion(
         trackId: sourceTrackVersion.trackId,
         demoVersionId: targetVersionId,
         storageKey: sourceTrackVersion.storageKey,
+        startOffsetMs: sourceTrackVersion.startOffsetMs,
         durationMs: sourceTrackVersion.durationMs,
         sampleRate: sourceTrackVersion.sampleRate,
         channels: sourceTrackVersion.channels,

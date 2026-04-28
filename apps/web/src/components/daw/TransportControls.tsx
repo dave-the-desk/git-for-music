@@ -6,6 +6,7 @@ type TransportControlsProps = {
   onPlay: () => void;
   onPause: () => void;
   onStop: () => void;
+  leadingSlot?: React.ReactNode;
 };
 
 function formatTime(ms: number) {
@@ -22,9 +23,17 @@ export function TransportControls({
   onPlay,
   onPause,
   onStop,
+  leadingSlot,
 }: TransportControlsProps) {
   return (
     <div className="flex items-center gap-3 rounded-md border border-gray-700 bg-gray-900 px-4 py-2">
+      {leadingSlot && (
+        <>
+          {leadingSlot}
+          <div className="h-5 w-px shrink-0 bg-gray-700" />
+        </>
+      )}
+
       <button
         type="button"
         onClick={onStop}
