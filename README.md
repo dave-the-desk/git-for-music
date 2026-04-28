@@ -73,3 +73,27 @@ source .venv/bin/activate
 pip install -r requirements.txt
 python main.py
 ```
+
+Docker build and run:
+
+```bash
+docker build -t git-for-music-audio-worker ./workers/audio
+docker run --rm \
+  --env-file workers/audio/.env.example \
+  -e DATABASE_URL=postgresql://postgres:postgres@host.docker.internal:5432/git_for_music \
+  -e WEB_PUBLIC_DIR=/data/public \
+  -v /absolute/path/to/apps/web/public:/data/public \
+  git-for-music-audio-worker
+```
+
+The worker uses local DSP libraries for tempo/key analysis and time-stretching.
+It polls the `ProcessingJob` table directly, so queued jobs live in Postgres
+and can be inspected from the app while they are processing.
+You will also want `ffmpeg` installed for decoding compressed audio, and the
+Rubber Band CLI (`rubberband`) for higher-quality time-stretching. The worker
+falls back to librosa's stretcher if Rubber Band is unavailable, but Rubber Band
+is the recommended setup for production-like results.
+
+If you deploy the worker separately from the web app, mount the same uploads
+directory into the container or switch the storage layer to an object-store URL
+that both services can reach.

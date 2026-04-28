@@ -4,7 +4,72 @@ export type GroupMemberRole = 'OWNER' | 'ADMIN' | 'MEMBER';
 
 export type ProcessingJobStatus = 'PENDING' | 'PROCESSING' | 'COMPLETE' | 'FAILED';
 
-export type ProcessingJobType = 'WAVEFORM' | 'TRANSCODE' | 'NORMALIZE' | 'STEM_SPLIT';
+export type ProcessingJobType =
+  | 'WAVEFORM'
+  | 'TRANSCODE'
+  | 'NORMALIZE'
+  | 'STEM_SPLIT'
+  | 'TEMPO_ANALYSIS'
+  | 'KEY_ANALYSIS'
+  | 'TIME_STRETCH_TO_PROJECT'
+  | 'PROJECT_RETEMPO_FROM_TRACK';
+
+export type TimingSource = 'MANUAL' | 'ANALYZED' | 'IMPORTED';
+
+export interface TimeSignature {
+  num: number;
+  den: number;
+}
+
+export interface DemoTimingMetadata {
+  tempoBpm: number | null;
+  timeSignature: TimeSignature;
+  musicalKey: string | null;
+  tempoSource: TimingSource;
+  keySource: TimingSource;
+}
+
+export type SnapResolution = 'off' | 'bar' | 'beat' | 'halfBeat' | 'quarterBeat';
+
+export type UploadTimingChoice =
+  | 'keepProjectTempo'
+  | 'updateProjectTempoFromUpload'
+  | 'uploadUnchanged';
+
+export interface TempoAnalysisJobPayload {
+  demoId: string;
+  demoVersionId?: string;
+  trackVersionId: string;
+  updateDemoTiming?: boolean;
+}
+
+export interface KeyAnalysisJobPayload {
+  demoId: string;
+  demoVersionId?: string;
+  trackVersionId: string;
+  updateDemoTiming?: boolean;
+}
+
+export interface TimeStretchToProjectJobPayload {
+  demoId: string;
+  demoVersionId: string;
+  trackVersionId: string;
+  sourceTempoBpm?: number | null;
+  targetTempoBpm?: number | null;
+}
+
+export interface ProjectRetimeFromTrackJobPayload {
+  demoId: string;
+  demoVersionId: string;
+  trackVersionId: string;
+}
+
+export type ProcessingJobPayload =
+  | TempoAnalysisJobPayload
+  | KeyAnalysisJobPayload
+  | TimeStretchToProjectJobPayload
+  | ProjectRetimeFromTrackJobPayload
+  | Record<string, unknown>;
 
 // ─── API request shapes ───────────────────────────────────────────────────────
 
@@ -20,6 +85,16 @@ export interface CreateVersionRequest {
   description?: string;
   parentId?: string;
   sourceVersionId?: string;
+}
+
+export interface UpdateDemoVersionTimingRequest {
+  label?: string;
+  tempoBpm?: number | null;
+  timeSignatureNum?: number;
+  timeSignatureDen?: number;
+  musicalKey?: string | null;
+  tempoSource?: TimingSource;
+  keySource?: TimingSource;
 }
 
 export interface CreateCommentRequest {
@@ -57,11 +132,22 @@ export interface DemoComment {
   author: CommentAuthor;
 }
 
+export interface DemoVersionTiming extends DemoTimingMetadata {
+  id: string;
+}
+
 export interface UploadTrackRequest {
   demoId: string;
   trackId?: string;
   name?: string;
   sourceVersionId?: string;
+}
+
+export interface UploadTrackResponse {
+  trackVersionId: string;
+  demoVersionId: string;
+  status: 'ready';
+  processingJobIds: string[];
 }
 
 // ─── API response shapes ─────────────────────────────────────────────────────

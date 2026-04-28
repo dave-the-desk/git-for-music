@@ -1,22 +1,26 @@
 'use client';
 
+import type { DemoTimingMetadata } from '@git-for-music/shared';
+import { formatBarBeatLabel, getBeatTimes, isValidTempoBpm } from '@/lib/daw/timing';
+
 const PX_PER_SECOND = 80;
 
 type TimelineRulerProps = {
   totalDurationMs: number;
   currentTimeMs: number;
   onSeek: (timeMs: number) => void;
+  timing: DemoTimingMetadata | null;
 };
 
-export function TimelineRuler({ totalDurationMs, currentTimeMs, onSeek }: TimelineRulerProps) {
+export function TimelineRuler({ totalDurationMs, currentTimeMs, onSeek, timing }: TimelineRulerProps) {
   const totalSeconds = Math.max(totalDurationMs / 1000, 10);
   const totalWidth = totalSeconds * PX_PER_SECOND;
-
+  const useMusicalGrid = !!timing && isValidTempoBpm(timing.tempoBpm);
+  const secondsPerBeat = useMusicalGrid && timing ? 60 / (timing.tempoBpm ?? 120) : null;
   const tickIntervalSeconds = totalSeconds > 60 ? 5 : 1;
-  const ticks: number[] = [];
-  for (let s = 0; s <= totalSeconds; s += tickIntervalSeconds) {
-    ticks.push(s);
-  }
+  const ticks = useMusicalGrid
+    ? getBeatTimes(totalSeconds, timing)
+    : Array.from({ length: Math.floor(totalSeconds / tickIntervalSeconds) + 1 }, (_, index) => index * tickIntervalSeconds);
 
   function handleClick(event: React.MouseEvent<HTMLDivElement>) {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -33,11 +37,14 @@ export function TimelineRuler({ totalDurationMs, currentTimeMs, onSeek }: Timeli
 
       {ticks.map((s) => {
         const left = s * PX_PER_SECOND;
-        const isMajor = s % 5 === 0;
+        const isMajor = useMusicalGrid && timing && secondsPerBeat
+          ? Math.floor(s / secondsPerBeat) % timing.timeSignature.num === 0
+          : s % 5 === 0;
+        const label = useMusicalGrid ? formatBarBeatLabel(s, timing) : formatSeconds(s);
         return (
           <div key={s} className="absolute bottom-0 flex flex-col items-center" style={{ left }}>
             <span className="mb-0.5 text-[10px] leading-none text-gray-400">
-              {isMajor || tickIntervalSeconds === 1 ? formatSeconds(s) : ''}
+              {useMusicalGrid || isMajor ? label : ''}
             </span>
             <div
               className="w-px"

@@ -102,6 +102,12 @@ model DemoVersion {
   id          String   @id @default(cuid())
   label       String
   description String?
+  tempoBpm    Float?
+  timeSignatureNum Int @default(4)
+  timeSignatureDen Int @default(4)
+  musicalKey  String?
+  tempoSource TempoSource @default(MANUAL)
+  keySource   KeySource @default(MANUAL)
   parentId    String?
   isMerge     Boolean  @default(false)
   createdAt   DateTime @default(now())
@@ -137,6 +143,7 @@ model Track {
 model TrackVersion {
   id            String   @id @default(cuid())
   storageKey    String
+  sourceFileUrl String?
   startOffsetMs Float    @default(0)
   durationMs    Int?
   sampleRate    Int?
@@ -145,7 +152,14 @@ model TrackVersion {
   sizeBytes     BigInt?
   checksum      String?
   isDerived     Boolean  @default(false)
+  operationType TrackVersionOperationType @default(ORIGINAL)
   createdAt     DateTime @default(now())
+
+  parentTrackVersion   TrackVersion?  @relation("TrackVersionTree", fields: [parentTrackVersionId], references: [id])
+  parentTrackVersionId String?
+  derivedTrackVersions TrackVersion[] @relation("TrackVersionTree")
+  processingJobId      String?        @unique
+  processingJob        ProcessingJob? @relation("ProcessingJobDerivedTrackVersion", fields: [processingJobId], references: [id], onDelete: SetNull)
 
   track   Track  @relation(fields: [trackId], references: [id], onDelete: Cascade)
   trackId String
@@ -188,6 +202,27 @@ enum ProcessingJobType {
   TRANSCODE
   NORMALIZE
   STEM_SPLIT
+  TEMPO_ANALYSIS
+  KEY_ANALYSIS
+  TIME_STRETCH_TO_PROJECT
+  PROJECT_RETEMPO_FROM_TRACK
+}
+
+enum TrackVersionOperationType {
+  ORIGINAL
+  TIME_STRETCH
+}
+
+enum TempoSource {
+  MANUAL
+  ANALYZED
+  IMPORTED
+}
+
+enum KeySource {
+  MANUAL
+  ANALYZED
+  IMPORTED
 }
 
 model ProcessingJob {
@@ -195,6 +230,7 @@ model ProcessingJob {
   type      ProcessingJobType
   status    ProcessingJobStatus @default(PENDING)
   progress  Int                 @default(0)
+  payload   Json?
   error     String?
   result    Json?
   createdAt DateTime            @default(now())
@@ -205,6 +241,8 @@ model ProcessingJob {
 
   createdBy   User   @relation(fields: [createdById], references: [id])
   createdById String
+
+  createdTrackVersion TrackVersion? @relation("ProcessingJobDerivedTrackVersion")
 }
 
 // ─── Collaboration ───────────────────────────────────────────────────────────

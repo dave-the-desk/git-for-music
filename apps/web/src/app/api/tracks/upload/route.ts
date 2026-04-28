@@ -3,9 +3,10 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { prisma } from '@git-for-music/db';
 import { NextRequest, NextResponse } from 'next/server';
-import type { ApiError } from '@git-for-music/shared';
+import type { ApiError, UploadTimingChoice, UploadTrackResponse } from '@git-for-music/shared';
 import { getAuthenticatedUserFromRequest } from '@/lib/auth/current-user';
 import { createDemoVersionWithCopiedTracks } from '@/lib/demos/versioning';
+import { enqueueProcessingJob } from '@/lib/processing/jobs';
 
 export const runtime = 'nodejs';
 
@@ -41,6 +42,7 @@ export async function POST(req: NextRequest) {
   const name = formData.get('name');
   const incomingTrackId = formData.get('trackId');
   const sourceVersionId = formData.get('sourceVersionId');
+  const timingChoiceRaw = formData.get('timingChoice');
   const file = formData.get('file');
 
   if (typeof demoId !== 'string' || !demoId.trim()) {
@@ -187,6 +189,41 @@ export async function POST(req: NextRequest) {
       },
     });
 
+    const timingChoice =
+      timingChoiceRaw === 'keepProjectTempo' ||
+      timingChoiceRaw === 'updateProjectTempoFromUpload' ||
+      timingChoiceRaw === 'uploadUnchanged'
+        ? (timingChoiceRaw as UploadTimingChoice)
+        : 'uploadUnchanged';
+
+    const jobIds: string[] = [];
+
+    if (timingChoice === 'keepProjectTempo') {
+      const job = await enqueueProcessingJob(tx, {
+        type: 'TIME_STRETCH_TO_PROJECT',
+        trackVersionId: trackVersion.id,
+        createdById: user.id,
+        payload: {
+          demoId: demo.id,
+          demoVersionId: nextVersion.id,
+          trackVersionId: trackVersion.id,
+        },
+      });
+      jobIds.push(job.id);
+    } else if (timingChoice === 'updateProjectTempoFromUpload') {
+      const job = await enqueueProcessingJob(tx, {
+        type: 'PROJECT_RETEMPO_FROM_TRACK',
+        trackVersionId: trackVersion.id,
+        createdById: user.id,
+        payload: {
+          demoId: demo.id,
+          demoVersionId: nextVersion.id,
+          trackVersionId: trackVersion.id,
+        },
+      });
+      jobIds.push(job.id);
+    }
+
     await tx.demo.update({
       where: {
         id: demo.id,
@@ -202,11 +239,16 @@ export async function POST(req: NextRequest) {
     return {
       trackVersionId: trackVersion.id,
       demoVersionId: nextVersion.id,
+      jobIds,
     };
   });
 
-  return NextResponse.json(
-    { trackVersionId: createdTrackVersion.trackVersionId, demoVersionId: createdTrackVersion.demoVersionId, status: 'ready' },
-    { status: 201 },
-  );
+  const response: UploadTrackResponse = {
+    trackVersionId: createdTrackVersion.trackVersionId,
+    demoVersionId: createdTrackVersion.demoVersionId,
+    status: 'ready',
+    processingJobIds: createdTrackVersion.jobIds,
+  };
+
+  return NextResponse.json(response, { status: 201 });
 }

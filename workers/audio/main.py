@@ -1,64 +1,56 @@
-"""Audio processing worker — placeholder.
+"""Local audio processing worker.
 
-Connects to Redis and polls the BullMQ-compatible queue for processing jobs.
-Actual audio processing (waveform generation, transcoding, stem splitting)
-is not implemented yet.
+Polls the ProcessingJob table directly and runs deterministic DSP jobs:
+tempo analysis, key analysis, time-stretching, and project re-tempo.
 """
 
-import os
-import json
-import time
+from __future__ import annotations
+
 import logging
+import os
+import time
+
 from dotenv import load_dotenv
+
+from db import claim_next_job, connect
+from jobs import process_job
 
 load_dotenv()
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 log = logging.getLogger(__name__)
 
-REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379")
-QUEUE_NAME = os.environ.get("AUDIO_QUEUE", "audio-processing")
-POLL_INTERVAL = float(os.environ.get("POLL_INTERVAL_SECONDS", "2"))
-
-
-def process_job(job: dict) -> None:
-    job_id = job.get("id", "unknown")
-    job_type = job.get("type", "unknown")
-    log.info("Processing job %s (type=%s) — not yet implemented", job_id, job_type)
-    # TODO: dispatch to handler based on job_type:
-    #   WAVEFORM   → generate peak data
-    #   TRANSCODE  → re-encode to target codec
-    #   NORMALIZE  → apply loudness normalization
-    #   STEM_SPLIT → run stem separation model
+POLL_INTERVAL = float(os.environ.get('POLL_INTERVAL_SECONDS', '2'))
 
 
 def main() -> None:
-    log.info("Audio worker starting. REDIS_URL=%s QUEUE=%s", REDIS_URL, QUEUE_NAME)
+    log.info('Audio worker starting. DATABASE_URL=%s', os.environ.get('DATABASE_URL', 'unset'))
     try:
-        import redis
-        r = redis.from_url(REDIS_URL)
-        r.ping()
-        log.info("Connected to Redis.")
+        conn = connect()
+        with conn.cursor() as cur:
+            cur.execute('SELECT 1')
+            cur.fetchone()
+        log.info('Connected to Postgres.')
     except Exception as exc:
-        log.error("Cannot connect to Redis: %s", exc)
+        log.error('Cannot connect to Postgres: %s', exc)
         return
 
-    log.info("Polling queue '%s' every %.1fs…", QUEUE_NAME, POLL_INTERVAL)
+    log.info('Polling for processing jobs every %.1fs…', POLL_INTERVAL)
     while True:
         try:
-            raw = r.lpop(f"bull:{QUEUE_NAME}:wait")
-            if raw:
-                job = json.loads(raw)
-                process_job(job)
+            job = claim_next_job(conn)
+            if job:
+                log.info('Processing job %s (type=%s)', job['id'], job['type'])
+                process_job(conn, job)
             else:
                 time.sleep(POLL_INTERVAL)
         except KeyboardInterrupt:
-            log.info("Shutting down.")
+            log.info('Shutting down.')
             break
         except Exception as exc:
-            log.exception("Unexpected error: %s", exc)
+            log.exception('Unexpected worker error: %s', exc)
             time.sleep(POLL_INTERVAL)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

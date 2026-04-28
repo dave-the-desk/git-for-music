@@ -3,6 +3,7 @@ import type { Prisma } from '@git-for-music/db';
 const TRACK_VERSION_FIELDS = {
   trackId: true,
   storageKey: true,
+  sourceFileUrl: true,
   startOffsetMs: true,
   durationMs: true,
   sampleRate: true,
@@ -11,6 +12,8 @@ const TRACK_VERSION_FIELDS = {
   sizeBytes: true,
   checksum: true,
   isDerived: true,
+  operationType: true,
+  parentTrackVersionId: true,
   segments: {
     select: {
       startMs: true,
@@ -25,6 +28,15 @@ const TRACK_VERSION_FIELDS = {
       position: 'asc',
     },
   },
+} as const;
+
+const DEMO_VERSION_FIELDS = {
+  tempoBpm: true,
+  timeSignatureNum: true,
+  timeSignatureDen: true,
+  musicalKey: true,
+  tempoSource: true,
+  keySource: true,
 } as const;
 
 export async function cloneTrackVersionsToDemoVersion(
@@ -50,6 +62,7 @@ export async function cloneTrackVersionsToDemoVersion(
         trackId: sourceTrackVersion.trackId,
         demoVersionId: targetVersionId,
         storageKey: sourceTrackVersion.storageKey,
+        sourceFileUrl: sourceTrackVersion.sourceFileUrl,
         startOffsetMs: sourceTrackVersion.startOffsetMs,
         durationMs: sourceTrackVersion.durationMs,
         sampleRate: sourceTrackVersion.sampleRate,
@@ -58,6 +71,8 @@ export async function cloneTrackVersionsToDemoVersion(
         sizeBytes: sourceTrackVersion.sizeBytes,
         checksum: sourceTrackVersion.checksum,
         isDerived: sourceTrackVersion.isDerived,
+        operationType: sourceTrackVersion.operationType,
+        parentTrackVersionId: sourceTrackVersion.parentTrackVersionId,
         segments: sourceTrackVersion.segments.length
           ? {
               createMany: {
@@ -97,11 +112,28 @@ export async function createDemoVersionWithCopiedTracks(
     sourceVersionId?: string | null;
   },
 ) {
+  const sourceVersion = sourceVersionId
+    ? await tx.demoVersion.findFirst({
+        where: { id: sourceVersionId, demoId },
+        select: DEMO_VERSION_FIELDS,
+      })
+    : null;
+
   const version = await tx.demoVersion.create({
     data: {
       demoId,
       label,
       description: description ?? null,
+      ...(sourceVersion
+        ? {
+            tempoBpm: sourceVersion.tempoBpm,
+            timeSignatureNum: sourceVersion.timeSignatureNum,
+            timeSignatureDen: sourceVersion.timeSignatureDen,
+            musicalKey: sourceVersion.musicalKey,
+            tempoSource: sourceVersion.tempoSource,
+            keySource: sourceVersion.keySource,
+          }
+        : {}),
       parentId: parentId ?? null,
     },
     select: {

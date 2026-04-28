@@ -68,9 +68,18 @@ export default async function DemoPage({
           id: true,
           label: true,
           description: true,
+          tempoBpm: true,
+          timeSignatureNum: true,
+          timeSignatureDen: true,
+          musicalKey: true,
+          tempoSource: true,
+          keySource: true,
           parentId: true,
           createdAt: true,
           trackVersions: {
+            orderBy: {
+              createdAt: 'desc',
+            },
             select: {
               id: true,
               storageKey: true,
@@ -78,6 +87,9 @@ export default async function DemoPage({
               durationMs: true,
               startOffsetMs: true,
               createdAt: true,
+              isDerived: true,
+              operationType: true,
+              parentTrackVersionId: true,
               track: {
                 select: {
                   id: true,
@@ -108,10 +120,23 @@ export default async function DemoPage({
         id: version.id,
         label: version.label,
         description: version.description,
+        tempoBpm: version.tempoBpm,
+        timeSignatureNum: version.timeSignatureNum,
+        timeSignatureDen: version.timeSignatureDen,
+        musicalKey: version.musicalKey,
+        tempoSource: version.tempoSource,
+        keySource: version.keySource,
         parentId: version.parentId,
         createdAt: version.createdAt.toISOString(),
         isCurrent: version.id === demo.currentVersionId,
-        tracks: version.trackVersions.map((trackVersion) => ({
+        tracks: Array.from(
+          version.trackVersions.reduce<Map<string, (typeof version.trackVersions)[number]>>((map, trackVersion) => {
+            if (!map.has(trackVersion.track.id)) {
+              map.set(trackVersion.track.id, trackVersion);
+            }
+            return map;
+          }, new Map()).values(),
+        ).map((trackVersion) => ({
           trackId: trackVersion.track.id,
           trackName: trackVersion.track.name,
           trackPosition: trackVersion.track.position,
@@ -121,6 +146,9 @@ export default async function DemoPage({
           durationMs: trackVersion.durationMs,
           startOffsetMs: trackVersion.startOffsetMs,
           createdAt: trackVersion.createdAt.toISOString(),
+          isDerived: trackVersion.isDerived,
+          operationType: trackVersion.operationType,
+          parentTrackVersionId: trackVersion.parentTrackVersionId,
         })),
       }))}
     />
