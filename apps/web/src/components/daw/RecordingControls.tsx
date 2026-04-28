@@ -31,6 +31,8 @@ export function RecordingControls({
   const [recState, setRecState] = useState<RecordingState>('idle');
   const [elapsedMs, setElapsedMs] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  // null = not yet checked (SSR / first hydration pass), avoids server/client mismatch
+  const [isSupported, setIsSupported] = useState<boolean | null>(null);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<BlobPart[]>([]);
@@ -41,10 +43,14 @@ export function RecordingControls({
   // Captured before RAF stops so onstop receives the accurate final duration.
   const finalDurationMsRef = useRef<number>(0);
 
-  const isSupported =
-    typeof navigator !== 'undefined' &&
-    typeof navigator.mediaDevices?.getUserMedia === 'function' &&
-    typeof MediaRecorder !== 'undefined';
+  // Check browser support once on mount so server and client first-render match
+  useEffect(() => {
+    setIsSupported(
+      typeof navigator !== 'undefined' &&
+        typeof navigator.mediaDevices?.getUserMedia === 'function' &&
+        typeof MediaRecorder !== 'undefined',
+    );
+  }, []);
 
   // Clean up RAF loop and mic tracks on unmount
   useEffect(() => {
@@ -131,6 +137,9 @@ export function RecordingControls({
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
   }
+
+  // Render nothing until the client has confirmed support (avoids hydration mismatch)
+  if (isSupported === null) return null;
 
   if (!isSupported) {
     return (

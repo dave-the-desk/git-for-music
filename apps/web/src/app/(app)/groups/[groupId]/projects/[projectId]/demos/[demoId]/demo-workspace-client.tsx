@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { buildVersionsById, getVersionDisplayLabel } from '@/lib/demos/version-labels';
 
 type DemoWorkspaceTrack = {
   trackId: string;
@@ -72,8 +73,6 @@ export function DemoWorkspaceClient({
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadName, setUploadName] = useState('');
   const [uploadFile, setUploadFile] = useState<File | null>(null);
-  const [isReverting, setIsReverting] = useState<string | null>(null);
-  const [versionError, setVersionError] = useState<string | null>(null);
   const [durationByTrackVersionId, setDurationByTrackVersionId] = useState<Record<string, number>>({});
 
   const audioRefs = useRef<Record<string, HTMLAudioElement | null>>({});
@@ -88,6 +87,7 @@ export function DemoWorkspaceClient({
     () => versions.find((version) => version.id === selectedVersionId) ?? versions[0],
     [selectedVersionId, versions],
   );
+  const versionsById = useMemo(() => buildVersionsById(versions), [versions]);
 
   const selectedTracks = useMemo(() => {
     if (!selectedVersion) {
@@ -164,6 +164,7 @@ export function DemoWorkspaceClient({
     try {
       const formData = new FormData();
       formData.append('demoId', demoId);
+      formData.append('sourceVersionId', selectedVersionId);
       if (uploadName.trim()) {
         formData.append('name', uploadName.trim());
       }
@@ -188,39 +189,6 @@ export function DemoWorkspaceClient({
       setUploadError('Something went wrong while uploading. Please try again.');
     } finally {
       setIsUploading(false);
-    }
-  }
-
-  async function revertToVersion(version: DemoWorkspaceVersion) {
-    setVersionError(null);
-    setIsReverting(version.id);
-
-    try {
-      const response = await fetch('/api/versions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          demoId,
-          sourceVersionId: version.id,
-          label: `Revert to ${version.label}`,
-          description: `Snapshot copied from version ${version.label}`,
-        }),
-      });
-
-      const data = (await response.json()) as { error?: string };
-
-      if (!response.ok) {
-        setVersionError(data.error ?? 'Could not revert to selected version');
-        return;
-      }
-
-      router.refresh();
-    } catch {
-      setVersionError('Something went wrong while reverting. Please try again.');
-    } finally {
-      setIsReverting(null);
     }
   }
 
@@ -254,6 +222,9 @@ export function DemoWorkspaceClient({
 
           <form onSubmit={onUploadTrack} className="space-y-3 rounded-md border border-gray-800 bg-gray-950 p-4">
             <p className="text-sm font-medium text-white">Upload Audio Track</p>
+            <p className="text-xs text-gray-400">
+              New uploads branch from the selected version in the history list.
+            </p>
             <label className="block">
               <span className="mb-1 block text-xs uppercase tracking-wide text-gray-400">Track Name (optional)</span>
               <input
@@ -345,11 +316,19 @@ export function DemoWorkspaceClient({
 
         <aside className="space-y-3 rounded-lg border border-gray-800 bg-gray-900 p-4">
           <h2 className="text-lg font-semibold text-white">Version History</h2>
-          {versionError ? <p className="text-sm text-red-400">{versionError}</p> : null}
+          {selectedVersion && selectedVersion.id !== currentVersionId ? (
+            <p className="text-xs text-amber-300">
+              Next upload will branch from{' '}
+              <span className="font-medium text-amber-200">
+                {getVersionDisplayLabel(selectedVersion, versionsById)}
+              </span>
+            </p>
+          ) : null}
 
           <ul className="space-y-2">
             {versions.map((version) => {
               const isSelected = version.id === selectedVersion?.id;
+              const label = getVersionDisplayLabel(version, versionsById);
 
               return (
                 <li key={version.id}>
@@ -366,27 +345,23 @@ export function DemoWorkspaceClient({
                     }`}
                   >
                     <div className="flex items-center justify-between gap-2">
-                      <p className="text-sm font-medium text-white">{version.label}</p>
-                      {version.isCurrent ? (
-                        <span className="rounded bg-indigo-900 px-1.5 py-0.5 text-[11px] text-indigo-200">
-                          current
-                        </span>
-                      ) : null}
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-medium text-white">{label}</p>
+                        {isSelected && !version.isCurrent ? (
+                          <span className="rounded bg-amber-900 px-1.5 py-0.5 text-[11px] text-amber-200">
+                            selected
+                          </span>
+                        ) : null}
+                        {version.isCurrent ? (
+                          <span className="rounded bg-indigo-900 px-1.5 py-0.5 text-[11px] text-indigo-200">
+                            current
+                          </span>
+                        ) : null}
+                      </div>
                     </div>
                     <p className="mt-1 text-xs text-gray-400">{formatDateTime(version.createdAt)}</p>
                     <p className="mt-1 text-xs text-gray-500">{version.tracks.length} track version(s)</p>
                   </button>
-
-                  {!version.isCurrent ? (
-                    <button
-                      type="button"
-                      onClick={() => void revertToVersion(version)}
-                      disabled={Boolean(isReverting)}
-                      className="mt-1 w-full rounded-md border border-gray-700 px-3 py-1.5 text-xs font-medium text-gray-200 hover:bg-gray-800 disabled:opacity-60"
-                    >
-                      {isReverting === version.id ? 'Reverting...' : 'Revert to This Version'}
-                    </button>
-                  ) : null}
                 </li>
               );
             })}

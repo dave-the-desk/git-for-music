@@ -8,6 +8,7 @@ import { TimelineRuler, PX_PER_SECOND } from './TimelineRuler';
 import { TrackWaveform, type TrackWaveformHandle } from './TrackWaveform';
 import { RecordingControls } from './RecordingControls';
 import { RecordingTrackLane } from './RecordingTrackLane';
+import { VersionHistoryTree } from './VersionHistoryTree';
 
 const TRACK_LABEL_WIDTH = 160;
 const TRACK_HEIGHT = 72;
@@ -69,15 +70,6 @@ type DemoDawClientProps = {
   versions: DawVersion[];
 };
 
-function formatDateTime(value: string) {
-  return new Date(value).toLocaleString(undefined, {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  });
-}
 
 export function DemoDawClient({
   groupSlug,
@@ -100,8 +92,7 @@ export function DemoDawClient({
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadName, setUploadName] = useState('');
   const [uploadFile, setUploadFile] = useState<File | null>(null);
-  const [isReverting, setIsReverting] = useState<string | null>(null);
-  const [versionError, setVersionError] = useState<string | null>(null);
+  const [versionHistoryExpanded, setVersionHistoryExpanded] = useState(false);
 
   const [temporaryRecordingTrack, setTemporaryRecordingTrack] = useState<TemporaryRecordingTrack | null>(null);
   const [recordingStream, setRecordingStream] = useState<MediaStream | null>(null);
@@ -425,6 +416,7 @@ export function DemoDawClient({
       const file = new File([track.blob], `recording-${Date.now()}.${ext}`, { type: track.blob.type });
       const formData = new FormData();
       formData.append('demoId', demoId);
+      formData.append('sourceVersionId', selectedVersionId);
       if (track.name.trim()) formData.append('name', track.name.trim());
       formData.append('file', file);
 
@@ -463,6 +455,7 @@ export function DemoDawClient({
     try {
       const formData = new FormData();
       formData.append('demoId', demoId);
+      formData.append('sourceVersionId', selectedVersionId);
       if (uploadName.trim()) formData.append('name', uploadName.trim());
       formData.append('file', uploadFile);
 
@@ -479,33 +472,6 @@ export function DemoDawClient({
       setUploadError('Something went wrong while uploading. Please try again.');
     } finally {
       setIsUploading(false);
-    }
-  }
-
-  async function revertToVersion(version: DawVersion) {
-    setVersionError(null);
-    setIsReverting(version.id);
-    try {
-      const response = await fetch('/api/versions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          demoId,
-          sourceVersionId: version.id,
-          label: `Revert to ${version.label}`,
-          description: `Snapshot copied from version ${version.label}`,
-        }),
-      });
-      const data = (await response.json()) as { error?: string };
-      if (!response.ok) {
-        setVersionError(data.error ?? 'Could not revert to selected version');
-        return;
-      }
-      router.refresh();
-    } catch {
-      setVersionError('Something went wrong while reverting. Please try again.');
-    } finally {
-      setIsReverting(null);
     }
   }
 
@@ -528,6 +494,9 @@ export function DemoDawClient({
       {/* Upload form */}
       <form onSubmit={onUploadTrack} className="space-y-3 rounded-md border border-gray-800 bg-gray-900 p-4">
         <p className="text-sm font-medium text-white">Add Audio Track</p>
+        <p className="text-xs text-gray-400">
+          New uploads and recordings branch from the selected version in the history tree.
+        </p>
         <div className="flex flex-wrap gap-3">
           <label className="min-w-[160px] flex-1">
             <span className="mb-1 block text-xs uppercase tracking-wide text-gray-400">Track Name (optional)</span>
@@ -584,7 +553,7 @@ export function DemoDawClient({
       ) : null}
 
       {/* Main workspace: timeline + version history sidebar */}
-      <div className="grid gap-4 lg:grid-cols-[1fr_280px]">
+      <div className={`grid gap-4 ${versionHistoryExpanded ? 'lg:grid-cols-2' : 'lg:grid-cols-[1fr_280px]'}`}>
 
         {/* DAW Timeline — min-w-0 prevents it from pushing the sidebar off screen */}
         <section className="min-w-0 space-y-3 rounded-lg border border-gray-800 bg-gray-950 p-4">
@@ -636,11 +605,12 @@ export function DemoDawClient({
                             autoFocus
                             type="text"
                             value={renameState.value}
-                            onChange={(e) =>
+                            onChange={(e) => {
+                              const value = e.currentTarget.value;
                               setRenameState((prev) =>
-                                prev ? { ...prev, value: e.currentTarget.value } : null,
-                              )
-                            }
+                                prev ? { ...prev, value } : null,
+                              );
+                            }}
                             onKeyDown={(e) => {
                               if (e.key === 'Enter') void commitRename();
                               if (e.key === 'Escape') cancelRename();
@@ -755,53 +725,18 @@ export function DemoDawClient({
           )}
         </section>
 
-        {/* Version History sidebar */}
-        <aside className="space-y-3 rounded-lg border border-gray-800 bg-gray-900 p-4">
-          <h2 className="text-lg font-semibold text-white">Version History</h2>
-          {versionError ? <p className="text-sm text-red-400">{versionError}</p> : null}
-          <ul className="space-y-2">
-            {versions.map((version) => {
-              const isSelected = version.id === selectedVersion?.id;
-              return (
-                <li key={version.id}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSelectedVersionId(version.id);
-                      stopTransport();
-                    }}
-                    className={`w-full rounded-md border px-3 py-2 text-left transition-colors ${
-                      isSelected
-                        ? 'border-indigo-500 bg-indigo-500/10'
-                        : 'border-gray-800 bg-gray-950 hover:bg-gray-900'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="text-sm font-medium text-white">{version.label}</p>
-                      {version.isCurrent ? (
-                        <span className="rounded bg-indigo-900 px-1.5 py-0.5 text-[11px] text-indigo-200">
-                          current
-                        </span>
-                      ) : null}
-                    </div>
-                    <p className="mt-1 text-xs text-gray-400">{formatDateTime(version.createdAt)}</p>
-                    <p className="mt-1 text-xs text-gray-500">{version.tracks.length} track version(s)</p>
-                  </button>
-                  {!version.isCurrent ? (
-                    <button
-                      type="button"
-                      onClick={() => void revertToVersion(version)}
-                      disabled={Boolean(isReverting)}
-                      className="mt-1 w-full rounded-md border border-gray-700 px-3 py-1.5 text-xs font-medium text-gray-200 hover:bg-gray-800 disabled:opacity-60"
-                    >
-                      {isReverting === version.id ? 'Reverting...' : 'Revert to This Version'}
-                    </button>
-                  ) : null}
-                </li>
-              );
-            })}
-          </ul>
-        </aside>
+        <VersionHistoryTree
+          demoId={demoId}
+          versions={versions}
+          currentVersionId={currentVersionId}
+          selectedVersionId={selectedVersionId}
+          onSelectVersion={(id) => {
+            setSelectedVersionId(id);
+            stopTransport();
+          }}
+          expanded={versionHistoryExpanded}
+          onExpandToggle={() => setVersionHistoryExpanded((prev) => !prev)}
+        />
       </div>
     </div>
   );

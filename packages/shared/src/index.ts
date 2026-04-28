@@ -32,6 +32,7 @@ export interface UploadTrackRequest {
   demoId: string;
   trackId?: string;
   name?: string;
+  sourceVersionId?: string;
 }
 
 // ─── API response shapes ─────────────────────────────────────────────────────

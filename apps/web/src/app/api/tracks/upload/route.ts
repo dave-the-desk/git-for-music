@@ -40,6 +40,7 @@ export async function POST(req: NextRequest) {
   const demoId = formData.get('demoId');
   const name = formData.get('name');
   const incomingTrackId = formData.get('trackId');
+  const sourceVersionId = formData.get('sourceVersionId');
   const file = formData.get('file');
 
   if (typeof demoId !== 'string' || !demoId.trim()) {
@@ -81,6 +82,25 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  let selectedSourceVersionId = currentVersionId;
+  if (typeof sourceVersionId === 'string' && sourceVersionId.trim()) {
+    const version = await prisma.demoVersion.findFirst({
+      where: {
+        id: sourceVersionId,
+        demoId: demo.id,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!version) {
+      return NextResponse.json<ApiError>({ error: 'Source version not found' }, { status: 404 });
+    }
+
+    selectedSourceVersionId = version.id;
+  }
+
   let existingTrackId: string | null = null;
   if (typeof incomingTrackId === 'string' && incomingTrackId) {
     const existingTrack = await prisma.track.findFirst({
@@ -115,9 +135,9 @@ export async function POST(req: NextRequest) {
   const createdTrackVersion = await prisma.$transaction(async (tx) => {
     const nextVersion = await createDemoVersionWithCopiedTracks(tx, {
       demoId: demo.id,
-      sourceVersionId: currentVersionId,
-      parentId: currentVersionId,
-      label: `Upload: ${typeof name === 'string' && name.trim() ? name.trim() : fileNameWithoutExtension(originalName)}`,
+      sourceVersionId: selectedSourceVersionId,
+      parentId: selectedSourceVersionId,
+      label: `Added: ${typeof name === 'string' && name.trim() ? name.trim() : fileNameWithoutExtension(originalName)}`,
       description: 'Added audio track',
     });
 

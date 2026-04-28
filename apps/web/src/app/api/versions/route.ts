@@ -92,7 +92,7 @@ export async function POST(req: NextRequest) {
     const version = await createDemoVersionWithCopiedTracks(tx, {
       demoId: demo.id,
       sourceVersionId: sourceVersion.id,
-      parentId: demo.currentVersionId,
+      parentId: sourceVersion.id,
       label: label || `Snapshot from ${sourceVersion.label}`,
       description: description || null,
     });
