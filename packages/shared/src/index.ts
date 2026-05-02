@@ -112,7 +112,11 @@ export interface SegmentTimelineData {
   trackVersionId: string;
   startMs: number;
   endMs: number;
+  sourceStartMs: number;
+  sourceEndMs: number;
   timelineStartMs: number;
+  timelineEndMs: number;
+  durationMs: number;
   gainDb: number;
   fadeInMs: number;
   fadeOutMs: number;

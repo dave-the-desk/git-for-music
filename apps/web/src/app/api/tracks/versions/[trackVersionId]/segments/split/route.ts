@@ -26,12 +26,17 @@ function serializeSegment(trackVersionId: string, segment: {
   position: number;
 }) {
   const timelineStartMs = segment.timelineStartMs ?? segment.startMs;
+  const durationMs = segment.endMs - segment.startMs;
   return {
     id: segment.id,
     trackVersionId,
     startMs: segment.startMs,
     endMs: segment.endMs,
+    sourceStartMs: segment.startMs,
+    sourceEndMs: segment.endMs,
     timelineStartMs,
+    timelineEndMs: timelineStartMs + durationMs,
+    durationMs,
     gainDb: segment.gainDb,
     fadeInMs: segment.fadeInMs,
     fadeOutMs: segment.fadeOutMs,
