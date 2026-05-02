@@ -44,6 +44,7 @@ export function RecordingTrackLane({
   const analyserRef = useRef<AnalyserNode | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const animFrameRef = useRef<number | null>(null);
+  const recordingWidthPxRef = useRef<number | null>(null);
 
   // All committed peaks — one entry per MS_PER_PEAK ms of audio.
   // Kept in a ref to avoid triggering React re-renders at 60 fps.
@@ -63,7 +64,7 @@ export function RecordingTrackLane({
   const isRecording = track.status === 'recording';
   const leftPx = (track.startOffsetMs / 1000) * PX_PER_SECOND;
   const widthPx = isRecording
-    ? Math.max((track.durationMs / 1000) * PX_PER_SECOND, MIN_RECORDING_WIDTH_PX)
+    ? recordingWidthPxRef.current ?? MIN_RECORDING_WIDTH_PX
     : Math.max((track.durationMs / 1000) * PX_PER_SECOND, 8);
 
   // ── Drawing ────────────────────────────────────────────────────────────────
@@ -165,6 +166,20 @@ export function RecordingTrackLane({
     ro.observe(container);
     return () => ro.disconnect();
   }, []);
+
+  useEffect(() => {
+    if (isRecording) {
+      if (recordingWidthPxRef.current === null) {
+        recordingWidthPxRef.current = Math.max(
+          (track.durationMs / 1000) * PX_PER_SECOND,
+          MIN_RECORDING_WIDTH_PX,
+        );
+      }
+      return;
+    }
+
+    recordingWidthPxRef.current = null;
+  }, [isRecording, track.durationMs]);
 
   // ── RAF capture loop ───────────────────────────────────────────────────────
 

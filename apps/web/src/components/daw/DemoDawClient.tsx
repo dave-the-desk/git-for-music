@@ -32,6 +32,7 @@ import {
   normalizeTimeSignature,
   snapMsToGrid,
 } from '@/lib/daw/timing';
+import { AudioInputSelector } from './AudioInputSelector';
 
 const TRACK_LABEL_WIDTH = 160;
 const TRACK_HEIGHT = 72;
@@ -205,6 +206,8 @@ export function DemoDawClient({
 
   const [temporaryRecordingTrack, setTemporaryRecordingTrack] = useState<TemporaryRecordingTrack | null>(null);
   const [recordingStream, setRecordingStream] = useState<MediaStream | null>(null);
+  const [selectedAudioInputDeviceId, setSelectedAudioInputDeviceId] = useState<string | null>(null);
+  const [audioInputReady, setAudioInputReady] = useState(false);
   const recordingPreviewUrlRef = useRef<string | null>(null);
 
   // Optimistic offset overrides while dragging or after a successful save (before refresh)
@@ -1588,10 +1591,21 @@ export function DemoDawClient({
         leadingSlot={
           <RecordingControls
             currentTimeMs={currentTimeMs}
-            isDisabled={temporaryRecordingTrack !== null}
+            isDisabled={temporaryRecordingTrack !== null || !audioInputReady || !selectedAudioInputDeviceId}
+            selectedAudioInputDeviceId={selectedAudioInputDeviceId}
+            isAudioInputReady={audioInputReady}
+            onNeedsAudioInput={() => {}}
             onStreamReady={handleRecordingStreamReady}
             onDurationUpdate={handleRecordingDurationUpdate}
             onStopped={handleRecordingStopped}
+          />
+        }
+        trailingSlot={
+          <AudioInputSelector
+            selectedAudioInputDeviceId={selectedAudioInputDeviceId}
+            onSelectedAudioInputDeviceIdChange={setSelectedAudioInputDeviceId}
+            isAudioInputReady={audioInputReady}
+            onAudioInputReadyChange={setAudioInputReady}
           />
         }
       />

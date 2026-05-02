@@ -41,10 +41,11 @@ export function RecordingTrackLane({
   const sampleAccRef = useRef<{ min: number; max: number }>({ min: 0, max: 0 });
   const recordingStartTimeRef = useRef<number>(0);
   const gainRef = useRef(1);
+  const recordingWidthPxRef = useRef<number | null>(null);
   const isRecording = track.status === 'recording';
   const leftPx = (track.startOffsetMs / 1000) * PX_PER_SECOND;
   const widthPx = isRecording
-    ? Math.max((track.durationMs / 1000) * PX_PER_SECOND, MIN_RECORDING_WIDTH_PX)
+    ? recordingWidthPxRef.current ?? MIN_RECORDING_WIDTH_PX
     : Math.max((track.durationMs / 1000) * PX_PER_SECOND, 8);
 
   function drawLatestPeak() {
@@ -138,6 +139,20 @@ export function RecordingTrackLane({
     ro.observe(container);
     return () => ro.disconnect();
   }, []);
+
+  useEffect(() => {
+    if (isRecording) {
+      if (recordingWidthPxRef.current === null) {
+        recordingWidthPxRef.current = Math.max(
+          (track.durationMs / 1000) * PX_PER_SECOND,
+          MIN_RECORDING_WIDTH_PX,
+        );
+      }
+      return;
+    }
+
+    recordingWidthPxRef.current = null;
+  }, [isRecording, track.durationMs]);
 
   const captureAndDraw = useCallback(() => {
     const analyser = analyserRef.current;

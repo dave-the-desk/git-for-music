@@ -7,6 +7,9 @@ type RecordingState = 'idle' | 'requesting' | 'recording' | 'error';
 type Props = {
   currentTimeMs: number;
   isDisabled: boolean;
+  selectedAudioInputDeviceId: string | null;
+  isAudioInputReady: boolean;
+  onNeedsAudioInput?: () => void;
   onStreamReady: (stream: MediaStream, startOffsetMs: number) => void;
   onDurationUpdate: (durationMs: number) => void;
   onStopped: (blob: Blob, previewUrl: string, durationMs: number) => void;
@@ -15,6 +18,9 @@ type Props = {
 export function RecordingControls({
   currentTimeMs,
   isDisabled,
+  selectedAudioInputDeviceId,
+  isAudioInputReady,
+  onNeedsAudioInput,
   onStreamReady,
   onDurationUpdate,
   onStopped,
@@ -71,9 +77,24 @@ export function RecordingControls({
 
   async function startRecording() {
     setError(null);
+
+    if (!isAudioInputReady || !selectedAudioInputDeviceId) {
+      onNeedsAudioInput?.();
+      setError('Choose a microphone before recording.');
+      setRecState('error');
+      return;
+    }
+
     setRecState('requesting');
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          deviceId: { exact: selectedAudioInputDeviceId },
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+        },
+      });
       streamRef.current = stream;
 
       const capturedStartOffsetMs = currentTimeMs;
@@ -104,7 +125,13 @@ export function RecordingControls({
       recorder.start();
       startDurationLoop();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Microphone access denied');
+      if (err instanceof DOMException && (err.name === 'NotFoundError' || err.name === 'OverconstrainedError')) {
+        setError('Selected microphone is unavailable. Choose another input.');
+      } else if (err instanceof DOMException && err.name === 'NotAllowedError') {
+        setError('Microphone permission was denied. Allow access from the mic button.');
+      } else {
+        setError(err instanceof Error ? err.message : 'Microphone access denied');
+      }
       setRecState('error');
     }
   }
@@ -134,13 +161,21 @@ export function RecordingControls({
           <button
             type="button"
             onClick={() => void startRecording()}
-            disabled={isDisabled}
+            disabled={isDisabled || !isAudioInputReady || !selectedAudioInputDeviceId}
             className="flex items-center gap-2 rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-500 disabled:opacity-60"
           >
             <span className="h-2 w-2 rounded-full bg-white" />
             Record
           </button>
-          {error ? <p className="text-sm text-red-400">{error}</p> : null}
+          {error ? (
+            <p className="text-sm text-red-400">{error}</p>
+          ) : !isAudioInputReady || !selectedAudioInputDeviceId ? (
+            <p className="text-sm text-amber-300">
+              {selectedAudioInputDeviceId
+                ? 'Allow microphone access from the mic button before recording.'
+                : 'Choose a microphone from the mic button before recording.'}
+            </p>
+          ) : null}
         </>
       )}
 

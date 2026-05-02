@@ -7,6 +7,7 @@ type TransportControlsProps = {
   onPause: () => void;
   onStop: () => void;
   leadingSlot?: React.ReactNode;
+  trailingSlot?: React.ReactNode;
 };
 
 function formatTime(ms: number) {
@@ -24,6 +25,7 @@ export function TransportControls({
   onPause,
   onStop,
   leadingSlot,
+  trailingSlot,
 }: TransportControlsProps) {
   return (
     <div className="flex items-center gap-3 rounded-md border border-gray-700 bg-gray-900 px-4 py-2">
@@ -64,6 +66,8 @@ export function TransportControls({
       </button>
 
       <span className="font-mono text-sm tabular-nums text-gray-200">{formatTime(currentTimeMs)}</span>
+
+      {trailingSlot}
     </div>
   );
 }

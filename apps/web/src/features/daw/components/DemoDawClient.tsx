@@ -19,6 +19,7 @@ import { TrackWaveform, type TrackWaveformHandle } from '@/features/daw/componen
 import { RecordingControls } from '@/features/daw/components/RecordingControls';
 import { RecordingTrackLane } from '@/features/daw/components/RecordingTrackLane';
 import { VersionHistoryTree } from '@/features/daw/components/VersionHistoryTree';
+import { AudioInputSelector } from '@/components/daw/AudioInputSelector';
 import { useDemoComments } from '@/features/daw/hooks/useDemoComments';
 import { buildRenderableTrackSegments, isValidSplitTime, type TrackTimelineSegment } from '@/features/daw/utils/segments';
 import {
@@ -100,6 +101,8 @@ export function DemoDawClient({
 
   const [temporaryRecordingTrack, setTemporaryRecordingTrack] = useState<TemporaryRecordingTrack | null>(null);
   const [recordingStream, setRecordingStream] = useState<MediaStream | null>(null);
+  const [selectedAudioInputDeviceId, setSelectedAudioInputDeviceId] = useState<string | null>(null);
+  const [audioInputReady, setAudioInputReady] = useState(false);
   const recordingPreviewUrlRef = useRef<string | null>(null);
 
   const [offsetOverrides, setOffsetOverrides] = useState<Record<string, number>>({});
@@ -1417,10 +1420,21 @@ export function DemoDawClient({
         leadingSlot={
           <RecordingControls
             currentTimeMs={currentTimeMs}
-            isDisabled={temporaryRecordingTrack !== null}
+            isDisabled={temporaryRecordingTrack !== null || !audioInputReady || !selectedAudioInputDeviceId}
+            selectedAudioInputDeviceId={selectedAudioInputDeviceId}
+            isAudioInputReady={audioInputReady}
+            onNeedsAudioInput={() => {}}
             onStreamReady={handleRecordingStreamReady}
             onDurationUpdate={handleRecordingDurationUpdate}
             onStopped={handleRecordingStopped}
+          />
+        }
+        trailingSlot={
+          <AudioInputSelector
+            selectedAudioInputDeviceId={selectedAudioInputDeviceId}
+            onSelectedAudioInputDeviceIdChange={setSelectedAudioInputDeviceId}
+            isAudioInputReady={audioInputReady}
+            onAudioInputReadyChange={setAudioInputReady}
           />
         }
       />
