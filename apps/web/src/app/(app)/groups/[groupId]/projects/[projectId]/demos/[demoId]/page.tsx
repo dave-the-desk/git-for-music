@@ -86,6 +86,13 @@ export default async function DemoPage({
           segments: trackVersion.segments.map((segment) => ({
             id: segment.id,
             trackVersionId: trackVersion.id,
+            sourceStartMs: segment.startMs,
+            sourceEndMs: segment.endMs,
+            timelineStartMs: segment.timelineStartMs ?? trackVersion.startOffsetMs + segment.startMs,
+            timelineEndMs:
+              (segment.timelineStartMs ?? trackVersion.startOffsetMs + segment.startMs) +
+              (segment.endMs - segment.startMs),
+            durationMs: segment.endMs - segment.startMs,
             startMs: segment.startMs,
             endMs: segment.endMs,
             gainDb: segment.gainDb,

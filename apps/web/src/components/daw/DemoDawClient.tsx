@@ -324,6 +324,7 @@ export function DemoDawClient({
       const offset = offsetOverrides[t.trackVersionId] ?? t.startOffsetMs;
       const trackSegments = buildRenderableTrackSegments({
         trackVersionId: t.trackVersionId,
+        trackStartOffsetMs: offset,
         segments: t.segments,
         fallbackDurationMs: dur,
       });
@@ -685,8 +686,10 @@ export function DemoDawClient({
   }
 
   function getRenderableTrackSegments(track: DawTrack) {
+    const offsetMs = offsetOverrides[track.trackVersionId] ?? track.startOffsetMs;
     return buildRenderableTrackSegments({
       trackVersionId: track.trackVersionId,
+      trackStartOffsetMs: offsetMs,
       segments: track.segments,
       fallbackDurationMs: getTrackDurationMs(track),
     });

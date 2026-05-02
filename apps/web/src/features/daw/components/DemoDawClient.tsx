@@ -10,6 +10,7 @@ import type {
   JobStatusResponse,
   SnapResolution,
   SplitSegmentRequest,
+  SplitSegmentResponse,
   UploadTimingChoice,
   UploadTrackResponse,
 } from '@git-for-music/shared';
@@ -47,6 +48,43 @@ import {
 } from '@/features/daw/state/daw-state';
 
 const DEMO_PAGE_TRACK_HEIGHT = TRACK_HEIGHT;
+
+type TimelineHistoryEntry =
+  | {
+      kind: 'move-track';
+      trackVersionId: string;
+      previousStartOffsetMs: number;
+      nextStartOffsetMs: number;
+    }
+  | {
+      kind: 'move-segment';
+      trackVersionId: string;
+      segmentId: string;
+      previousTimelineStartMs: number;
+      nextTimelineStartMs: number;
+    }
+  | {
+      kind: 'cut';
+      trackVersionId: string;
+      previousSegments: TrackTimelineSegment[];
+      nextSegments: TrackTimelineSegment[];
+      previousSelectedSegmentId: string | null;
+    };
+
+type TimelineDragState =
+  | {
+      kind: 'track';
+      trackVersionId: string;
+      originalStartOffsetMs: number;
+      startX: number;
+    }
+  | {
+      kind: 'segment';
+      trackVersionId: string;
+      segmentId: string;
+      originalTimelineStartMs: number;
+      startX: number;
+    };
 
 type DemoDawClientProps = {
   groupSlug: string;
@@ -106,8 +144,10 @@ export function DemoDawClient({
   const recordingPreviewUrlRef = useRef<string | null>(null);
 
   const [offsetOverrides, setOffsetOverrides] = useState<Record<string, number>>({});
+  const [segmentLayoutOverrides, setSegmentLayoutOverrides] = useState<Record<string, TrackTimelineSegment[]>>({});
+  const [timelineHistory, setTimelineHistory] = useState<TimelineHistoryEntry[]>([]);
   const [dragError, setDragError] = useState<string | null>(null);
-  const dragRef = useRef<{ trackVersionId: string; originalOffset: number; startX: number } | null>(null);
+  const dragRef = useRef<TimelineDragState | null>(null);
   const [timelineTool, setTimelineTool] = useState<'select' | 'split'>('select');
   const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(null);
   const [splitHoverTimeMs, setSplitHoverTimeMs] = useState<number | null>(null);
@@ -123,6 +163,9 @@ export function DemoDawClient({
   const metronomeAudioRef = useRef<AudioContext | null>(null);
   const metronomeTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const metronomeScheduledBeatRef = useRef<number | null>(null);
+  const undoLatestTimelineEditRef = useRef<() => Promise<boolean>>(async () => false);
+  const cancelTimelineDragRef = useRef<() => void>(() => {});
+  const timelineToolRef = useRef<'select' | 'split'>('select');
 
   const selectedVersion = useMemo(
     () => versions.find((v) => v.id === selectedVersionId) ?? versions[0],
@@ -218,21 +261,24 @@ export function DemoDawClient({
       const offset = offsetOverrides[t.trackVersionId] ?? t.startOffsetMs;
       const trackSegments = buildRenderableTrackSegments({
         trackVersionId: t.trackVersionId,
-        segments: t.segments,
+        trackStartOffsetMs: offset,
+        segments: segmentLayoutOverrides[t.trackVersionId] ?? t.segments,
         fallbackDurationMs: dur,
       });
-      return trackSegments.map((segment) => offset + segment.endMs);
+      return trackSegments.map((segment) => segment.timelineEndMs);
     });
     if (temporaryRecordingTrack) {
       ends.push(temporaryRecordingTrack.startOffsetMs + temporaryRecordingTrack.durationMs);
     }
     return ends.length ? Math.max(...ends) : 0;
-  }, [selectedTracks, durationByTrackVersionId, offsetOverrides, temporaryRecordingTrack]);
+  }, [selectedTracks, durationByTrackVersionId, offsetOverrides, segmentLayoutOverrides, temporaryRecordingTrack]);
 
   const totalTimelineWidth = Math.max((totalDurationMs / 1000) * PX_PER_SECOND, 400);
 
   useEffect(() => {
     setOffsetOverrides({});
+    setSegmentLayoutOverrides({});
+    setTimelineHistory([]);
     setDragError(null);
     setSelectedSegmentId(null);
     setSplitHoverTimeMs(null);
@@ -366,9 +412,133 @@ export function DemoDawClient({
     };
   }, []);
 
+  useEffect(() => {
+    timelineToolRef.current = timelineTool;
+  }, [timelineTool]);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (isTypingTarget(event.target)) return;
+
+      const isUndo = (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z';
+      if (isUndo) {
+        event.preventDefault();
+        if (event.shiftKey) {
+          return;
+        }
+        void undoLatestTimelineEditRef.current();
+        return;
+      }
+
+      if (event.key === 'Escape') {
+        if (dragRef.current) {
+          cancelTimelineDragRef.current();
+        } else if (timelineToolRef.current === 'split') {
+          setTimelineTool('select');
+        }
+      }
+    }
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
   function getActiveTiming() {
     if (!selectedTiming || !isValidTempoBpm(selectedTiming.tempoBpm)) return null;
     return selectedTiming;
+  }
+
+  function isTypingTarget(target: EventTarget | null) {
+    if (!(target instanceof HTMLElement)) return false;
+    return target.matches('input, textarea, select, [contenteditable="true"]');
+  }
+
+  function getTrackStartOffsetMs(track: DawTrack) {
+    return offsetOverrides[track.trackVersionId] ?? track.startOffsetMs;
+  }
+
+  function getDisplayedTrackSegments(track: DawTrack) {
+    return segmentLayoutOverrides[track.trackVersionId] ?? track.segments;
+  }
+
+  function getRenderableTrackSegments(track: DawTrack) {
+    return buildRenderableTrackSegments({
+      trackVersionId: track.trackVersionId,
+      trackStartOffsetMs: getTrackStartOffsetMs(track),
+      segments: getDisplayedTrackSegments(track),
+      fallbackDurationMs: getTrackDurationMs(track),
+    });
+  }
+
+  function setTrackSegmentLayout(trackVersionId: string, segments: TrackTimelineSegment[]) {
+    setSegmentLayoutOverrides((prev) => ({
+      ...prev,
+      [trackVersionId]: segments,
+    }));
+  }
+
+  function pushTimelineHistory(entry: TimelineHistoryEntry) {
+    setTimelineHistory((prev) => [...prev, entry]);
+  }
+
+  async function undoLatestTimelineEdit() {
+    const lastEntry = timelineHistory[timelineHistory.length - 1];
+    if (!lastEntry) return false;
+
+    if (lastEntry.kind === 'move-track') {
+      setOffsetOverrides((prev) => ({
+        ...prev,
+        [lastEntry.trackVersionId]: lastEntry.previousStartOffsetMs,
+      }));
+      try {
+        const res = await fetch(`/api/tracks/versions/${lastEntry.trackVersionId}/offset`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ startOffsetMs: lastEntry.previousStartOffsetMs }),
+        });
+        if (!res.ok) {
+          throw new Error('Could not undo track move');
+        }
+      } catch (error) {
+        setDragError(error instanceof Error ? error.message : 'Could not undo track move');
+      }
+    } else if (lastEntry.kind === 'move-segment') {
+      const currentTrack = selectedTracks.find((track) => track.trackVersionId === lastEntry.trackVersionId);
+      const currentSegments = currentTrack
+        ? getDisplayedTrackSegments(currentTrack)
+        : segmentLayoutOverrides[lastEntry.trackVersionId] ?? [];
+      const nextSegments = currentSegments.map((segment) =>
+        segment.id === lastEntry.segmentId
+          ? {
+              ...segment,
+              timelineStartMs: lastEntry.previousTimelineStartMs,
+              timelineEndMs: lastEntry.previousTimelineStartMs + segment.durationMs,
+            }
+          : segment,
+      );
+      setTrackSegmentLayout(lastEntry.trackVersionId, nextSegments);
+      try {
+        const res = await fetch(
+          `/api/tracks/versions/${lastEntry.trackVersionId}/segments/${lastEntry.segmentId}/position`,
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ timelineStartMs: lastEntry.previousTimelineStartMs }),
+          },
+        );
+        if (!res.ok) {
+          throw new Error('Could not undo segment move');
+        }
+      } catch (error) {
+        setDragError(error instanceof Error ? error.message : 'Could not undo segment move');
+      }
+    } else if (lastEntry.kind === 'cut') {
+      setTrackSegmentLayout(lastEntry.trackVersionId, lastEntry.previousSegments);
+      setSelectedSegmentId(lastEntry.previousSelectedSegmentId);
+    }
+
+    setTimelineHistory((prev) => prev.slice(0, -1));
+    return true;
   }
 
   function ensureMetronomeContext() {
@@ -482,7 +652,7 @@ export function DemoDawClient({
     selectedTracks.forEach((t) => {
       const wf = waveformRefs.current[t.trackVersionId];
       const dur = durationByTrackVersionId[t.trackVersionId] ?? t.durationMs ?? 0;
-      const offset = offsetOverrides[t.trackVersionId] ?? t.startOffsetMs;
+      const offset = getTrackStartOffsetMs(t);
       if (!mutedTrackVersionIds.has(t.trackVersionId) && startMs < offset + dur) {
         wf?.play();
       }
@@ -504,7 +674,7 @@ export function DemoDawClient({
       selectedTracks.forEach((t) => {
         const wf = waveformRefs.current[t.trackVersionId];
         const dur = durationByTrackVersionId[t.trackVersionId] ?? t.durationMs ?? 0;
-        const offset = offsetOverrides[t.trackVersionId] ?? t.startOffsetMs;
+        const offset = getTrackStartOffsetMs(t);
         const relativeMs = newTimeMs - offset;
         if (relativeMs >= dur) {
           wf?.pause();
@@ -531,27 +701,16 @@ export function DemoDawClient({
     return durationByTrackVersionId[track.trackVersionId] ?? track.durationMs ?? 0;
   }
 
-  function getRenderableTrackSegments(track: DawTrack) {
-    return buildRenderableTrackSegments({
-      trackVersionId: track.trackVersionId,
-      segments: track.segments,
-      fallbackDurationMs: getTrackDurationMs(track),
-    });
-  }
-
-  function findSegmentAtTime(track: DawTrack, timeMs: number) {
-    const offsetMs = offsetOverrides[track.trackVersionId] ?? track.startOffsetMs;
-    return (
-      getRenderableTrackSegments(track).find(
-        (segment) => timeMs >= offsetMs + segment.startMs && timeMs <= offsetMs + segment.endMs,
-      ) ?? null
-    );
-  }
-
-  function getSplitTimeFromClientX(currentTarget: HTMLDivElement, clientX: number) {
+  function getSplitTimeFromClientX(currentTarget: HTMLElement, clientX: number) {
     const rect = currentTarget.getBoundingClientRect();
     const x = Math.max(0, Math.min(clientX - rect.left, rect.width));
     return Math.max(0, (x / PX_PER_SECOND) * 1000);
+  }
+
+  function findSegmentAtTime(track: DawTrack, timeMs: number) {
+    return getRenderableTrackSegments(track).find(
+      (segment) => timeMs >= segment.timelineStartMs && timeMs <= segment.timelineEndMs,
+    ) ?? null;
   }
 
   async function splitSegmentOnTrack(track: DawTrack, segment: TrackTimelineSegment, splitTimeMs: number) {
@@ -570,13 +729,50 @@ export function DemoDawClient({
       body: JSON.stringify(body),
     });
 
-    const data = (await response.json()) as { error?: string; leftSegmentId?: string };
+    const data = (await response.json()) as SplitSegmentResponse | { error?: string };
     if (!response.ok) {
-      throw new Error(data.error ?? 'Could not split clip');
+      const errorData = data as { error?: string };
+      throw new Error(errorData.error ?? 'Could not split clip');
     }
 
-    setSelectedSegmentId(data.leftSegmentId ?? segment.id);
-    router.refresh();
+    const payload = data as SplitSegmentResponse;
+    const currentSegments = getDisplayedTrackSegments(track);
+    const nextSegments = currentSegments
+      .filter((current) => current.id !== segment.id)
+      .concat([
+        {
+          ...payload.leftSegment,
+          isImplicit: false,
+          sourceStartMs: payload.leftSegment.startMs,
+          sourceEndMs: payload.leftSegment.endMs,
+          durationMs: payload.leftSegment.endMs - payload.leftSegment.startMs,
+          timelineEndMs:
+            payload.leftSegment.timelineStartMs +
+            (payload.leftSegment.endMs - payload.leftSegment.startMs),
+        },
+        {
+          ...payload.rightSegment,
+          isImplicit: false,
+          sourceStartMs: payload.rightSegment.startMs,
+          sourceEndMs: payload.rightSegment.endMs,
+          durationMs: payload.rightSegment.endMs - payload.rightSegment.startMs,
+          timelineEndMs:
+            payload.rightSegment.timelineStartMs +
+            (payload.rightSegment.endMs - payload.rightSegment.startMs),
+        },
+      ])
+      .sort((a, b) => a.position - b.position);
+
+    setTrackSegmentLayout(track.trackVersionId, nextSegments);
+    setSelectedSegmentId(payload.leftSegment.id);
+    setSplitError(null);
+    pushTimelineHistory({
+      kind: 'cut',
+      trackVersionId: track.trackVersionId,
+      previousSegments: currentSegments,
+      nextSegments,
+      previousSelectedSegmentId: selectedSegmentId,
+    });
   }
 
   function toggleMute(trackVersionId: string) {
@@ -590,54 +786,53 @@ export function DemoDawClient({
     });
   }
 
-  function handleWaveformPointerDown(e: React.PointerEvent<HTMLDivElement>, track: DawTrack) {
-    if (timelineTool === 'split') {
-      return;
-    }
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const currentOffset = offsetOverrides[track.trackVersionId] ?? track.startOffsetMs;
-    const dur = durationByTrackVersionId[track.trackVersionId] ?? track.durationMs ?? 0;
-    const leftPx = (currentOffset / 1000) * PX_PER_SECOND;
-    const widthPx = dur > 0 ? (dur / 1000) * PX_PER_SECOND : 200;
-
-    if (x < leftPx || x > leftPx + widthPx) return;
-
-    e.currentTarget.setPointerCapture(e.pointerId);
+  function beginTrackDrag(track: DawTrack, startX: number) {
     dragRef.current = {
+      kind: 'track',
       trackVersionId: track.trackVersionId,
-      originalOffset: currentOffset,
-      startX: e.clientX,
+      originalStartOffsetMs: getTrackStartOffsetMs(track),
+      startX,
     };
-    setDragError(null);
   }
 
-  function handleWaveformPointerMove(e: React.PointerEvent<HTMLDivElement>, track: DawTrack) {
-    if (timelineTool === 'split') {
-      return;
-    }
-    const drag = dragRef.current;
-    if (!drag || drag.trackVersionId !== track.trackVersionId) return;
-
-    const deltaX = e.clientX - drag.startX;
-    const deltaMs = (deltaX / PX_PER_SECOND) * 1000;
-    const rawMs = drag.originalOffset + deltaMs;
-    const snapped = snapMsToGrid(rawMs, getActiveTiming(), snapResolution);
-
-    setOffsetOverrides((prev) => ({ ...prev, [track.trackVersionId]: Math.max(0, snapped) }));
+  function beginSegmentDrag(track: DawTrack, segment: TrackTimelineSegment, startX: number) {
+    dragRef.current = {
+      kind: 'segment',
+      trackVersionId: track.trackVersionId,
+      segmentId: segment.id,
+      originalTimelineStartMs: segment.timelineStartMs,
+      startX,
+    };
   }
 
-  async function handleWaveformPointerUp(e: React.PointerEvent<HTMLDivElement>, track: DawTrack) {
-    if (timelineTool === 'split') {
-      return;
-    }
+  function updateTrackDrag(trackVersionId: string, nextStartOffsetMs: number) {
+    setOffsetOverrides((prev) => ({ ...prev, [trackVersionId]: nextStartOffsetMs }));
+  }
+
+  function updateSegmentDrag(trackVersionId: string, segmentId: string, nextTimelineStartMs: number) {
+    const currentTrack = selectedTracks.find((track) => track.trackVersionId === trackVersionId);
+    if (!currentTrack) return;
+    const currentSegments = getDisplayedTrackSegments(currentTrack);
+    const nextSegments = currentSegments.map((segment) =>
+      segment.id === segmentId
+        ? {
+            ...segment,
+            timelineStartMs: nextTimelineStartMs,
+            timelineEndMs: nextTimelineStartMs + segment.durationMs,
+          }
+        : segment,
+    );
+    setTrackSegmentLayout(trackVersionId, nextSegments);
+  }
+
+  async function commitTrackDrag(track: DawTrack) {
     const drag = dragRef.current;
-    if (!drag || drag.trackVersionId !== track.trackVersionId) return;
+    if (!drag || drag.kind !== 'track' || drag.trackVersionId !== track.trackVersionId) return;
 
     dragRef.current = null;
-    const finalOffset = offsetOverrides[track.trackVersionId] ?? track.startOffsetMs;
+    const finalOffset = getTrackStartOffsetMs(track);
 
-    if (finalOffset === drag.originalOffset) return;
+    if (finalOffset === drag.originalStartOffsetMs) return;
 
     try {
       const res = await fetch(`/api/tracks/versions/${track.trackVersionId}/offset`, {
@@ -647,22 +842,215 @@ export function DemoDawClient({
       });
       if (!res.ok) {
         const data = (await res.json()) as { error?: string };
-        setOffsetOverrides((prev) => ({ ...prev, [track.trackVersionId]: drag.originalOffset }));
+        updateTrackDrag(track.trackVersionId, drag.originalStartOffsetMs);
         setDragError(data.error ?? 'Could not save track position');
-      } else {
-        router.refresh();
+        return;
       }
+
+      pushTimelineHistory({
+        kind: 'move-track',
+        trackVersionId: track.trackVersionId,
+        previousStartOffsetMs: drag.originalStartOffsetMs,
+        nextStartOffsetMs: finalOffset,
+      });
     } catch {
-      setOffsetOverrides((prev) => ({ ...prev, [track.trackVersionId]: drag.originalOffset }));
+      updateTrackDrag(track.trackVersionId, drag.originalStartOffsetMs);
       setDragError('Something went wrong saving track position');
     }
   }
 
-  function handleWaveformPointerCancel(track: DawTrack) {
+  async function commitSegmentDrag(track: DawTrack) {
+    const drag = dragRef.current;
+    if (!drag || drag.trackVersionId !== track.trackVersionId || drag.kind !== 'segment') return;
+
+    dragRef.current = null;
+    const currentSegments = getDisplayedTrackSegments(track);
+    const currentSegment = currentSegments.find((segment) => segment.id === drag.segmentId);
+    const finalTimelineStartMs = currentSegment?.timelineStartMs ?? drag.originalTimelineStartMs;
+
+    if (finalTimelineStartMs === drag.originalTimelineStartMs) return;
+
+    if (currentSegment?.isImplicit) {
+      try {
+        const res = await fetch(`/api/tracks/versions/${track.trackVersionId}/offset`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ startOffsetMs: finalTimelineStartMs }),
+        });
+        if (!res.ok) {
+          const data = (await res.json()) as { error?: string };
+          updateTrackDrag(track.trackVersionId, drag.originalTimelineStartMs);
+          setDragError(data.error ?? 'Could not save track position');
+          return;
+        }
+        pushTimelineHistory({
+          kind: 'move-track',
+          trackVersionId: track.trackVersionId,
+          previousStartOffsetMs: drag.originalTimelineStartMs,
+          nextStartOffsetMs: finalTimelineStartMs,
+        });
+      } catch {
+        updateTrackDrag(track.trackVersionId, drag.originalTimelineStartMs);
+        setDragError('Something went wrong saving track position');
+      }
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/tracks/versions/${track.trackVersionId}/segments/${drag.segmentId}/position`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ timelineStartMs: finalTimelineStartMs }),
+      });
+      const data = (await res.json()) as { error?: string; segment?: { timelineStartMs?: number } };
+      if (!res.ok) {
+        throw new Error(data.error ?? 'Could not move segment');
+      }
+      pushTimelineHistory({
+        kind: 'move-segment',
+        trackVersionId: track.trackVersionId,
+        segmentId: drag.segmentId,
+        previousTimelineStartMs: drag.originalTimelineStartMs,
+        nextTimelineStartMs: finalTimelineStartMs,
+      });
+    } catch (error) {
+      updateSegmentDrag(track.trackVersionId, drag.segmentId, drag.originalTimelineStartMs);
+      setDragError(error instanceof Error ? error.message : 'Something went wrong saving segment position');
+    }
+  }
+
+  function cancelTimelineDrag() {
+    const drag = dragRef.current;
+    if (!drag) return;
+
+    if (drag.kind === 'track') {
+      updateTrackDrag(drag.trackVersionId, drag.originalStartOffsetMs);
+    } else {
+      updateSegmentDrag(drag.trackVersionId, drag.segmentId, drag.originalTimelineStartMs);
+    }
+
+    dragRef.current = null;
+  }
+
+  undoLatestTimelineEditRef.current = undoLatestTimelineEdit;
+  cancelTimelineDragRef.current = cancelTimelineDrag;
+
+  function handleTrackPointerDown(e: React.PointerEvent<HTMLDivElement>, track: DawTrack) {
+    if (timelineTool !== 'select') return;
+
+    const visibleSegments = getRenderableTrackSegments(track);
+    if (visibleSegments.length !== 1 || !visibleSegments[0]?.isImplicit) return;
+
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const currentOffset = getTrackStartOffsetMs(track);
+    const dur = durationByTrackVersionId[track.trackVersionId] ?? track.durationMs ?? 0;
+    const leftPx = (currentOffset / 1000) * PX_PER_SECOND;
+    const widthPx = dur > 0 ? (dur / 1000) * PX_PER_SECOND : 200;
+
+    if (x < leftPx || x > leftPx + widthPx) return;
+
+    e.currentTarget.setPointerCapture(e.pointerId);
+    beginTrackDrag(track, e.clientX);
+    setSelectedSegmentId(visibleSegments[0].id);
+    setDragError(null);
+  }
+
+  function handleTrackPointerMove(e: React.PointerEvent<HTMLDivElement>, track: DawTrack) {
+    if (timelineTool !== 'select') return;
+    const drag = dragRef.current;
+    if (!drag || drag.trackVersionId !== track.trackVersionId || drag.kind !== 'track') return;
+
+    const deltaX = e.clientX - drag.startX;
+    const deltaMs = (deltaX / PX_PER_SECOND) * 1000;
+    const rawMs = drag.originalStartOffsetMs + deltaMs;
+    const snapped = Math.max(0, snapMsToGrid(rawMs, getActiveTiming(), snapResolution));
+
+    updateTrackDrag(track.trackVersionId, snapped);
+  }
+
+  async function handleTrackPointerUp(e: React.PointerEvent<HTMLDivElement>, track: DawTrack) {
+    if (timelineTool !== 'select') return;
+    const drag = dragRef.current;
+    if (!drag || drag.trackVersionId !== track.trackVersionId || drag.kind !== 'track') return;
+
+    e.currentTarget.releasePointerCapture?.(e.pointerId);
+    await commitTrackDrag(track);
+  }
+
+  function handleTrackPointerCancel(track: DawTrack) {
+    const drag = dragRef.current;
+    if (!drag || drag.trackVersionId !== track.trackVersionId || drag.kind !== 'track') return;
+    cancelTimelineDrag();
+  }
+
+  function handleSegmentPointerDown(
+    e: React.PointerEvent<HTMLButtonElement>,
+    track: DawTrack,
+    segment: TrackTimelineSegment,
+  ) {
+    if (timelineTool !== 'select') return;
+    e.stopPropagation();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    setSelectedSegmentId(segment.id);
+    setSplitError(null);
+    if (segment.isImplicit) {
+      beginTrackDrag(track, e.clientX);
+    } else {
+      beginSegmentDrag(track, segment, e.clientX);
+    }
+    setDragError(null);
+  }
+
+  function handleSegmentPointerMove(
+    e: React.PointerEvent<HTMLButtonElement>,
+    track: DawTrack,
+    segment: TrackTimelineSegment,
+  ) {
+    if (timelineTool !== 'select') return;
     const drag = dragRef.current;
     if (!drag || drag.trackVersionId !== track.trackVersionId) return;
-    setOffsetOverrides((prev) => ({ ...prev, [track.trackVersionId]: drag.originalOffset }));
-    dragRef.current = null;
+
+    const deltaX = e.clientX - drag.startX;
+    const deltaMs = (deltaX / PX_PER_SECOND) * 1000;
+
+    if (drag.kind === 'track') {
+      const rawMs = drag.originalStartOffsetMs + deltaMs;
+      const snapped = Math.max(0, snapMsToGrid(rawMs, getActiveTiming(), snapResolution));
+      updateTrackDrag(track.trackVersionId, snapped);
+      return;
+    }
+
+    if (drag.segmentId !== segment.id) return;
+    const rawMs = drag.originalTimelineStartMs + deltaMs;
+    const snapped = Math.max(0, snapMsToGrid(rawMs, getActiveTiming(), snapResolution));
+    updateSegmentDrag(track.trackVersionId, segment.id, snapped);
+  }
+
+  async function handleSegmentPointerUp(
+    e: React.PointerEvent<HTMLButtonElement>,
+    track: DawTrack,
+    segment: TrackTimelineSegment,
+  ) {
+    if (timelineTool !== 'select') return;
+    const drag = dragRef.current;
+    if (!drag || drag.trackVersionId !== track.trackVersionId) return;
+    e.currentTarget.releasePointerCapture?.(e.pointerId);
+
+    if (drag.kind === 'track') {
+      await commitTrackDrag(track);
+      return;
+    }
+
+    if (drag.segmentId !== segment.id) return;
+    await commitSegmentDrag(track);
+  }
+
+  function handleSegmentPointerCancel(track: DawTrack, segment: TrackTimelineSegment) {
+    const drag = dragRef.current;
+    if (!drag || drag.trackVersionId !== track.trackVersionId) return;
+    if (drag.kind === 'segment' && drag.segmentId !== segment.id) return;
+    cancelTimelineDrag();
   }
 
   function handleSplitHover(e: React.PointerEvent<HTMLDivElement>) {
@@ -675,26 +1063,21 @@ export function DemoDawClient({
     setSplitHoverTimeMs(null);
   }
 
-  async function handleSplitClick(e: React.MouseEvent<HTMLDivElement>, track: DawTrack) {
+  async function handleSplitClick(currentTarget: HTMLElement, clientX: number, track: DawTrack) {
     if (timelineTool !== 'split') return;
 
-    const clickedTimeMs = getSplitTimeFromClientX(e.currentTarget, e.clientX);
+    const clickedTimeMs = getSplitTimeFromClientX(currentTarget, clientX);
     const clickedSegment = findSegmentAtTime(track, clickedTimeMs);
-    const trackOffsetMs = offsetOverrides[track.trackVersionId] ?? track.startOffsetMs;
-    const splitTimeWithinTrackMs = clickedTimeMs - trackOffsetMs;
 
     if (!clickedSegment) {
       setSplitError('No clip at that position');
       return;
     }
 
-    if (selectedSegmentId !== clickedSegment.id) {
-      setSelectedSegmentId(clickedSegment.id);
-      setSplitError(null);
-      return;
-    }
+    const splitTimeWithinSegmentMs =
+      clickedTimeMs - clickedSegment.timelineStartMs + clickedSegment.sourceStartMs;
 
-    if (!isValidSplitTime(clickedSegment, splitTimeWithinTrackMs)) {
+    if (!isValidSplitTime(clickedSegment, splitTimeWithinSegmentMs)) {
       setSplitError('Split point is too close to the clip boundary');
       return;
     }
@@ -702,7 +1085,7 @@ export function DemoDawClient({
     setSplitError(null);
 
     try {
-      await splitSegmentOnTrack(track, clickedSegment, splitTimeWithinTrackMs);
+      await splitSegmentOnTrack(track, clickedSegment, splitTimeWithinSegmentMs);
     } catch (error) {
       setSplitError(error instanceof Error ? error.message : 'Could not split clip');
     }
@@ -1474,8 +1857,9 @@ export function DemoDawClient({
                     ? 'bg-amber-500/20 text-amber-200 ring-1 ring-amber-500/40'
                     : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
                 }`}
+                title="Cut tool: click a clip to split it"
               >
-                Split
+                Cut
               </button>
             </div>
           </div>
@@ -1485,7 +1869,7 @@ export function DemoDawClient({
             {splitError ? <p className="text-amber-300">{splitError}</p> : null}
           </div>
           <p className="text-[11px] text-gray-500">
-            Split mode keeps the same audio reference and creates two timeline segments inside the selected clip.
+            Cut mode keeps the source audio intact and creates new timeline segments from the clip you click.
           </p>
 
           {hasTimelineContent ? (
@@ -1510,10 +1894,14 @@ export function DemoDawClient({
 
               {selectedTracks.map((track) => {
                 const isMuted = mutedTrackVersionIds.has(track.trackVersionId);
-                const effectiveOffset = offsetOverrides[track.trackVersionId] ?? track.startOffsetMs;
+                const effectiveOffset = getTrackStartOffsetMs(track);
                 const trackDurationMs = getTrackDurationMs(track);
                 const trackSegments = getRenderableTrackSegments(track);
                 const selectedTrackSegment = trackSegments.find((segment) => segment.id === selectedSegmentId) ?? null;
+                const hoveredTrackSegment =
+                  timelineTool === 'split' && splitHoverTimeMs !== null
+                    ? findSegmentAtTime(track, splitHoverTimeMs)
+                    : null;
                 const isRenaming = renameState?.trackId === track.trackId;
                 const trackComments = commentsByTrackId[track.trackId] ?? [];
                 const composer = getComposerState(track.trackId);
@@ -1722,22 +2110,22 @@ export function DemoDawClient({
                     <div
                       className={`relative shrink-0 select-none bg-gray-950 transition-opacity ${
                         isMuted ? 'opacity-40' : ''
-                      } ${timelineTool === 'split' ? 'cursor-crosshair' : 'cursor-grab'}`}
+                      } ${timelineTool === 'split' ? 'cursor-crosshair' : 'cursor-default'}`}
                       style={{ width: totalTimelineWidth, minHeight: DEMO_PAGE_TRACK_HEIGHT }}
-                      onPointerDown={(e) => handleWaveformPointerDown(e, track)}
-                      onPointerMove={(e) => handleWaveformPointerMove(e, track)}
-                      onPointerUp={(e) => void handleWaveformPointerUp(e, track)}
-                      onPointerCancel={() => handleWaveformPointerCancel(track)}
+                      onPointerDown={(e) => handleTrackPointerDown(e, track)}
+                      onPointerMove={(e) => handleTrackPointerMove(e, track)}
+                      onPointerUp={(e) => void handleTrackPointerUp(e, track)}
+                      onPointerCancel={() => handleTrackPointerCancel(track)}
                       onPointerEnter={handleSplitHover}
                       onPointerLeave={handleSplitHoverLeave}
-                      onClick={(e) => void handleSplitClick(e, track)}
+                      onClick={(e) => void handleSplitClick(e.currentTarget, e.clientX, track)}
                     >
                       <div
                         className="pointer-events-none absolute top-0 z-20 h-full w-px bg-yellow-400/80"
                         style={{ left: (currentTimeMs / 1000) * PX_PER_SECOND }}
                       />
 
-                      {timelineTool === 'split' && splitHoverTimeMs !== null && selectedTrackSegment ? (
+                      {timelineTool === 'split' && splitHoverTimeMs !== null && hoveredTrackSegment ? (
                         <div
                           className="pointer-events-none absolute top-0 z-30 h-full w-px bg-amber-300/90"
                           style={{ left: (splitHoverTimeMs / 1000) * PX_PER_SECOND }}
@@ -1749,28 +2137,47 @@ export function DemoDawClient({
                       ) : null}
 
                       {trackSegments.map((segment) => {
-                        const leftPx = ((effectiveOffset + segment.startMs) / 1000) * PX_PER_SECOND;
-                        const widthPx = Math.max(
-                          12,
-                          ((segment.endMs - segment.startMs) / 1000) * PX_PER_SECOND,
-                        );
+                        const leftPx = (segment.timelineStartMs / 1000) * PX_PER_SECOND;
+                        const widthPx = Math.max(12, (segment.durationMs / 1000) * PX_PER_SECOND);
                         const isSelected = selectedTrackSegment?.id === segment.id;
+                        const isDraggingSegment =
+                          dragRef.current?.kind === 'segment' && dragRef.current.segmentId === segment.id;
+                        const isDraggingImplicitTrack =
+                          dragRef.current?.kind === 'track' && dragRef.current.trackVersionId === track.trackVersionId;
 
                         return (
                           <button
                             key={segment.id}
                             type="button"
+                            onPointerDown={(event) => handleSegmentPointerDown(event, track, segment)}
+                            onPointerMove={(event) => handleSegmentPointerMove(event, track, segment)}
+                            onPointerUp={(event) => void handleSegmentPointerUp(event, track, segment)}
+                            onPointerCancel={() => handleSegmentPointerCancel(track, segment)}
                             onClick={(event) => {
-                              if (selectedSegmentId !== segment.id) {
+                              if (timelineTool === 'split') {
                                 event.stopPropagation();
-                                setSelectedSegmentId(segment.id);
-                                setSplitError(null);
+                                void handleSplitClick(event.currentTarget, event.clientX, track);
+                                return;
                               }
+                              event.stopPropagation();
+                              setSelectedSegmentId(segment.id);
+                              setSplitError(null);
                             }}
+                            title={
+                              timelineTool === 'split'
+                                ? 'Cut tool: click a clip to split it'
+                                : 'Select tool: drag this clip to move it'
+                            }
                             className={`absolute top-2 z-10 rounded-md border px-2 py-1 text-left transition-colors ${
                               isSelected
                                 ? 'border-amber-400 bg-amber-500/20 text-amber-100 shadow-[0_0_0_1px_rgba(251,191,36,0.35)]'
                                 : 'border-gray-700 bg-gray-900/70 text-gray-300 hover:border-indigo-400 hover:bg-indigo-500/10'
+                            } ${
+                              isDraggingSegment || isDraggingImplicitTrack
+                                ? 'cursor-grabbing'
+                                : timelineTool === 'split'
+                                  ? 'cursor-crosshair'
+                                  : 'cursor-grab'
                             }`}
                             style={{
                               left: leftPx,

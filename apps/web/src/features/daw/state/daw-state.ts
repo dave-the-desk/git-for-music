@@ -40,6 +40,11 @@ export type DawVersion = {
 export type TrackTimelineSegment = {
   id: string;
   trackVersionId: string;
+  sourceStartMs: number;
+  sourceEndMs: number;
+  timelineStartMs: number;
+  timelineEndMs: number;
+  durationMs: number;
   startMs: number;
   endMs: number;
   gainDb: number;

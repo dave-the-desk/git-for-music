@@ -178,6 +178,7 @@ model Segment {
   id        String  @id @default(cuid())
   startMs   Float
   endMs     Float
+  timelineStartMs Float?
   gainDb    Float   @default(0)
   fadeInMs  Float   @default(0)
   fadeOutMs Float   @default(0)

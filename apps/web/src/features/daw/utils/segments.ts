@@ -3,6 +3,7 @@ export const MIN_SPLIT_DISTANCE_MS = 50;
 export type SegmentLike = {
   startMs: number;
   endMs: number;
+  timelineStartMs?: number | null;
   gainDb: number;
   fadeInMs: number;
   fadeOutMs: number;
@@ -13,6 +14,13 @@ export type SegmentLike = {
 export type TrackTimelineSegment = SegmentLike & {
   id: string;
   trackVersionId: string;
+  sourceStartMs: number;
+  sourceEndMs: number;
+  timelineStartMs: number;
+  timelineEndMs: number;
+  durationMs: number;
+  startMs: number;
+  endMs: number;
   isImplicit: boolean;
 };
 
@@ -65,6 +73,7 @@ export function splitSegment(
     leftSegment: {
       startMs: segment.startMs,
       endMs: splitTimeMs,
+      timelineStartMs: segment.timelineStartMs ?? null,
       gainDb: segment.gainDb,
       fadeInMs: segment.fadeInMs,
       fadeOutMs: segment.fadeOutMs,
@@ -74,6 +83,8 @@ export function splitSegment(
     rightSegment: {
       startMs: splitTimeMs,
       endMs: segment.endMs,
+      timelineStartMs:
+        segment.timelineStartMs != null ? segment.timelineStartMs + (splitTimeMs - segment.startMs) : null,
       gainDb: segment.gainDb,
       fadeInMs: segment.fadeInMs,
       fadeOutMs: segment.fadeOutMs,
@@ -85,10 +96,12 @@ export function splitSegment(
 
 export function buildRenderableTrackSegments({
   trackVersionId,
+  trackStartOffsetMs,
   segments,
   fallbackDurationMs,
 }: {
   trackVersionId: string;
+  trackStartOffsetMs: number;
   segments: Array<{ id: string } & SegmentLike>;
   fallbackDurationMs: number;
 }): TrackTimelineSegment[] {
@@ -97,6 +110,13 @@ export function buildRenderableTrackSegments({
       .sort((a, b) => a.position - b.position)
       .map((segment) => ({
         ...segment,
+        sourceStartMs: segment.startMs,
+        sourceEndMs: segment.endMs,
+        timelineStartMs: segment.timelineStartMs ?? trackStartOffsetMs + segment.startMs,
+        timelineEndMs: (segment.timelineStartMs ?? trackStartOffsetMs + segment.startMs) + (segment.endMs - segment.startMs),
+        durationMs: segment.endMs - segment.startMs,
+        startMs: segment.startMs,
+        endMs: segment.endMs,
         trackVersionId,
         isImplicit: false,
       }));
@@ -107,6 +127,11 @@ export function buildRenderableTrackSegments({
     {
       id: `implicit:${trackVersionId}`,
       trackVersionId,
+      sourceStartMs: 0,
+      sourceEndMs: durationMs,
+      timelineStartMs: trackStartOffsetMs,
+      timelineEndMs: trackStartOffsetMs + durationMs,
+      durationMs,
       startMs: 0,
       endMs: durationMs,
       gainDb: 0,

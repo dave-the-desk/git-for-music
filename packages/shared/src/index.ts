@@ -107,10 +107,30 @@ export interface SplitSegmentRequest {
   splitTimeMs: number;
 }
 
+export interface SegmentTimelineData {
+  id: string;
+  trackVersionId: string;
+  startMs: number;
+  endMs: number;
+  timelineStartMs: number;
+  gainDb: number;
+  fadeInMs: number;
+  fadeOutMs: number;
+  isMuted: boolean;
+  position: number;
+}
+
 export interface SplitSegmentResponse {
   trackVersionId: string;
   leftSegmentId: string;
   rightSegmentId: string;
+  leftSegment: SegmentTimelineData;
+  rightSegment: SegmentTimelineData;
+}
+
+export interface MoveSegmentResponse {
+  trackVersionId: string;
+  segment: SegmentTimelineData;
 }
 
 export interface CreateCommentRequest {

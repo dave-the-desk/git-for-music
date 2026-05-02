@@ -18,6 +18,7 @@ const TRACK_VERSION_FIELDS = {
     select: {
       startMs: true,
       endMs: true,
+      timelineStartMs: true,
       gainDb: true,
       fadeInMs: true,
       fadeOutMs: true,
@@ -79,6 +80,7 @@ export async function cloneTrackVersionsToDemoVersion(
                 data: sourceTrackVersion.segments.map((segment) => ({
                   startMs: segment.startMs,
                   endMs: segment.endMs,
+                  timelineStartMs: segment.timelineStartMs,
                   gainDb: segment.gainDb,
                   fadeInMs: segment.fadeInMs,
                   fadeOutMs: segment.fadeOutMs,

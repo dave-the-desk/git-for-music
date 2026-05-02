@@ -14,6 +14,32 @@ function parseFiniteNumber(value: unknown) {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+function serializeSegment(trackVersionId: string, segment: {
+  id: string;
+  startMs: number;
+  endMs: number;
+  timelineStartMs: number | null;
+  gainDb: number;
+  fadeInMs: number;
+  fadeOutMs: number;
+  isMuted: boolean;
+  position: number;
+}) {
+  const timelineStartMs = segment.timelineStartMs ?? segment.startMs;
+  return {
+    id: segment.id,
+    trackVersionId,
+    startMs: segment.startMs,
+    endMs: segment.endMs,
+    timelineStartMs,
+    gainDb: segment.gainDb,
+    fadeInMs: segment.fadeInMs,
+    fadeOutMs: segment.fadeOutMs,
+    isMuted: segment.isMuted,
+    position: segment.position,
+  };
+}
+
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ trackVersionId: string }> },
@@ -59,6 +85,7 @@ export async function POST(
     },
     select: {
       id: true,
+      startOffsetMs: true,
     },
   });
 
@@ -82,6 +109,7 @@ export async function POST(
           id: true,
           startMs: true,
           endMs: true,
+          timelineStartMs: true,
           gainDb: true,
           fadeInMs: true,
           fadeOutMs: true,
@@ -107,6 +135,7 @@ export async function POST(
       id: `implicit:${trackVersion.id}`,
       startMs: segmentStartMs,
       endMs: segmentEndMs,
+      timelineStartMs: trackVersion.startOffsetMs,
       gainDb: 0,
       fadeInMs: 0,
       fadeOutMs: 0,
@@ -151,6 +180,7 @@ export async function POST(
           data: {
             startMs: leftSegment.startMs,
             endMs: leftSegment.endMs,
+            timelineStartMs: leftSegment.timelineStartMs,
             gainDb: leftSegment.gainDb,
             fadeInMs: leftSegment.fadeInMs,
             fadeOutMs: leftSegment.fadeOutMs,
@@ -164,6 +194,7 @@ export async function POST(
             trackVersionId: trackVersion.id,
             startMs: rightSegment.startMs,
             endMs: rightSegment.endMs,
+            timelineStartMs: rightSegment.timelineStartMs,
             gainDb: rightSegment.gainDb,
             fadeInMs: rightSegment.fadeInMs,
             fadeOutMs: rightSegment.fadeOutMs,
@@ -175,9 +206,26 @@ export async function POST(
           },
         });
 
-        return {
-          leftSegmentId: existingSegment.id,
-          rightSegmentId: right.id,
+          return {
+          leftSegment: serializeSegment(trackVersion.id, {
+            ...existingSegment,
+            startMs: leftSegment.startMs,
+            endMs: leftSegment.endMs,
+            timelineStartMs:
+              leftSegment.timelineStartMs ?? trackVersion.startOffsetMs + leftSegment.startMs,
+          }),
+          rightSegment: serializeSegment(trackVersion.id, {
+            id: right.id,
+            startMs: rightSegment.startMs,
+            endMs: rightSegment.endMs,
+            timelineStartMs:
+              rightSegment.timelineStartMs ?? trackVersion.startOffsetMs + rightSegment.startMs,
+            gainDb: rightSegment.gainDb,
+            fadeInMs: rightSegment.fadeInMs,
+            fadeOutMs: rightSegment.fadeOutMs,
+            isMuted: rightSegment.isMuted,
+            position: rightSegment.position,
+          }),
         };
       }
 
@@ -186,6 +234,7 @@ export async function POST(
           trackVersionId: trackVersion.id,
           startMs: leftSegment.startMs,
           endMs: leftSegment.endMs,
+          timelineStartMs: leftSegment.timelineStartMs,
           gainDb: leftSegment.gainDb,
           fadeInMs: leftSegment.fadeInMs,
           fadeOutMs: leftSegment.fadeOutMs,
@@ -202,6 +251,7 @@ export async function POST(
           trackVersionId: trackVersion.id,
           startMs: rightSegment.startMs,
           endMs: rightSegment.endMs,
+          timelineStartMs: rightSegment.timelineStartMs,
           gainDb: rightSegment.gainDb,
           fadeInMs: rightSegment.fadeInMs,
           fadeOutMs: rightSegment.fadeOutMs,
@@ -214,15 +264,39 @@ export async function POST(
       });
 
       return {
-        leftSegmentId: left.id,
-        rightSegmentId: right.id,
+        leftSegment: serializeSegment(trackVersion.id, {
+          id: left.id,
+          startMs: leftSegment.startMs,
+          endMs: leftSegment.endMs,
+          timelineStartMs:
+            leftSegment.timelineStartMs ?? trackVersion.startOffsetMs + leftSegment.startMs,
+          gainDb: leftSegment.gainDb,
+          fadeInMs: leftSegment.fadeInMs,
+          fadeOutMs: leftSegment.fadeOutMs,
+          isMuted: leftSegment.isMuted,
+          position: leftSegment.position,
+        }),
+        rightSegment: serializeSegment(trackVersion.id, {
+          id: right.id,
+          startMs: rightSegment.startMs,
+          endMs: rightSegment.endMs,
+          timelineStartMs:
+            rightSegment.timelineStartMs ?? trackVersion.startOffsetMs + rightSegment.startMs,
+          gainDb: rightSegment.gainDb,
+          fadeInMs: rightSegment.fadeInMs,
+          fadeOutMs: rightSegment.fadeOutMs,
+          isMuted: rightSegment.isMuted,
+          position: rightSegment.position,
+        }),
       };
     });
 
     splitResponse = {
       trackVersionId: trackVersion.id,
-      leftSegmentId: ids.leftSegmentId,
-      rightSegmentId: ids.rightSegmentId,
+      leftSegmentId: ids.leftSegment.id,
+      rightSegmentId: ids.rightSegment.id,
+      leftSegment: ids.leftSegment,
+      rightSegment: ids.rightSegment,
     };
   } catch (error) {
     return NextResponse.json<ApiError>(

@@ -6,6 +6,7 @@ test('splitSegment preserves audio metadata while dividing the timeline bounds',
   const result = splitSegment({
     startMs: 100,
     endMs: 900,
+    timelineStartMs: 1000,
     gainDb: -3,
     fadeInMs: 10,
     fadeOutMs: 25,
@@ -16,6 +17,7 @@ test('splitSegment preserves audio metadata while dividing the timeline bounds',
   assert.deepEqual(result.leftSegment, {
     startMs: 100,
     endMs: 400,
+    timelineStartMs: 1000,
     gainDb: -3,
     fadeInMs: 10,
     fadeOutMs: 25,
@@ -25,6 +27,7 @@ test('splitSegment preserves audio metadata while dividing the timeline bounds',
   assert.deepEqual(result.rightSegment, {
     startMs: 400,
     endMs: 900,
+    timelineStartMs: 1300,
     gainDb: -3,
     fadeInMs: 10,
     fadeOutMs: 25,
@@ -39,6 +42,7 @@ test('splitSegment rejects split points near either boundary', () => {
       {
         startMs: 0,
         endMs: 500,
+        timelineStartMs: 0,
         gainDb: 0,
         fadeInMs: 0,
         fadeOutMs: 0,
@@ -53,6 +57,7 @@ test('splitSegment rejects split points near either boundary', () => {
       {
         startMs: 0,
         endMs: 500,
+        timelineStartMs: 0,
         gainDb: 0,
         fadeInMs: 0,
         fadeOutMs: 0,
@@ -67,6 +72,7 @@ test('splitSegment rejects split points near either boundary', () => {
 test('buildRenderableTrackSegments creates an implicit full-length segment when none are persisted', () => {
   const segments = buildRenderableTrackSegments({
     trackVersionId: 'track-version-1',
+    trackStartOffsetMs: 250,
     segments: [],
     fallbackDurationMs: 1250,
   });
@@ -75,6 +81,11 @@ test('buildRenderableTrackSegments creates an implicit full-length segment when 
     {
       id: 'implicit:track-version-1',
       trackVersionId: 'track-version-1',
+      sourceStartMs: 0,
+      sourceEndMs: 1250,
+      timelineStartMs: 250,
+      timelineEndMs: 1500,
+      durationMs: 1250,
       startMs: 0,
       endMs: 1250,
       gainDb: 0,
@@ -86,4 +97,3 @@ test('buildRenderableTrackSegments creates an implicit full-length segment when 
     },
   ]);
 });
-
