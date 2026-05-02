@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import type {
@@ -154,7 +154,6 @@ export function DemoDawClient({
   const [selectedAudioInputDeviceId, setSelectedAudioInputDeviceId] = useState<string | null>(null);
   const [audioInputReady, setAudioInputReady] = useState(false);
   const recordingPreviewUrlRef = useRef<string | null>(null);
-  const timelineScrollContainerRef = useRef<HTMLDivElement | null>(null);
 
   const [offsetOverrides, setOffsetOverrides] = useState<Record<string, number>>({});
   const [segmentLayoutOverrides, setSegmentLayoutOverrides] = useState<Record<string, TrackTimelineSegment[]>>({});
@@ -288,17 +287,6 @@ export function DemoDawClient({
   }, [selectedTracks, durationByTrackVersionId, offsetOverrides, segmentLayoutOverrides, temporaryRecordingTrack]);
 
   const totalTimelineWidth = Math.max((totalDurationMs / 1000) * PX_PER_SECOND, 400);
-  const isRecording = temporaryRecordingTrack?.status === 'recording';
-
-  useLayoutEffect(() => {
-    if (!isRecording) return;
-
-    const scrollContainer = timelineScrollContainerRef.current;
-    if (!scrollContainer) return;
-
-    // Keep the viewport pinned to the right edge so the growing recording stays visible.
-    scrollContainer.scrollLeft = Math.max(0, scrollContainer.scrollWidth - scrollContainer.clientWidth);
-  }, [isRecording, temporaryRecordingTrack?.durationMs, totalTimelineWidth]);
 
   useEffect(() => {
     setOffsetOverrides({});
@@ -1989,7 +1977,7 @@ export function DemoDawClient({
           </p>
 
           {hasTimelineContent ? (
-            <div ref={timelineScrollContainerRef} className="overflow-x-auto rounded-md border border-gray-800">
+            <div className="overflow-x-auto rounded-md border border-gray-800">
               <div className="flex" style={{ minWidth: TRACK_LABEL_WIDTH + totalTimelineWidth }}>
                 <div
                   className="shrink-0 border-b border-r border-gray-800 bg-gray-900"

@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import type {
@@ -209,7 +209,6 @@ export function DemoDawClient({
   const [selectedAudioInputDeviceId, setSelectedAudioInputDeviceId] = useState<string | null>(null);
   const [audioInputReady, setAudioInputReady] = useState(false);
   const recordingPreviewUrlRef = useRef<string | null>(null);
-  const timelineScrollContainerRef = useRef<HTMLDivElement | null>(null);
 
   // Optimistic offset overrides while dragging or after a successful save (before refresh)
   const [offsetOverrides, setOffsetOverrides] = useState<Record<string, number>>({});
@@ -338,17 +337,6 @@ export function DemoDawClient({
   }, [selectedTracks, durationByTrackVersionId, offsetOverrides, temporaryRecordingTrack]);
 
   const totalTimelineWidth = Math.max((totalDurationMs / 1000) * PX_PER_SECOND, 400);
-  const isRecording = temporaryRecordingTrack?.status === 'recording';
-
-  useLayoutEffect(() => {
-    if (!isRecording) return;
-
-    const scrollContainer = timelineScrollContainerRef.current;
-    if (!scrollContainer) return;
-
-    // Keep the viewport pinned to the right edge so the growing recording stays visible.
-    scrollContainer.scrollLeft = Math.max(0, scrollContainer.scrollWidth - scrollContainer.clientWidth);
-  }, [isRecording, temporaryRecordingTrack?.durationMs, totalTimelineWidth]);
 
   // Clear drag overrides when switching versions
   useEffect(() => {
@@ -1679,7 +1667,7 @@ export function DemoDawClient({
 
           {hasTimelineContent ? (
             /* overflow-x-auto is on this wrapper so ruler + tracks scroll together */
-            <div ref={timelineScrollContainerRef} className="overflow-x-auto rounded-md border border-gray-800">
+            <div className="overflow-x-auto rounded-md border border-gray-800">
               {/* All rows share the same totalTimelineWidth so they scroll in sync */}
 
               {/* Timeline ruler row */}
