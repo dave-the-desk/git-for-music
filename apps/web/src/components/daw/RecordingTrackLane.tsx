@@ -13,10 +13,7 @@ const MIN_RECORDING_WIDTH_PX = 120;
 // ~10 ms window per peak for smooth real-time feedback (was 50 ms).
 const MS_PER_PEAK = 10;
 
-// 1 physical px per peak — 1px min/max bars for dense, sharp rendering.
-const CANVAS_PX_PER_PEAK = 1;
-
-type Peak = { min: number; max: number };
+type Peak = { timeMs: number; min: number; max: number };
 
 type Props = {
   track: TemporaryRecordingTrack;
@@ -44,7 +41,6 @@ export function RecordingTrackLane({
   const analyserRef = useRef<AnalyserNode | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const animFrameRef = useRef<number | null>(null);
-  const recordingWidthPxRef = useRef<number | null>(null);
 
   // All committed peaks — one entry per MS_PER_PEAK ms of audio.
   // Kept in a ref to avoid triggering React re-renders at 60 fps.
@@ -63,14 +59,29 @@ export function RecordingTrackLane({
 
   const isRecording = track.status === 'recording';
   const leftPx = (track.startOffsetMs / 1000) * PX_PER_SECOND;
+  // The recording preview uses the same PX_PER_SECOND timeline scale as saved tracks,
+  // so the live and final waveforms stay visually aligned.
   const widthPx = isRecording
-    ? recordingWidthPxRef.current ?? MIN_RECORDING_WIDTH_PX
+    ? Math.max((track.durationMs / 1000) * PX_PER_SECOND, MIN_RECORDING_WIDTH_PX)
     : Math.max((track.durationMs / 1000) * PX_PER_SECOND, 8);
 
   // ── Drawing ────────────────────────────────────────────────────────────────
 
-  // Appends only the newest committed peak without touching previously drawn columns.
-  // When the canvas is full, existing content scrolls left to make room on the right edge.
+  function paintPeak(ctx: CanvasRenderingContext2D, peak: Peak) {
+    const { height: H } = ctx.canvas;
+    const halfH = H / 2;
+    const gain = gainRef.current;
+    const x = (peak.timeMs / 1000) * PX_PER_SECOND;
+    const yTop = Math.max(0, halfH - peak.max * gain * halfH);
+    const yBot = Math.min(H, halfH - peak.min * gain * halfH);
+
+    ctx.fillStyle = '#ef4444';
+    ctx.fillRect(x, yTop, 1, Math.max(1, yBot - yTop));
+  }
+
+  // Appends only the newest committed peak at its timeline position.
+  // The live preview uses the same PX_PER_SECOND scale as saved tracks, so the
+  // waveform does not scroll inside a fixed-width buffer while recording.
   function drawLatestPeak() {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -81,35 +92,12 @@ export function RecordingTrackLane({
     const peak = peaks[peaks.length - 1];
     if (!peak) return;
 
-    const { width: W, height: H } = canvas;
-    const halfH = H / 2;
-    const gain = gainRef.current;
-    const maxPeaks = Math.floor(W / CANVAS_PX_PER_PEAK);
-
-    let drawX: number;
-
-    if (peaks.length > maxPeaks) {
-      // Canvas full: shift pixel data left one column, paint newest on the right.
-      const img = ctx.getImageData(CANVAS_PX_PER_PEAK, 0, W - CANVAS_PX_PER_PEAK, H);
-      ctx.putImageData(img, 0, 0);
-      drawX = W - CANVAS_PX_PER_PEAK;
-    } else {
-      drawX = (peaks.length - 1) * CANVAS_PX_PER_PEAK;
-    }
-
-    ctx.fillStyle = '#030712';
-    ctx.fillRect(drawX, 0, CANVAS_PX_PER_PEAK, H);
-
-    ctx.fillStyle = '#374151';
-    ctx.fillRect(drawX, halfH, CANVAS_PX_PER_PEAK, 1);
-
-    const yTop = Math.max(0, halfH - peak.max * gain * halfH);
-    const yBot = Math.min(H, halfH - peak.min * gain * halfH);
-    ctx.fillStyle = '#ef4444';
-    ctx.fillRect(drawX, yTop, CANVAS_PX_PER_PEAK, Math.max(1, yBot - yTop));
+    paintPeak(ctx, peak);
   }
 
   // Full redraw from scratch — used on resize, gain change, or recording→preview transition.
+  // We redraw with the same timeline scale as the saved track so the live preview
+  // and final preview stay visually aligned.
   function redrawAllPeaks() {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -119,27 +107,17 @@ export function RecordingTrackLane({
     const peaks = peaksRef.current;
     const { width: W, height: H } = canvas;
     const halfH = H / 2;
-    const gain = gainRef.current;
-    const maxPeaks = Math.floor(W / CANVAS_PX_PER_PEAK);
 
     ctx.fillStyle = '#030712';
     ctx.fillRect(0, 0, W, H);
 
     if (peaks.length === 0) return;
 
-    const startIdx = Math.max(0, peaks.length - maxPeaks);
-    const visiblePeaks = peaks.slice(startIdx);
-
     ctx.fillStyle = '#374151';
     ctx.fillRect(0, halfH, W, 1);
 
-    ctx.fillStyle = '#ef4444';
-    for (let i = 0; i < visiblePeaks.length; i++) {
-      const p = visiblePeaks[i]!;
-      const x = i * CANVAS_PX_PER_PEAK;
-      const yTop = Math.max(0, halfH - p.max * gain * halfH);
-      const yBot = Math.min(H, halfH - p.min * gain * halfH);
-      ctx.fillRect(x, yTop, CANVAS_PX_PER_PEAK, Math.max(1, yBot - yTop));
+    for (const peak of peaks) {
+      paintPeak(ctx, peak);
     }
   }
 
@@ -165,21 +143,9 @@ export function RecordingTrackLane({
 
     ro.observe(container);
     return () => ro.disconnect();
+    // redrawAllPeaks only reads refs, so it is safe to omit from deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  useEffect(() => {
-    if (isRecording) {
-      if (recordingWidthPxRef.current === null) {
-        recordingWidthPxRef.current = Math.max(
-          (track.durationMs / 1000) * PX_PER_SECOND,
-          MIN_RECORDING_WIDTH_PX,
-        );
-      }
-      return;
-    }
-
-    recordingWidthPxRef.current = null;
-  }, [isRecording, track.durationMs]);
 
   // ── RAF capture loop ───────────────────────────────────────────────────────
 
@@ -205,7 +171,11 @@ export function RecordingTrackLane({
     const prevCount = peaksRef.current.length;
 
     while (peaksRef.current.length < targetPeaks) {
-      peaksRef.current.push({ min: acc.min, max: acc.max });
+      peaksRef.current.push({
+        timeMs: peaksRef.current.length * MS_PER_PEAK,
+        min: acc.min,
+        max: acc.max,
+      });
       drawLatestPeak();
     }
 
@@ -232,6 +202,8 @@ export function RecordingTrackLane({
       if (ctx) {
         ctx.fillStyle = '#030712';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#374151';
+        ctx.fillRect(0, canvas.height / 2, canvas.width, 1);
       }
     }
 
@@ -330,7 +302,7 @@ export function RecordingTrackLane({
             style={{ left: (currentTimeMs / 1000) * PX_PER_SECOND }}
           />
 
-          {/* Waveform block — CSS width grows with durationMs; min 120px while recording */}
+          {/* Waveform block — CSS width grows with durationMs on the same timeline scale as saved tracks. */}
           <div
             ref={containerRef}
             className={`absolute top-2 bottom-2 overflow-hidden rounded border ${
