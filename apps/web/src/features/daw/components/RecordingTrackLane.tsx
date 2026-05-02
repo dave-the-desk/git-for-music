@@ -36,6 +36,9 @@ export function RecordingTrackLane({
   const analyserRef = useRef<AnalyserNode | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const animFrameRef = useRef<number | null>(null);
+  const canvasCssWidthRef = useRef(0);
+  const canvasCssHeightRef = useRef(0);
+  const canvasDprRef = useRef(1);
   const peaksRef = useRef<Peak[]>([]);
   const sampleAccRef = useRef<{ min: number; max: number }>({ min: 0, max: 0 });
   const recordingStartTimeRef = useRef<number>(0);
@@ -49,7 +52,7 @@ export function RecordingTrackLane({
     : Math.max((track.durationMs / 1000) * PX_PER_SECOND, 8);
 
   function paintPeak(ctx: CanvasRenderingContext2D, peak: Peak) {
-    const { height: H } = ctx.canvas;
+    const H = canvasCssHeightRef.current;
     const halfH = H / 2;
     const gain = gainRef.current;
     const x = (peak.timeMs / 1000) * PX_PER_SECOND;
@@ -60,19 +63,9 @@ export function RecordingTrackLane({
     ctx.fillRect(x, yTop, 1, Math.max(1, yBot - yTop));
   }
 
-  function drawLatestPeak() {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const peaks = peaksRef.current;
-    const peak = peaks[peaks.length - 1];
-    if (!peak) return;
-
-    paintPeak(ctx, peak);
-  }
-
+  // The live waveform uses timeline CSS pixels, while devicePixelRatio is only
+  // for sharp rendering. Saved and live waveforms must share PX_PER_SECOND so
+  // the preview does not visually jump after stopping.
   function redrawAllPeaks() {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -80,9 +73,13 @@ export function RecordingTrackLane({
     if (!ctx) return;
 
     const peaks = peaksRef.current;
-    const { width: W, height: H } = canvas;
+    const W = canvasCssWidthRef.current;
+    const H = canvasCssHeightRef.current;
     const halfH = H / 2;
+    const dpr = canvasDprRef.current;
 
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
     ctx.fillStyle = '#030712';
     ctx.fillRect(0, 0, W, H);
 
@@ -106,6 +103,9 @@ export function RecordingTrackLane({
       if (!entry) return;
       const dpr = window.devicePixelRatio ?? 1;
       const { width, height } = entry.contentRect;
+      canvasCssWidthRef.current = width;
+      canvasCssHeightRef.current = height;
+      canvasDprRef.current = dpr;
       const newW = Math.max(1, Math.round(width * dpr));
       const newH = Math.max(1, Math.round(height * dpr));
       if (canvas.width === newW && canvas.height === newH) return;
@@ -140,18 +140,19 @@ export function RecordingTrackLane({
     const prevCount = peaksRef.current.length;
 
     while (peaksRef.current.length < targetPeaks) {
+      const peakTimeMs = peaksRef.current.length * MS_PER_PEAK;
       peaksRef.current.push({
-        timeMs: peaksRef.current.length * MS_PER_PEAK,
+        timeMs: peakTimeMs,
         min: acc.min,
         max: acc.max,
       });
-      drawLatestPeak();
     }
 
     if (peaksRef.current.length > prevCount) {
       sampleAccRef.current = { min: 0, max: 0 };
     }
 
+    redrawAllPeaks();
     animFrameRef.current = requestAnimationFrame(captureAndDraw);
   }
 
@@ -162,16 +163,7 @@ export function RecordingTrackLane({
     sampleAccRef.current = { min: 0, max: 0 };
     recordingStartTimeRef.current = performance.now();
 
-    const canvas = canvasRef.current;
-    if (canvas) {
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        ctx.fillStyle = '#030712';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        ctx.fillStyle = '#374151';
-        ctx.fillRect(0, canvas.height / 2, canvas.width, 1);
-      }
-    }
+    redrawAllPeaks();
 
     async function initAudio() {
       if (!stream) return;
@@ -197,7 +189,7 @@ export function RecordingTrackLane({
       void audioCtxRef.current?.close();
       audioCtxRef.current = null;
     };
-    // captureAndDraw only reads refs, so it is safe to omit from deps.
+    // captureAndDraw and redrawAllPeaks only access refs — safe to omit from deps.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stream]);
 
