@@ -6,7 +6,7 @@ import type { TemporaryRecordingTrack } from '@/features/daw/state/daw-state';
 
 const TRACK_LABEL_WIDTH = 160;
 const TRACK_HEIGHT = 72;
-const MIN_RECORDING_WIDTH_PX = 120;
+const MIN_RECORDING_HIT_AREA_PX = 120;
 const MS_PER_PEAK = 10;
 
 type Peak = { timeMs: number; min: number; max: number };
@@ -35,7 +35,7 @@ export function RecordingTrackLane({
   onDiscard,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const containerRef = useRef<HTMLDivElement | null>(null);
+  const waveformContainerRef = useRef<HTMLDivElement | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
@@ -43,24 +43,29 @@ export function RecordingTrackLane({
   const canvasCssWidthRef = useRef(0);
   const canvasCssHeightRef = useRef(0);
   const canvasDprRef = useRef(1);
+  const dataBufferRef = useRef<Float32Array<ArrayBuffer> | null>(null);
   const peaksRef = useRef<Peak[]>([]);
   const sampleAccRef = useRef<{ min: number; max: number }>({ min: 0, max: 0 });
-  const recordingStartTimeRef = useRef<number>(0);
+  const recordingDurationMsRef = useRef(track.durationMs);
   const gainRef = useRef(1);
   const isRecording = track.status === 'recording';
   const currentTimeMsRef = useRef(currentTimeMs);
   const autoFollowArmedRef = useRef(false);
   const autoFollowLeftRef = useRef(0);
   const leftPx = (track.startOffsetMs / 1000) * PX_PER_SECOND;
-  // The recording preview uses the same PX_PER_SECOND timeline scale as saved tracks,
-  // so the live and final waveforms stay visually aligned.
-  const widthPx = isRecording
-    ? Math.max((track.durationMs / 1000) * PX_PER_SECOND, MIN_RECORDING_WIDTH_PX)
+  // Keep the live waveform canvas on the same timeline scale as saved tracks.
+  const waveformWidthPx = isRecording
+    ? Math.max((track.durationMs / 1000) * PX_PER_SECOND, 1)
     : Math.max((track.durationMs / 1000) * PX_PER_SECOND, 8);
+  const hitAreaWidthPx = isRecording ? Math.max(waveformWidthPx, MIN_RECORDING_HIT_AREA_PX) : waveformWidthPx;
 
   useEffect(() => {
     currentTimeMsRef.current = currentTimeMs;
   }, [currentTimeMs]);
+
+  useEffect(() => {
+    recordingDurationMsRef.current = track.durationMs;
+  }, [track.durationMs]);
 
   function paintPeak(ctx: CanvasRenderingContext2D, peak: Peak) {
     const H = canvasCssHeightRef.current;
@@ -105,7 +110,7 @@ export function RecordingTrackLane({
   }
 
   useEffect(() => {
-    const container = containerRef.current;
+    const container = waveformContainerRef.current;
     const canvas = canvasRef.current;
     if (!container || !canvas) return;
 
@@ -135,8 +140,12 @@ export function RecordingTrackLane({
     const analyser = analyserRef.current;
     if (!analyser) return;
 
-    const bufLen = analyser.frequencyBinCount;
-    const data = new Float32Array(bufLen);
+    const bufLen = analyser.fftSize;
+    let data = dataBufferRef.current;
+    if (!data || data.length !== bufLen) {
+      data = new Float32Array(new ArrayBuffer(bufLen * Float32Array.BYTES_PER_ELEMENT));
+      dataBufferRef.current = data;
+    }
     analyser.getFloatTimeDomainData(data);
 
     const acc = sampleAccRef.current;
@@ -146,8 +155,7 @@ export function RecordingTrackLane({
       if (s > acc.max) acc.max = s;
     }
 
-    const elapsed = performance.now() - recordingStartTimeRef.current;
-    const targetPeaks = Math.floor(elapsed / MS_PER_PEAK);
+    const targetPeaks = Math.floor(recordingDurationMsRef.current / MS_PER_PEAK);
     const prevCount = peaksRef.current.length;
 
     while (peaksRef.current.length < targetPeaks) {
@@ -172,7 +180,8 @@ export function RecordingTrackLane({
 
     peaksRef.current = [];
     sampleAccRef.current = { min: 0, max: 0 };
-    recordingStartTimeRef.current = performance.now();
+    recordingDurationMsRef.current = track.durationMs;
+    dataBufferRef.current = null;
 
     redrawAllPeaks();
 
@@ -279,7 +288,6 @@ export function RecordingTrackLane({
       </div>
 
       <div
-        ref={containerRef}
         className="relative shrink-0 select-none bg-gray-950"
         style={{ width: totalTimelineWidth, minHeight: TRACK_HEIGHT }}
       >
@@ -288,10 +296,12 @@ export function RecordingTrackLane({
           style={{ left: (currentTimeMs / 1000) * PX_PER_SECOND }}
         />
         <div
-          className="absolute top-0 h-full overflow-hidden rounded border border-red-500/50 bg-gray-950"
-          style={{ left: leftPx, width: widthPx }}
+          className="absolute top-0 h-full rounded border border-red-500/50 bg-gray-950"
+          style={{ left: leftPx, width: hitAreaWidthPx, minWidth: isRecording ? MIN_RECORDING_HIT_AREA_PX : 8 }}
         >
-          <canvas ref={canvasRef} className="h-full w-full" />
+          <div ref={waveformContainerRef} className="h-full" style={{ width: waveformWidthPx }}>
+            <canvas ref={canvasRef} className="h-full w-full" />
+          </div>
         </div>
       </div>
     </div>
