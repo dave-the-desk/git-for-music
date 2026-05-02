@@ -154,6 +154,7 @@ export function DemoDawClient({
   const [selectedAudioInputDeviceId, setSelectedAudioInputDeviceId] = useState<string | null>(null);
   const [audioInputReady, setAudioInputReady] = useState(false);
   const recordingPreviewUrlRef = useRef<string | null>(null);
+  const isLiveRecordingRef = useRef(false);
 
   const [offsetOverrides, setOffsetOverrides] = useState<Record<string, number>>({});
   const [segmentLayoutOverrides, setSegmentLayoutOverrides] = useState<Record<string, TrackTimelineSegment[]>>({});
@@ -171,6 +172,7 @@ export function DemoDawClient({
   const clockRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startWallTimeRef = useRef<number>(0);
   const startPlayheadMsRef = useRef<number>(0);
+  const tracksScrollContainerRef = useRef<HTMLDivElement | null>(null);
   const segmentRefs = useRef<Record<string, TrackSegmentClipHandle | null>>({});
   const metronomeAudioRef = useRef<AudioContext | null>(null);
   const metronomeTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -287,6 +289,7 @@ export function DemoDawClient({
   }, [selectedTracks, durationByTrackVersionId, offsetOverrides, segmentLayoutOverrides, temporaryRecordingTrack]);
 
   const totalTimelineWidth = Math.max((totalDurationMs / 1000) * PX_PER_SECOND, 400);
+  const currentRecordingTrackId = temporaryRecordingTrack?.status === 'recording' ? temporaryRecordingTrack.id : null;
 
   useEffect(() => {
     setOffsetOverrides({});
@@ -735,7 +738,9 @@ export function DemoDawClient({
       const elapsed = performance.now() - startWallTimeRef.current;
       const newTimeMs = startPlayheadMsRef.current + elapsed;
 
-      if (totalDurationMs > 0 && newTimeMs >= totalDurationMs) {
+      // While a take is actively recording, the transport must keep running even if
+      // the timeline length is being inferred from the live recording itself.
+      if (totalDurationMs > 0 && newTimeMs >= totalDurationMs && !isLiveRecordingRef.current) {
         setCurrentTimeMs(totalDurationMs);
         stopTransport();
         return;
@@ -1308,6 +1313,7 @@ export function DemoDawClient({
   }
 
   function handleRecordingStreamReady(stream: MediaStream, startOffsetMs: number) {
+    isLiveRecordingRef.current = true;
     setRecordingStream(stream);
     setTemporaryRecordingTrack({
       id: `rec-${Date.now()}`,
@@ -1330,6 +1336,7 @@ export function DemoDawClient({
 
   function handleRecordingStopped(blob: Blob, previewUrl: string, durationMs: number) {
     recordingPreviewUrlRef.current = previewUrl;
+    isLiveRecordingRef.current = false;
     setRecordingStream(null);
     setTemporaryRecordingTrack((prev) =>
       prev ? { ...prev, status: 'preview', blob, previewUrl, durationMs } : prev,
@@ -1352,6 +1359,7 @@ export function DemoDawClient({
       URL.revokeObjectURL(recordingPreviewUrlRef.current);
       recordingPreviewUrlRef.current = null;
     }
+    isLiveRecordingRef.current = false;
     setTemporaryRecordingTrack(null);
     setRecordingStream(null);
   }
@@ -1360,6 +1368,7 @@ export function DemoDawClient({
     const track = temporaryRecordingTrack;
     if (!track?.blob) return;
 
+    isLiveRecordingRef.current = false;
     setTemporaryRecordingTrack((prev) =>
       prev ? { ...prev, status: 'uploading', error: undefined } : prev,
     );
@@ -1977,7 +1986,7 @@ export function DemoDawClient({
           </p>
 
           {hasTimelineContent ? (
-            <div className="overflow-x-auto rounded-md border border-gray-800">
+            <div ref={tracksScrollContainerRef} className="overflow-x-auto rounded-md border border-gray-800">
               <div className="flex" style={{ minWidth: TRACK_LABEL_WIDTH + totalTimelineWidth }}>
                 <div
                   className="shrink-0 border-b border-r border-gray-800 bg-gray-900"
@@ -2310,6 +2319,8 @@ export function DemoDawClient({
                   stream={recordingStream}
                   currentTimeMs={currentTimeMs}
                   totalTimelineWidth={totalTimelineWidth}
+                  currentRecordingTrackId={currentRecordingTrackId}
+                  scrollContainerRef={tracksScrollContainerRef}
                   onNameChange={handleRecordingNameChange}
                   onSave={() => void handleSaveRecording()}
                   onDiscard={handleDiscardRecording}

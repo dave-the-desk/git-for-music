@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type RefObject } from 'react';
 import { PX_PER_SECOND } from '@/features/daw/components/TimelineRuler';
 import type { TemporaryRecordingTrack } from '@/features/daw/state/daw-state';
 
@@ -16,6 +16,8 @@ type Props = {
   stream: MediaStream | null;
   currentTimeMs: number;
   totalTimelineWidth: number;
+  currentRecordingTrackId: string | null;
+  scrollContainerRef: RefObject<HTMLDivElement | null>;
   onNameChange: (name: string) => void;
   onSave: () => void;
   onDiscard: () => void;
@@ -26,6 +28,8 @@ export function RecordingTrackLane({
   stream,
   currentTimeMs,
   totalTimelineWidth,
+  currentRecordingTrackId,
+  scrollContainerRef,
   onNameChange,
   onSave,
   onDiscard,
@@ -44,12 +48,19 @@ export function RecordingTrackLane({
   const recordingStartTimeRef = useRef<number>(0);
   const gainRef = useRef(1);
   const isRecording = track.status === 'recording';
+  const currentTimeMsRef = useRef(currentTimeMs);
+  const autoFollowArmedRef = useRef(false);
+  const autoFollowLeftRef = useRef(0);
   const leftPx = (track.startOffsetMs / 1000) * PX_PER_SECOND;
   // The recording preview uses the same PX_PER_SECOND timeline scale as saved tracks,
   // so the live and final waveforms stay visually aligned.
   const widthPx = isRecording
     ? Math.max((track.durationMs / 1000) * PX_PER_SECOND, MIN_RECORDING_WIDTH_PX)
     : Math.max((track.durationMs / 1000) * PX_PER_SECOND, 8);
+
+  useEffect(() => {
+    currentTimeMsRef.current = currentTimeMs;
+  }, [currentTimeMs]);
 
   function paintPeak(ctx: CanvasRenderingContext2D, peak: Peak) {
     const H = canvasCssHeightRef.current;
@@ -192,6 +203,55 @@ export function RecordingTrackLane({
     // captureAndDraw and redrawAllPeaks only access refs — safe to omit from deps.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stream]);
+
+  useEffect(() => {
+    if (!isRecording) return;
+    if (!stream) return;
+    if (!currentRecordingTrackId || currentRecordingTrackId !== track.id) return;
+
+    const scrollContainer = scrollContainerRef.current;
+    if (!scrollContainer) return;
+
+    const rightEdgePaddingPx = 240;
+    const triggerThresholdPx = 240;
+    let rafId = 0;
+    autoFollowArmedRef.current = false;
+    autoFollowLeftRef.current = scrollContainer.scrollLeft;
+
+    const followPlayhead = () => {
+      const container = scrollContainerRef.current;
+      if (!container) return;
+      if (!currentRecordingTrackId || currentRecordingTrackId !== track.id) return;
+      if (!isRecording || !stream) return;
+
+      const playheadX = (currentTimeMsRef.current / 1000) * PX_PER_SECOND;
+      const rightVisiblePx = container.scrollLeft + container.clientWidth;
+
+      if (!autoFollowArmedRef.current && playheadX >= rightVisiblePx - triggerThresholdPx) {
+        autoFollowArmedRef.current = true;
+      }
+
+      if (autoFollowArmedRef.current) {
+        const targetLeft = Math.max(autoFollowLeftRef.current, playheadX - container.clientWidth + rightEdgePaddingPx);
+        autoFollowLeftRef.current = targetLeft;
+        if (Math.abs(container.scrollLeft - targetLeft) > 1) {
+          // Intentionally scoped to the active recording lane so we only follow the
+          // current take and never pull the user around for playback or other tracks.
+          container.scrollTo({ left: targetLeft, behavior: 'auto' });
+        }
+      }
+
+      rafId = requestAnimationFrame(followPlayhead);
+    };
+
+    rafId = requestAnimationFrame(followPlayhead);
+
+    return () => {
+      cancelAnimationFrame(rafId);
+      autoFollowArmedRef.current = false;
+      autoFollowLeftRef.current = 0;
+    };
+  }, [currentRecordingTrackId, isRecording, scrollContainerRef, stream, track.id]);
 
   return (
     <div
