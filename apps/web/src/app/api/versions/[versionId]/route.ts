@@ -2,7 +2,7 @@ import { prisma } from '@git-for-music/db';
 import { NextRequest, NextResponse } from 'next/server';
 import type { ApiError, DemoTimingMetadata, UpdateDemoVersionTimingRequest } from '@git-for-music/shared';
 import { getAuthenticatedUserFromRequest } from '@/lib/auth/current-user';
-import { isValidTempoBpm, normalizeTimeSignature } from '@/lib/daw/timing';
+import { isValidTempoBpm, normalizeTimeSignature } from '@/features/daw/utils/timing';
 
 const MAX_LABEL_LENGTH = 120;
 const VALID_DENOMINATORS = new Set([1, 2, 4, 8, 16, 32]);

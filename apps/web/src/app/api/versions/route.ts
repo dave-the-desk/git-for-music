@@ -2,7 +2,7 @@ import { prisma } from '@git-for-music/db';
 import { NextRequest, NextResponse } from 'next/server';
 import type { CreateVersionRequest, ApiError } from '@git-for-music/shared';
 import { getAuthenticatedUserFromRequest } from '@/lib/auth/current-user';
-import { createDemoVersionWithCopiedTracks } from '@/lib/demos/versioning';
+import { createDemoVersionWithCopiedTracks } from '@/features/daw/api/versioning';
 
 const MAX_LABEL_LENGTH = 120;
 const MAX_DESCRIPTION_LENGTH = 500;

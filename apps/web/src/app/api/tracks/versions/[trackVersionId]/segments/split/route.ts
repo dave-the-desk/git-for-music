@@ -2,7 +2,7 @@ import { prisma } from '@git-for-music/db';
 import { NextRequest, NextResponse } from 'next/server';
 import type { ApiError, SplitSegmentRequest, SplitSegmentResponse } from '@git-for-music/shared';
 import { getAuthenticatedUserFromRequest } from '@/lib/auth/current-user';
-import { MIN_SPLIT_DISTANCE_MS, splitSegment } from '@/lib/daw/segments';
+import { MIN_SPLIT_DISTANCE_MS, splitSegment } from '@/features/daw/utils/segments';
 
 const POSITION_EPSILON_MS = 0.001;
 
@@ -235,4 +235,3 @@ export async function POST(
 
   return NextResponse.json(splitResponse);
 }
-

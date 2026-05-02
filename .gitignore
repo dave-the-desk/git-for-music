@@ -21,6 +21,29 @@ dist
 .DS_Store
 *.pem
 Thumbs.db
+apps/web/public/uploads/
+storage/
+.local-storage/
+tmp/audio/
+tmp/uploads/
+workers/audio/output/
+workers/audio/tmp/
+*.wav
+*.mp3
+*.m4a
+*.aac
+*.flac
+*.ogg
+*.webm
+!**/fixtures/**
+!**/__fixtures__/**
+!**/*.fixture.wav
+!**/*.fixture.mp3
+!**/*.fixture.m4a
+!**/*.fixture.aac
+!**/*.fixture.flac
+!**/*.fixture.ogg
+!**/*.fixture.webm
 
 # debug
 npm-debug.log*

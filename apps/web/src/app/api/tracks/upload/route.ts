@@ -1,11 +1,12 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { prisma } from '@git-for-music/db';
 import { NextRequest, NextResponse } from 'next/server';
 import type { ApiError, UploadTimingChoice, UploadTrackResponse } from '@git-for-music/shared';
 import { getAuthenticatedUserFromRequest } from '@/lib/auth/current-user';
-import { createDemoVersionWithCopiedTracks } from '@/lib/demos/versioning';
+import { createDemoVersionWithCopiedTracks } from '@/features/daw/api/versioning';
+import { buildTrackVersionStorageKey } from '@/features/daw/api/storage';
 import { enqueueProcessingJob } from '@/lib/processing/jobs';
 
 export const runtime = 'nodejs';
@@ -69,6 +70,16 @@ export async function POST(req: NextRequest) {
     select: {
       id: true,
       currentVersionId: true,
+      project: {
+        select: {
+          id: true,
+          group: {
+            select: {
+              id: true,
+            },
+          },
+        },
+      },
     },
   });
 
@@ -103,6 +114,12 @@ export async function POST(req: NextRequest) {
     selectedSourceVersionId = version.id;
   }
 
+  const rawBuffer = Buffer.from(await file.arrayBuffer());
+  const timestamp = Date.now();
+  const originalName = sanitizeFileName(file.name || `track-${timestamp}.wav`);
+  const checksum = createHash('sha256').update(rawBuffer).digest('hex');
+  const trackVersionId = randomUUID();
+
   let existingTrackId: string | null = null;
   if (typeof incomingTrackId === 'string' && incomingTrackId) {
     const existingTrack = await prisma.track.findFirst({
@@ -122,14 +139,19 @@ export async function POST(req: NextRequest) {
     existingTrackId = existingTrack.id;
   }
 
-  const rawBuffer = Buffer.from(await file.arrayBuffer());
-  const timestamp = Date.now();
-  const originalName = sanitizeFileName(file.name || `track-${timestamp}.wav`);
-  const uploadDir = path.join(process.cwd(), 'public', 'uploads', 'demos', demo.id);
-  const storedName = `${timestamp}-${originalName}`;
-  const absolutePath = path.join(uploadDir, storedName);
-  const storageKey = `/uploads/demos/${demo.id}/${storedName}`;
-  const checksum = createHash('sha256').update(rawBuffer).digest('hex');
+  const trackId = existingTrackId ?? randomUUID();
+  const storageObjectKey = buildTrackVersionStorageKey({
+    groupId: demo.project.group.id,
+    projectId: demo.project.id,
+    demoId: demo.id,
+    trackId,
+    trackVersionId,
+    artifact: 'original-audio',
+    fileName: originalName,
+  });
+  const storageKey = `/uploads/${storageObjectKey}`;
+  const uploadDir = path.join(process.cwd(), 'public', 'uploads', path.dirname(storageObjectKey));
+  const absolutePath = path.join(process.cwd(), 'public', 'uploads', storageObjectKey);
 
   await mkdir(uploadDir, { recursive: true });
   await writeFile(absolutePath, rawBuffer);
@@ -143,10 +165,7 @@ export async function POST(req: NextRequest) {
       description: 'Added audio track',
     });
 
-    let trackId: string;
-    if (existingTrackId) {
-      trackId = existingTrackId;
-    } else {
+    if (!existingTrackId) {
       const highestPositionTrack = await tx.track.findFirst({
         where: {
           demoId: demo.id,
@@ -159,8 +178,9 @@ export async function POST(req: NextRequest) {
         },
       });
 
-      const createdTrack = await tx.track.create({
+      await tx.track.create({
         data: {
+          id: trackId,
           demoId: demo.id,
           name:
             typeof name === 'string' && name.trim()
@@ -172,11 +192,11 @@ export async function POST(req: NextRequest) {
           id: true,
         },
       });
-      trackId = createdTrack.id;
     }
 
     const trackVersion = await tx.trackVersion.create({
       data: {
+        id: trackVersionId,
         trackId,
         demoVersionId: nextVersion.id,
         storageKey,
