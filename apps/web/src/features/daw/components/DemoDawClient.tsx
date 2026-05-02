@@ -716,6 +716,11 @@ export function DemoDawClient({
     });
   }
 
+  function seekTransport(timeMs: number) {
+    setCurrentTimeMs(timeMs);
+    seekAllTracks(timeMs);
+  }
+
   function playTransport(fromMs?: number) {
     const startMs = fromMs ?? currentTimeMs;
     startPlayheadMsRef.current = startMs;
@@ -1338,10 +1343,16 @@ export function DemoDawClient({
     recordingPreviewUrlRef.current = previewUrl;
     isLiveRecordingRef.current = false;
     setRecordingStream(null);
+    const recordingStartMs = temporaryRecordingTrack?.startOffsetMs ?? currentTimeMs;
+    pauseTransport();
+    seekTransport(recordingStartMs);
+    tracksScrollContainerRef.current?.scrollTo({
+      left: Math.max(0, (recordingStartMs / 1000) * PX_PER_SECOND - 48),
+      behavior: 'auto',
+    });
     setTemporaryRecordingTrack((prev) =>
       prev ? { ...prev, status: 'preview', blob, previewUrl, durationMs } : prev,
     );
-    pauseTransport();
   }
 
   function handleRecordingNameChange(name: string) {
