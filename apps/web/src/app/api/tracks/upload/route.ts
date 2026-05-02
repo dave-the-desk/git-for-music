@@ -6,7 +6,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import type { ApiError, UploadTimingChoice, UploadTrackResponse } from '@git-for-music/shared';
 import { getAuthenticatedUserFromRequest } from '@/lib/auth/current-user';
 import { createDemoVersionWithCopiedTracks } from '@/features/daw/api/versioning';
-import { buildTrackVersionStorageKey } from '@/features/daw/api/storage';
+import { buildTrackVersionObjectKey } from '@/features/daw/api/storage';
 import { enqueueProcessingJob } from '@/lib/processing/jobs';
 
 export const runtime = 'nodejs';
@@ -140,13 +140,12 @@ export async function POST(req: NextRequest) {
   }
 
   const trackId = existingTrackId ?? randomUUID();
-  const storageObjectKey = buildTrackVersionStorageKey({
+  const storageObjectKey = buildTrackVersionObjectKey({
     groupId: demo.project.group.id,
     projectId: demo.project.id,
     demoId: demo.id,
     trackId,
     trackVersionId,
-    artifact: 'original-audio',
     fileName: originalName,
   });
   const storageKey = `/uploads/${storageObjectKey}`;

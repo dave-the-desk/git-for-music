@@ -64,6 +64,8 @@ def get_track_version(conn, track_version_id: str):
               tv."trackId" AS "trackId",
               tv."demoVersionId" AS "demoVersionId",
               d."demoId" AS "demoId",
+              p.id AS "projectId",
+              g.id AS "groupId",
               d."tempoBpm" AS "tempoBpm",
               d."timeSignatureNum" AS "timeSignatureNum",
               d."timeSignatureDen" AS "timeSignatureDen",
@@ -72,6 +74,9 @@ def get_track_version(conn, track_version_id: str):
               d."keySource" AS "keySource"
             FROM "TrackVersion" tv
             JOIN "DemoVersion" d ON d.id = tv."demoVersionId"
+            JOIN "Demo" demo ON demo.id = d."demoId"
+            JOIN "Project" p ON p.id = demo."projectId"
+            JOIN "Group" g ON g.id = p."groupId"
             WHERE tv.id = %s
             """,
             (track_version_id,),

@@ -71,6 +71,9 @@ export type ProcessingJobPayload =
   | ProjectRetimeFromTrackJobPayload
   | Record<string, unknown>;
 
+export * from './storage';
+export * from './queue';
+
 // ─── API request shapes ───────────────────────────────────────────────────────
 
 export interface CreateDemoRequest {

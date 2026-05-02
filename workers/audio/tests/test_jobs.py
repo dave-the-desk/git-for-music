@@ -51,6 +51,8 @@ def test_time_stretch_creates_derived_track_version(monkeypatch: pytest.MonkeyPa
         'musicalKey': None,
         'tempoSource': 'MANUAL',
         'keySource': 'MANUAL',
+        'groupId': 'group_1',
+        'projectId': 'project_1',
     }
     demo_version = {
         'id': 'demo_version_1',

@@ -1,5 +1,5 @@
 redis>=5.0.0
-boto3>=1.34.0       # Cloudflare R2 via S3-compatible API
+boto3>=1.34.0       # AWS S3/SQS and S3-compatible object storage
 psycopg[binary]>=3.1.0
 python-dotenv>=1.0.0
 librosa>=0.10.2

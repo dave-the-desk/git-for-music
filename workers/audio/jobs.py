@@ -188,7 +188,7 @@ def handle_time_stretch_to_project(conn, job: dict[str, Any], payload: dict[str,
     ratio = calculate_stretch_ratio(source_tempo, target_tempo)
     stretched = time_stretch_audio(audio, sample_rate, ratio)
 
-    derived_storage_key = make_derived_storage_key(demo_version['demoId'], track_version['id'], 'stretch')
+    derived_storage_key = make_derived_storage_key(track_version, job['id'])
     derived_path = write_derived_audio(derived_storage_key, stretched, sample_rate)
     derived_size = derived_path.stat().st_size if derived_path.exists() else None
 

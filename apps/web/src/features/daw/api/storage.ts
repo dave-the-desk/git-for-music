@@ -1,16 +1,14 @@
-type StorageKeyInput = {
-  groupId: string;
-  projectId: string;
-  demoId: string;
-  trackId: string;
-  trackVersionId: string;
-  artifact?: 'original-audio' | 'derived-audio' | 'waveform' | 'analysis';
+import {
+  buildAudioStorageRoot,
+  buildDerivedAudioObjectKey,
+  buildDerivedAudioStoragePrefix,
+  buildOriginalAudioObjectKey,
+  type AudioStorageContext,
+} from '@git-for-music/shared';
+
+type StorageKeyInput = AudioStorageContext & {
   fileName?: string;
 };
-
-function sanitizeStorageName(value: string) {
-  return value.replace(/[^a-zA-Z0-9._-]/g, '-').replace(/-+/g, '-').replace(/^[-.]+|[-.]+$/g, '');
-}
 
 export function buildTrackVersionStoragePrefix({
   groupId,
@@ -18,13 +16,38 @@ export function buildTrackVersionStoragePrefix({
   demoId,
   trackId,
   trackVersionId,
-}: Omit<StorageKeyInput, 'artifact' | 'fileName'>) {
-  return `groups/${groupId}/projects/${projectId}/demos/${demoId}/tracks/${trackId}/versions/${trackVersionId}`;
+}: Omit<StorageKeyInput, 'fileName'>) {
+  return buildAudioStorageRoot({
+    groupId,
+    projectId,
+    demoId,
+    trackId,
+    trackVersionId,
+  });
+}
+
+export function buildTrackVersionObjectKey(input: StorageKeyInput) {
+  return buildOriginalAudioObjectKey(input, input.fileName ?? 'audio');
 }
 
 export function buildTrackVersionStorageKey(input: StorageKeyInput) {
-  const prefix = buildTrackVersionStoragePrefix(input);
-  const artifact = input.artifact ?? 'original-audio';
-  const fileName = input.fileName ? sanitizeStorageName(input.fileName) : 'audio';
-  return `${prefix}/${artifact}/${fileName}`;
+  return buildTrackVersionObjectKey(input);
+}
+
+export function buildTrackVersionLegacyStorageKey(input: StorageKeyInput) {
+  return `/uploads/${buildTrackVersionObjectKey(input)}`;
+}
+
+export function buildTrackVersionDerivedStoragePrefix(
+  input: Omit<StorageKeyInput, 'fileName'>,
+  jobId: string,
+) {
+  return buildDerivedAudioStoragePrefix(input, jobId);
+}
+
+export function buildTrackVersionDerivedObjectKey(
+  input: StorageKeyInput,
+  jobId: string,
+) {
+  return buildDerivedAudioObjectKey(input, jobId, input.fileName ?? 'audio');
 }
