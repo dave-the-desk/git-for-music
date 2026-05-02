@@ -9,6 +9,7 @@ import type {
   DemoTimingMetadata,
   JobStatusResponse,
   SnapResolution,
+  SplitSegmentRequest,
   TimingSource,
   UploadTimingChoice,
   UploadTrackResponse,
@@ -19,6 +20,11 @@ import { TrackWaveform, type TrackWaveformHandle } from './TrackWaveform';
 import { RecordingControls } from './RecordingControls';
 import { RecordingTrackLane } from './RecordingTrackLane';
 import { VersionHistoryTree } from './VersionHistoryTree';
+import {
+  buildRenderableTrackSegments,
+  isValidSplitTime,
+  type TrackTimelineSegment,
+} from '@/lib/daw/segments';
 import {
   formatBarBeatLabel,
   getBeatSubdivisionSeconds,
@@ -52,6 +58,7 @@ export type DawTrack = {
   isDerived: boolean;
   operationType: 'ORIGINAL' | 'TIME_STRETCH';
   parentTrackVersionId: string | null;
+  segments: TrackTimelineSegment[];
 };
 
 export type DawVersion = {
@@ -204,6 +211,10 @@ export function DemoDawClient({
   const [offsetOverrides, setOffsetOverrides] = useState<Record<string, number>>({});
   const [dragError, setDragError] = useState<string | null>(null);
   const dragRef = useRef<{ trackVersionId: string; originalOffset: number; startX: number } | null>(null);
+  const [timelineTool, setTimelineTool] = useState<'select' | 'split'>('select');
+  const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(null);
+  const [splitHoverTimeMs, setSplitHoverTimeMs] = useState<number | null>(null);
+  const [splitError, setSplitError] = useState<string | null>(null);
 
   // Inline rename state
   const [renameState, setRenameState] = useState<RenameState | null>(null);
@@ -305,10 +316,15 @@ export function DemoDawClient({
   }, [comments]);
 
   const totalDurationMs = useMemo(() => {
-    const ends = selectedTracks.map((t) => {
+    const ends = selectedTracks.flatMap((t) => {
       const dur = durationByTrackVersionId[t.trackVersionId] ?? t.durationMs ?? 0;
       const offset = offsetOverrides[t.trackVersionId] ?? t.startOffsetMs;
-      return offset + dur;
+      const trackSegments = buildRenderableTrackSegments({
+        trackVersionId: t.trackVersionId,
+        segments: t.segments,
+        fallbackDurationMs: dur,
+      });
+      return trackSegments.map((segment) => offset + segment.endMs);
     });
     if (temporaryRecordingTrack) {
       ends.push(temporaryRecordingTrack.startOffsetMs + temporaryRecordingTrack.durationMs);
@@ -322,6 +338,10 @@ export function DemoDawClient({
   useEffect(() => {
     setOffsetOverrides({});
     setDragError(null);
+    setSelectedSegmentId(null);
+    setSplitHoverTimeMs(null);
+    setSplitError(null);
+    setTimelineTool('select');
   }, [selectedVersionId]);
 
   useEffect(() => {
@@ -657,6 +677,61 @@ export function DemoDawClient({
     setDurationByTrackVersionId((prev) => ({ ...prev, [trackVersionId]: durationMs }));
   }, []);
 
+  function getTrackDurationMs(track: DawTrack) {
+    return durationByTrackVersionId[track.trackVersionId] ?? track.durationMs ?? 0;
+  }
+
+  function getRenderableTrackSegments(track: DawTrack) {
+    return buildRenderableTrackSegments({
+      trackVersionId: track.trackVersionId,
+      segments: track.segments,
+      fallbackDurationMs: getTrackDurationMs(track),
+    });
+  }
+
+  function findSegmentAtTime(track: DawTrack, timeMs: number) {
+    const offsetMs = offsetOverrides[track.trackVersionId] ?? track.startOffsetMs;
+    return (
+      getRenderableTrackSegments(track).find(
+        (segment) => timeMs >= offsetMs + segment.startMs && timeMs <= offsetMs + segment.endMs,
+      ) ?? null
+    );
+  }
+
+  function getSplitTimeFromClientX(
+    currentTarget: HTMLDivElement,
+    clientX: number,
+  ) {
+    const rect = currentTarget.getBoundingClientRect();
+    const x = Math.max(0, Math.min(clientX - rect.left, rect.width));
+    return Math.max(0, (x / PX_PER_SECOND) * 1000);
+  }
+
+  async function splitSegmentOnTrack(track: DawTrack, segment: TrackTimelineSegment, splitTimeMs: number) {
+    const body: SplitSegmentRequest = {
+      segmentId: segment.isImplicit ? undefined : segment.id,
+      segmentStartMs: segment.startMs,
+      segmentEndMs: segment.endMs,
+      splitTimeMs,
+    };
+
+    const response = await fetch(`/api/tracks/versions/${track.trackVersionId}/segments/split`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+
+    const data = (await response.json()) as { error?: string; leftSegmentId?: string };
+    if (!response.ok) {
+      throw new Error(data.error ?? 'Could not split clip');
+    }
+
+    setSelectedSegmentId(data.leftSegmentId ?? segment.id);
+    router.refresh();
+  }
+
   // --- Mute ---
 
   function toggleMute(trackVersionId: string) {
@@ -673,6 +748,9 @@ export function DemoDawClient({
   // --- Track drag (horizontal offset) ---
 
   function handleWaveformPointerDown(e: React.PointerEvent<HTMLDivElement>, track: DawTrack) {
+    if (timelineTool === 'split') {
+      return;
+    }
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const currentOffset = offsetOverrides[track.trackVersionId] ?? track.startOffsetMs;
@@ -693,6 +771,9 @@ export function DemoDawClient({
   }
 
   function handleWaveformPointerMove(e: React.PointerEvent<HTMLDivElement>, track: DawTrack) {
+    if (timelineTool === 'split') {
+      return;
+    }
     const drag = dragRef.current;
     if (!drag || drag.trackVersionId !== track.trackVersionId) return;
 
@@ -705,6 +786,9 @@ export function DemoDawClient({
   }
 
   async function handleWaveformPointerUp(e: React.PointerEvent<HTMLDivElement>, track: DawTrack) {
+    if (timelineTool === 'split') {
+      return;
+    }
     const drag = dragRef.current;
     if (!drag || drag.trackVersionId !== track.trackVersionId) return;
 
@@ -738,6 +822,49 @@ export function DemoDawClient({
     if (!drag || drag.trackVersionId !== track.trackVersionId) return;
     setOffsetOverrides((prev) => ({ ...prev, [track.trackVersionId]: drag.originalOffset }));
     dragRef.current = null;
+  }
+
+  function handleSplitHover(e: React.PointerEvent<HTMLDivElement>) {
+    if (timelineTool !== 'split') return;
+    setSplitHoverTimeMs(getSplitTimeFromClientX(e.currentTarget, e.clientX));
+  }
+
+  function handleSplitHoverLeave() {
+    if (timelineTool !== 'split') return;
+    setSplitHoverTimeMs(null);
+  }
+
+  async function handleSplitClick(e: React.MouseEvent<HTMLDivElement>, track: DawTrack) {
+    if (timelineTool !== 'split') return;
+
+    const clickedTimeMs = getSplitTimeFromClientX(e.currentTarget, e.clientX);
+    const clickedSegment = findSegmentAtTime(track, clickedTimeMs);
+    const trackOffsetMs = offsetOverrides[track.trackVersionId] ?? track.startOffsetMs;
+    const splitTimeWithinTrackMs = clickedTimeMs - trackOffsetMs;
+
+    if (!clickedSegment) {
+      setSplitError('No clip at that position');
+      return;
+    }
+
+    if (selectedSegmentId !== clickedSegment.id) {
+      setSelectedSegmentId(clickedSegment.id);
+      setSplitError(null);
+      return;
+    }
+
+    if (!isValidSplitTime(clickedSegment, splitTimeWithinTrackMs)) {
+      setSplitError('Split point is too close to the clip boundary');
+      return;
+    }
+
+    setSplitError(null);
+
+    try {
+      await splitSegmentOnTrack(track, clickedSegment, splitTimeWithinTrackMs);
+    } catch (error) {
+      setSplitError(error instanceof Error ? error.message : 'Could not split clip');
+    }
   }
 
   // --- Inline rename ---
@@ -1478,11 +1605,48 @@ export function DemoDawClient({
 
         {/* DAW Timeline — min-w-0 prevents it from pushing the sidebar off screen */}
         <section className="min-w-0 space-y-3 rounded-lg border border-gray-800 bg-gray-950 p-4">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-400">Timeline</h2>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-400">Timeline</h2>
+            <div className="flex items-center gap-2 text-xs">
+              <button
+                type="button"
+                onClick={() => {
+                  setTimelineTool('select');
+                  setSplitHoverTimeMs(null);
+                  setSplitError(null);
+                }}
+                className={`rounded px-2 py-1 font-medium transition-colors ${
+                  timelineTool === 'select'
+                    ? 'bg-indigo-500/20 text-indigo-200 ring-1 ring-indigo-500/40'
+                    : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+                }`}
+              >
+                Select
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setTimelineTool('split');
+                  setSplitError(null);
+                }}
+                className={`rounded px-2 py-1 font-medium transition-colors ${
+                  timelineTool === 'split'
+                    ? 'bg-amber-500/20 text-amber-200 ring-1 ring-amber-500/40'
+                    : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+                }`}
+              >
+                Split
+              </button>
+            </div>
+          </div>
           <div className="flex items-center gap-3 text-xs">
             {commentsLoading ? <p className="text-gray-500">Loading comments…</p> : null}
             {commentsError ? <p className="text-red-400">{commentsError}</p> : null}
+            {splitError ? <p className="text-amber-300">{splitError}</p> : null}
           </div>
+          <p className="text-[11px] text-gray-500">
+            Split mode keeps the same audio reference and creates two timeline segments inside the selected clip.
+          </p>
 
           {hasTimelineContent ? (
             /* overflow-x-auto is on this wrapper so ruler + tracks scroll together */
@@ -1512,6 +1676,9 @@ export function DemoDawClient({
               {selectedTracks.map((track) => {
                 const isMuted = mutedTrackVersionIds.has(track.trackVersionId);
                 const effectiveOffset = offsetOverrides[track.trackVersionId] ?? track.startOffsetMs;
+                const trackDurationMs = getTrackDurationMs(track);
+                const trackSegments = getRenderableTrackSegments(track);
+                const selectedTrackSegment = trackSegments.find((segment) => segment.id === selectedSegmentId) ?? null;
                 const isRenaming = renameState?.trackId === track.trackId;
                 const trackComments = commentsByTrackId[track.trackId] ?? [];
                 const composer = getComposerState(track.trackId);
@@ -1721,18 +1888,74 @@ export function DemoDawClient({
 
                     {/* Waveform area — pointer events handle horizontal drag */}
                     <div
-                      className={`relative shrink-0 select-none bg-gray-950 transition-opacity ${isMuted ? 'opacity-40' : ''}`}
-                      style={{ width: totalTimelineWidth, minHeight: TRACK_HEIGHT, cursor: 'grab' }}
+                      className={`relative shrink-0 select-none bg-gray-950 transition-opacity ${
+                        isMuted ? 'opacity-40' : ''
+                      } ${timelineTool === 'split' ? 'cursor-crosshair' : 'cursor-grab'}`}
+                      style={{ width: totalTimelineWidth, minHeight: TRACK_HEIGHT }}
                       onPointerDown={(e) => handleWaveformPointerDown(e, track)}
                       onPointerMove={(e) => handleWaveformPointerMove(e, track)}
                       onPointerUp={(e) => void handleWaveformPointerUp(e, track)}
                       onPointerCancel={() => handleWaveformPointerCancel(track)}
+                      onPointerEnter={handleSplitHover}
+                      onPointerLeave={handleSplitHoverLeave}
+                      onClick={(e) => void handleSplitClick(e, track)}
                     >
                       {/* Global playhead */}
                       <div
                         className="pointer-events-none absolute top-0 z-20 h-full w-px bg-yellow-400/80"
                         style={{ left: (currentTimeMs / 1000) * PX_PER_SECOND }}
                       />
+
+                      {timelineTool === 'split' && splitHoverTimeMs !== null && selectedTrackSegment ? (
+                        <div
+                          className="pointer-events-none absolute top-0 z-30 h-full w-px bg-amber-300/90"
+                          style={{ left: (splitHoverTimeMs / 1000) * PX_PER_SECOND }}
+                        >
+                          <div className="absolute -top-2 left-1/2 -translate-x-1/2 rounded bg-amber-300 px-1 py-0.5 text-[9px] font-semibold text-gray-950 shadow">
+                            cut
+                          </div>
+                        </div>
+                      ) : null}
+
+                      {trackSegments.map((segment) => {
+                        const leftPx = ((effectiveOffset + segment.startMs) / 1000) * PX_PER_SECOND;
+                        const widthPx = Math.max(
+                          12,
+                          ((segment.endMs - segment.startMs) / 1000) * PX_PER_SECOND,
+                        );
+                        const isSelected = selectedTrackSegment?.id === segment.id;
+
+                        return (
+                          <button
+                            key={segment.id}
+                            type="button"
+                            onClick={(event) => {
+                              if (selectedSegmentId !== segment.id) {
+                                event.stopPropagation();
+                                setSelectedSegmentId(segment.id);
+                                setSplitError(null);
+                              }
+                            }}
+                            className={`absolute top-2 z-10 rounded-md border px-2 py-1 text-left transition-colors ${
+                              isSelected
+                                ? 'border-amber-400 bg-amber-500/20 text-amber-100 shadow-[0_0_0_1px_rgba(251,191,36,0.35)]'
+                                : 'border-gray-700 bg-gray-900/70 text-gray-300 hover:border-indigo-400 hover:bg-indigo-500/10'
+                            }`}
+                            style={{
+                              left: leftPx,
+                              width: widthPx,
+                              minHeight: TRACK_HEIGHT - 16,
+                            }}
+                          >
+                            <span className="block text-[10px] uppercase tracking-wide opacity-70">
+                              {segment.isImplicit ? 'Clip' : `Clip ${segment.position + 1}`}
+                            </span>
+                            <span className="block text-[11px] font-medium">
+                              {formatTimeMs(segment.startMs)} - {formatTimeMs(segment.endMs)}
+                            </span>
+                          </button>
+                        );
+                      })}
 
                       <TrackWaveform
                         ref={(el) => {
@@ -1741,7 +1964,7 @@ export function DemoDawClient({
                         trackVersionId={track.trackVersionId}
                         storageKey={track.storageKey}
                         startOffsetMs={effectiveOffset}
-                        durationMs={durationByTrackVersionId[track.trackVersionId] ?? track.durationMs ?? 0}
+                        durationMs={trackDurationMs}
                         onDurationReady={handleDurationReady}
                       />
                     </div>

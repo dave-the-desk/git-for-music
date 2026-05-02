@@ -97,6 +97,19 @@ export interface UpdateDemoVersionTimingRequest {
   keySource?: TimingSource;
 }
 
+export interface SplitSegmentRequest {
+  segmentId?: string;
+  segmentStartMs: number;
+  segmentEndMs: number;
+  splitTimeMs: number;
+}
+
+export interface SplitSegmentResponse {
+  trackVersionId: string;
+  leftSegmentId: string;
+  rightSegmentId: string;
+}
+
 export interface CreateCommentRequest {
   demoId: string;
   body: string;

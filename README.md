@@ -86,6 +86,13 @@ docker run --rm \
   git-for-music-audio-worker
 ```
 
+If you prefer scripts, use:
+
+```bash
+bash workers/audio/run.sh
+bash workers/audio/build-and-run.sh
+```
+
 The worker uses local DSP libraries for tempo/key analysis and time-stretching.
 It polls the `ProcessingJob` table directly, so queued jobs live in Postgres
 and can be inspected from the app while they are processing.

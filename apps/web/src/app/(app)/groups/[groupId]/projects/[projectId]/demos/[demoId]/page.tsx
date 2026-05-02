@@ -80,7 +80,7 @@ export default async function DemoPage({
             orderBy: {
               createdAt: 'desc',
             },
-            select: {
+              select: {
               id: true,
               storageKey: true,
               mimeType: true,
@@ -90,6 +90,21 @@ export default async function DemoPage({
               isDerived: true,
               operationType: true,
               parentTrackVersionId: true,
+              segments: {
+                orderBy: {
+                  position: 'asc',
+                },
+                select: {
+                  id: true,
+                  startMs: true,
+                  endMs: true,
+                  gainDb: true,
+                  fadeInMs: true,
+                  fadeOutMs: true,
+                  isMuted: true,
+                  position: true,
+                },
+              },
               track: {
                 select: {
                   id: true,
@@ -149,6 +164,18 @@ export default async function DemoPage({
           isDerived: trackVersion.isDerived,
           operationType: trackVersion.operationType,
           parentTrackVersionId: trackVersion.parentTrackVersionId,
+          segments: trackVersion.segments.map((segment) => ({
+            id: segment.id,
+            trackVersionId: trackVersion.id,
+            startMs: segment.startMs,
+            endMs: segment.endMs,
+            gainDb: segment.gainDb,
+            fadeInMs: segment.fadeInMs,
+            fadeOutMs: segment.fadeOutMs,
+            isMuted: segment.isMuted,
+            position: segment.position,
+            isImplicit: false,
+          })),
         })),
       }))}
     />
