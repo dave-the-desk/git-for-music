@@ -69,6 +69,13 @@ type TimelineHistoryEntry =
       previousSegments: TrackTimelineSegment[];
       nextSegments: TrackTimelineSegment[];
       previousSelectedSegmentId: string | null;
+    }
+  | {
+      kind: 'delete-segment';
+      trackVersionId: string;
+      previousSegments: TrackTimelineSegment[];
+      nextSegments: TrackTimelineSegment[];
+      previousSelectedSegmentId: string | null;
     };
 
 type TimelineDragState =
@@ -169,6 +176,7 @@ export function DemoDawClient({
   const metronomeTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const metronomeScheduledBeatRef = useRef<number | null>(null);
   const undoLatestTimelineEditRef = useRef<() => Promise<boolean>>(async () => false);
+  const deleteSelectedClipRef = useRef<() => Promise<boolean>>(async () => false);
   const cancelTimelineDragRef = useRef<() => void>(() => {});
   const timelineToolRef = useRef<'select' | 'split'>('select');
 
@@ -436,6 +444,12 @@ export function DemoDawClient({
         return;
       }
 
+      if (event.key === 'Delete' || event.key === 'Backspace') {
+        event.preventDefault();
+        void deleteSelectedClipRef.current();
+        return;
+      }
+
       if (event.key === 'Escape') {
         if (dragRef.current) {
           cancelTimelineDragRef.current();
@@ -542,9 +556,61 @@ export function DemoDawClient({
     } else if (lastEntry.kind === 'cut') {
       setTrackSegmentLayout(lastEntry.trackVersionId, lastEntry.previousSegments);
       setSelectedSegmentId(lastEntry.previousSelectedSegmentId);
+    } else if (lastEntry.kind === 'delete-segment') {
+      setTrackSegmentLayout(lastEntry.trackVersionId, lastEntry.previousSegments);
+      setSelectedSegmentId(lastEntry.previousSelectedSegmentId);
     }
 
     setTimelineHistory((prev) => prev.slice(0, -1));
+    return true;
+  }
+
+  async function deleteSelectedClip() {
+    if (!selectedSegmentId) return false;
+
+    const selectedTrack = selectedTracks.find((track) =>
+      getRenderableTrackSegments(track).some((segment) => segment.id === selectedSegmentId),
+    );
+    if (!selectedTrack) return false;
+
+    const currentSegments = getDisplayedTrackSegments(selectedTrack);
+    const selectedSegment = currentSegments.find((segment) => segment.id === selectedSegmentId);
+    if (!selectedSegment || selectedSegment.isImplicit) return false;
+
+    const nextSegments = currentSegments
+      .filter((segment) => segment.id !== selectedSegment.id)
+      .map((segment, index) => ({
+        ...segment,
+        position: index,
+      }));
+
+    try {
+      const res = await fetch(
+        `/api/tracks/versions/${selectedTrack.trackVersionId}/segments/${selectedSegment.id}`,
+        {
+          method: 'DELETE',
+        },
+      );
+      if (!res.ok) {
+        const data = (await res.json()) as { error?: string };
+        throw new Error(data.error ?? 'Could not delete clip');
+      }
+    } catch (error) {
+      setDragError(error instanceof Error ? error.message : 'Could not delete clip');
+      return false;
+    }
+
+    setTrackSegmentLayout(selectedTrack.trackVersionId, nextSegments);
+    setSelectedSegmentId(nextSegments.find((segment) => segment.position === selectedSegment.position)?.id ?? null);
+    setSplitError(null);
+    setDragError(null);
+    pushTimelineHistory({
+      kind: 'delete-segment',
+      trackVersionId: selectedTrack.trackVersionId,
+      previousSegments: currentSegments,
+      nextSegments,
+      previousSelectedSegmentId: selectedSegmentId,
+    });
     return true;
   }
 
@@ -950,6 +1016,7 @@ export function DemoDawClient({
   }
 
   undoLatestTimelineEditRef.current = undoLatestTimelineEdit;
+  deleteSelectedClipRef.current = deleteSelectedClip;
   cancelTimelineDragRef.current = cancelTimelineDrag;
 
   function handleTrackPointerDown(e: React.PointerEvent<HTMLDivElement>, track: DawTrack) {

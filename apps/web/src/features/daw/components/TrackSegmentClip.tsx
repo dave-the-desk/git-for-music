@@ -59,15 +59,32 @@ export const TrackSegmentClip = forwardRef<TrackSegmentClipHandle, TrackSegmentC
     const clipWidthPx = Math.max(12, (segment.durationMs / 1000) * PX_PER_SECOND);
     const leftPx = (segment.timelineStartMs / 1000) * PX_PER_SECOND;
     const sourceOffsetPx = (segment.sourceStartMs / 1000) * PX_PER_SECOND;
-    const sourceWidthPx = sourceDurationMs > 0 ? (sourceDurationMs / 1000) * PX_PER_SECOND : Math.max(clipWidthPx, 200);
+    const estimatedSourceWidthPx = Math.max(
+      clipWidthPx + sourceOffsetPx,
+      ((segment.sourceEndMs || segment.durationMs) / 1000) * PX_PER_SECOND,
+      300,
+    );
+    const sourceWidthPx = sourceDurationMs > 0 ? (sourceDurationMs / 1000) * PX_PER_SECOND : estimatedSourceWidthPx;
     const isPlayheadInside = currentTimeMs >= segment.timelineStartMs && currentTimeMs <= segment.timelineEndMs;
 
     useEffect(() => {
       if (!containerRef.current) return;
 
       let ws: import('wavesurfer.js').default | null = null;
+      let rafId = 0;
 
       async function init() {
+        const host = containerRef.current;
+        if (!host) return;
+
+        const { width, height } = host.getBoundingClientRect();
+        if (width <= 0 || height <= 0) {
+          rafId = window.requestAnimationFrame(() => {
+            void init();
+          });
+          return;
+        }
+
         const WaveSurfer = (await import('wavesurfer.js')).default;
         if (!containerRef.current) return;
 
@@ -93,6 +110,7 @@ export const TrackSegmentClip = forwardRef<TrackSegmentClipHandle, TrackSegmentC
             setSourceDurationMs(dur * 1000);
             setIsReady(true);
             onDurationReady?.(trackVersionId, dur * 1000);
+            ws?.setOptions({ minPxPerSec: PX_PER_SECOND });
           }
         });
 
@@ -106,11 +124,20 @@ export const TrackSegmentClip = forwardRef<TrackSegmentClipHandle, TrackSegmentC
       void init();
 
       return () => {
+        if (rafId) {
+          window.cancelAnimationFrame(rafId);
+        }
         ws?.destroy();
         wavesurferRef.current = null;
         isPlayingRef.current = false;
       };
     }, [storageKey, trackVersionId, onDurationReady]);
+
+    useEffect(() => {
+      if (!wavesurferRef.current) return;
+      if (sourceDurationMs <= 0) return;
+      wavesurferRef.current.setOptions({ minPxPerSec: PX_PER_SECOND });
+    }, [sourceDurationMs]);
 
     function seekWaveformToTimelineTimeMs(timelineTimeMs: number) {
       const ws = wavesurferRef.current;
@@ -206,7 +233,7 @@ export const TrackSegmentClip = forwardRef<TrackSegmentClipHandle, TrackSegmentC
             ? 'Cut tool: click a clip to split it'
             : 'Select tool: drag this clip to move it'
         }
-        className={`absolute top-2 z-10 rounded-md border px-2 py-1 text-left transition-colors ${
+        className={`absolute top-2 z-10 overflow-hidden rounded-md border text-left transition-colors ${
           isSelected
             ? 'border-amber-400 bg-amber-500/20 text-amber-100 shadow-[0_0_0_1px_rgba(251,191,36,0.35)]'
             : 'border-gray-700 bg-gray-900/70 text-gray-300 hover:border-indigo-400 hover:bg-indigo-500/10'
@@ -218,12 +245,12 @@ export const TrackSegmentClip = forwardRef<TrackSegmentClipHandle, TrackSegmentC
         style={{
           left: leftPx,
           width: clipWidthPx,
-          minHeight: 56,
+          height: 56,
         }}
       >
-        <div className="pointer-events-none relative h-full overflow-hidden rounded-md">
+        <div className="pointer-events-none relative h-full w-full overflow-hidden">
           <div
-            className="absolute inset-y-0 left-0"
+            className="absolute top-1/2 left-0 h-14 -translate-y-1/2"
             style={{
               width: sourceWidthPx,
               transform: `translateX(-${sourceOffsetPx}px)`,
@@ -231,18 +258,16 @@ export const TrackSegmentClip = forwardRef<TrackSegmentClipHandle, TrackSegmentC
           >
             <div ref={containerRef} className="h-full w-full" />
           </div>
-          <div className="absolute inset-0 bg-gradient-to-b from-gray-950/35 via-transparent to-gray-950/55" />
-          <div className="absolute bottom-1 left-2 right-2 flex items-end justify-between gap-2">
-            <span className="truncate text-[10px] uppercase tracking-wide opacity-75">
-              {segment.isImplicit ? 'Clip' : `Clip ${segment.position + 1}`}
-            </span>
-            <span className="text-[10px] font-medium">
-              {Math.max(0, Math.round(segment.durationMs / 1000))}s
-            </span>
+          <div className="absolute inset-0 bg-gradient-to-b from-gray-950/10 via-transparent to-gray-950/45" />
+          <div className="absolute left-1 top-1 rounded bg-gray-950/55 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-gray-100/95 backdrop-blur-[2px]">
+            {segment.isImplicit ? 'Clip 1' : `Clip ${segment.position + 1}`}
+          </div>
+          <div className="absolute right-1 top-1 rounded bg-gray-950/55 px-1.5 py-0.5 text-[9px] font-medium text-gray-100/90 backdrop-blur-[2px]">
+            {Math.max(0, Math.round(segment.durationMs / 1000))}s
           </div>
           <div className="absolute inset-0 border border-white/5" />
           {isReady ? null : (
-            <div className="absolute inset-0 animate-pulse bg-gray-900/40" aria-hidden />
+            <div className="absolute inset-0 animate-pulse bg-gray-900/20" aria-hidden />
           )}
         </div>
       </button>
