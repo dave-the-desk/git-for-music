@@ -81,3 +81,8 @@ venv/
 
 # claude
 CLAUDE.md
+
+#test
+multiple-user-test.sh
+
+.tmp/chrome-profiles
