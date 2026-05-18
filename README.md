@@ -4,12 +4,14 @@ Music collaboration and versioning platform.
 
 ## Prerequisites
 
-- [pnpm](https://pnpm.io/) >= 9
-- [Docker](https://www.docker.com/) (for local Postgres + Redis)
+- [pnpm](https://pnpm.io/) >= 10.33.0
+- [Docker](https://www.docker.com/) (for the Compose stack)
 - [Node.js](https://nodejs.org/) >= 20
 - Python >= 3.11 (for audio workers)
 
 ## Quick start
+
+Host workflow:
 
 ```bash
 # 1. Install dependencies
@@ -20,7 +22,7 @@ cp .env.example .env
 cp apps/web/.env.example apps/web/.env.local
 
 # 3. Start Postgres + Redis
-docker compose up -d
+docker compose up -d postgres redis
 
 # 4. Generate Prisma client and push schema
 pnpm db:generate
@@ -31,6 +33,19 @@ pnpm dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000).
+
+## Docker Compose
+
+The containerized stack brings up Postgres, Redis, the Next.js app, and the
+audio worker:
+
+```bash
+docker compose up --build
+```
+
+The first container startup also runs a one-shot `db-init` job so the Prisma
+schema is pushed into the local Postgres volume automatically. The web service
+uses `postgres` and `redis` as service names inside the Compose network.
 
 ## Workspace layout
 
@@ -63,6 +78,8 @@ pnpm db:studio      # Open Prisma Studio
 |---|---|
 | Postgres | 5432 |
 | Redis | 6379 |
+| Web | 3000 |
+| Audio worker | n/a |
 
 ## Audio worker (Python)
 
@@ -82,7 +99,7 @@ docker run --rm \
   --env-file workers/audio/.env.example \
   -e DATABASE_URL=postgresql://postgres:postgres@host.docker.internal:5432/git_for_music \
   -e WEB_PUBLIC_DIR=/data/public \
-  -v /absolute/path/to/apps/web/public:/data/public \
+  -v "$(pwd)/apps/web/public:/data/public" \
   git-for-music-audio-worker
 ```
 

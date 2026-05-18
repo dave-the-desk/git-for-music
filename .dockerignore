@@ -1,0 +1,17 @@
+.git
+.DS_Store
+.env
+.env.*
+node_modules
+**/node_modules
+.next
+**/.next
+.turbo
+**/.turbo
+dist
+**/dist
+.tmp
+**/.venv
+**/__pycache__
+**/.pytest_cache
+**/*.pyc

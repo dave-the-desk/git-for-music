@@ -1,21 +1,93 @@
+x-web-image: &web_image git-for-music-web
+x-web-build: &web_build
+  context: .
+  dockerfile: apps/web/Dockerfile
+
 services:
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: git_for_music
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d git_for_music"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  db-init:
+    image: *web_image
+    build: *web_build
+    command:
+      - pnpm
+      - --filter
+      - "@git-for-music/db"
+      - exec
+      - prisma
+      - db
+      - push
+      - --accept-data-loss
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/git_for_music
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    image: *web_image
+    build: *web_build
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/git_for_music
+      REDIS_URL: redis://redis:6379
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      NODE_ENV: production
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./apps/web/public:/app/apps/web/public
+
+  audio-worker:
+    build:
+      context: ./workers/audio
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/git_for_music
+      POLL_INTERVAL_SECONDS: "2"
+      WEB_PUBLIC_DIR: /app/apps/web/public
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./apps/web/public:/app/apps/web/public
 
 volumes:
   postgres_data:

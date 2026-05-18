@@ -20,7 +20,7 @@ import { RecordingControls } from '@/features/daw/components/RecordingControls';
 import { RecordingTrackLane } from '@/features/daw/components/RecordingTrackLane';
 import { TrackSegmentClip, type TrackSegmentClipHandle } from '@/features/daw/components/TrackSegmentClip';
 import { VersionHistoryTree } from '@/features/daw/components/VersionHistoryTree';
-import { AudioInputSelector } from '@/components/daw/AudioInputSelector';
+import { AudioInputSelector } from '@/features/daw/components/AudioInputSelector';
 import { useDemoComments } from '@/features/daw/hooks/useDemoComments';
 import { buildRenderableTrackSegments, isValidSplitTime, type TrackTimelineSegment } from '@/features/daw/utils/segments';
 import {
