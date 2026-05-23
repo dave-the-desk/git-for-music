@@ -1,4 +1,5 @@
 import type { DemoTimingMetadata, SnapResolution } from '@git-for-music/shared';
+import { DEFAULT_DEMO_TEMPO_BPM, normalizeTempoBpm } from '@/features/daw/utils/timing';
 
 export const TRACK_LABEL_WIDTH = 160;
 export const TRACK_HEIGHT = 72;
@@ -21,6 +22,8 @@ export type TemporaryRecordingTrack = {
   startOffsetMs: number;
   startedAtPlayheadMs: number;
   durationMs: number;
+  recordedTempoBpm: number;
+  sourceTempoBpm: number;
   status: 'recording' | 'preview' | 'uploading' | 'error';
   syncStatus: 'idle' | 'uploading' | 'complete' | 'error';
   blob?: Blob;
@@ -56,6 +59,10 @@ export type TimingFormState = {
   error: string | null;
 };
 
+export type LocalTempoState = {
+  localTempoBpm: string;
+};
+
 export type UploadModalState = {
   open: boolean;
   file: File | null;
@@ -83,6 +90,12 @@ export function formatTimeMs(ms: number) {
 }
 
 export type SelectedTiming = DemoTimingMetadata | null;
+
+export function localTempoStateFromTempo(tempoBpm?: number | null): LocalTempoState {
+  return {
+    localTempoBpm: normalizeTempoBpm(tempoBpm, DEFAULT_DEMO_TEMPO_BPM).toString(),
+  };
+}
 
 export function timingFormFromVersion(version: {
   tempoBpm?: number | null;

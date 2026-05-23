@@ -83,7 +83,7 @@ export async function updateDemoVersionTimingCommand(input: {
 
   if (body.tempoBpm !== undefined && body.tempoBpm !== null && !isValidTempoBpm(body.tempoBpm)) {
     return NextResponse.json<ApiError>(
-      { error: 'Tempo must be between 40 and 240 BPM' },
+      { error: 'Tempo must be between 20 and 300 BPM' },
       { status: 400 },
     );
   }

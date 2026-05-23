@@ -15,7 +15,6 @@ import type {
   DawOperationCommitRequest,
   DawOperationType,
   DawProjectOperationRecord,
-  DawOperationPayloadVersionTimingUpdated,
 } from '@/features/daw/protocol';
 import { AddTrackButton } from '@/features/daw/components/AddTrackButton';
 import { DawToolbarTabs, type DawToolbarTab } from '@/features/daw/components/DawToolbarTabs';
@@ -40,23 +39,22 @@ import {
 import { isValidSplitTime } from '@/features/daw/utils/segments';
 import {
   formatBarBeatLabel,
-  getBeatSubdivisionSeconds,
   isValidTempoBpm,
-  normalizeTimeSignature,
+  normalizeTempoBpm,
   snapMsToGrid,
+  DEFAULT_DEMO_TEMPO_BPM,
 } from '@/features/daw/utils/timing';
 import {
   DEFAULT_SNAP,
   TICK_INTERVAL_MS,
   TRACK_HEIGHT,
   TRACK_LABEL_WIDTH,
+  localTempoStateFromTempo,
   type RenameState,
   type TempoAnalysisPromptState,
-  type TimingFormState,
   type TemporaryRecordingTrack,
   type UploadModalState,
   formatTimeMs,
-  timingFormFromVersion,
 } from '@/features/daw/state/ui-state';
 import type { DawTrack, DawVersion, TrackTimelineSegment } from '@/features/daw/state/local-project-state';
 import type { TimelineHistoryEntry } from '@/features/daw/state/operation-reducer';
@@ -196,9 +194,6 @@ export function DemoDawClient({
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadName, setUploadName] = useState('');
   const [uploadFile, setUploadFile] = useState<File | null>(null);
-  const [timingFormState, setTimingFormState] = useState<TimingFormState>(() =>
-    timingFormFromVersion(versions.find((v) => v.id === currentVersionId)),
-  );
   const [snapResolution, setSnapResolution] = useState<SnapResolution>(DEFAULT_SNAP);
   const [metronomeEnabled, setMetronomeEnabled] = useState(false);
   const [uploadModalState, setUploadModalState] = useState<UploadModalState>({
@@ -234,6 +229,9 @@ export function DemoDawClient({
   const [gainByTrackVersionId, setGainByTrackVersionId] = useState<Record<string, number>>({});
   const [soloTrackVersionIds, setSoloTrackVersionIds] = useState<Set<string>>(() => new Set());
   const [recordArmedTrackVersionId, setRecordArmedTrackVersionId] = useState<string | null>(null);
+  const [recordedTempoByTrackVersionId, setRecordedTempoByTrackVersionId] = useState<
+    Record<string, { recordedTempoBpm: number | null; sourceTempoBpm: number | null }>
+  >({});
   const recordArmInitializedRef = useRef(false);
   const [addCommentModalOpen, setAddCommentModalOpen] = useState(false);
   const [addCommentBody, setAddCommentBody] = useState('');
@@ -260,6 +258,7 @@ export function DemoDawClient({
   const clockRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startWallTimeRef = useRef<number>(0);
   const startPlayheadMsRef = useRef<number>(0);
+  const lastAppliedTempoBpmRef = useRef<number>(0);
   const tracksScrollContainerRef = useRef<HTMLDivElement | null>(null);
   const metronomeAudioRef = useRef<AudioContext | null>(null);
   const metronomeTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -326,6 +325,17 @@ export function DemoDawClient({
     () => selectVersionById(versions, selectedVersionId),
     [selectedVersionId, versions],
   );
+  const sharedDemoTempoBpm = useMemo(
+    () => normalizeTempoBpm(selectedVersion?.tempoBpm, DEFAULT_DEMO_TEMPO_BPM),
+    [selectedVersion?.tempoBpm],
+  );
+  const [localTempoBpmInput, setLocalTempoBpmInput] = useState(() =>
+    localTempoStateFromTempo(selectedVersion?.tempoBpm).localTempoBpm,
+  );
+  const resolvedLocalTempoBpm = useMemo(
+    () => normalizeTempoBpm(Number(localTempoBpmInput), sharedDemoTempoBpm),
+    [localTempoBpmInput, sharedDemoTempoBpm],
+  );
 
   const selectedTracks = useMemo(() => selectTracks(selectedVersion), [selectedVersion]);
   const selectedTrack = useMemo(
@@ -361,6 +371,11 @@ export function DemoDawClient({
       setProjectSyncState(state);
     });
   }, [projectSyncEngine]);
+
+  const tempoMetadataByTrackVersionId = projectSyncState.projectState?.tempoMetadataByTrackVersionId;
+  useEffect(() => {
+    setRecordedTempoByTrackVersionId(tempoMetadataByTrackVersionId ?? {});
+  }, [tempoMetadataByTrackVersionId]);
 
   useEffect(() => {
     return projectSyncEngine.subscribeAssetStatus((event) => {
@@ -468,16 +483,13 @@ export function DemoDawClient({
   const selectedTiming = useMemo<DemoTimingMetadata | null>(() => {
     if (!selectedVersion) return null;
     return {
-      tempoBpm: selectedVersion.tempoBpm,
-      timeSignature: normalizeTimeSignature({
-        num: selectedVersion.timeSignatureNum,
-        den: selectedVersion.timeSignatureDen,
-      }),
-      musicalKey: selectedVersion.musicalKey,
-      tempoSource: selectedVersion.tempoSource,
-      keySource: selectedVersion.keySource,
+      tempoBpm: sharedDemoTempoBpm,
+      timeSignature: { num: 4, den: 4 },
+      musicalKey: null,
+      tempoSource: 'MANUAL',
+      keySource: 'MANUAL',
     };
-  }, [selectedVersion]);
+  }, [sharedDemoTempoBpm, selectedVersion]);
 
   const comments = projectSyncState.projectState?.comments ?? [];
 
@@ -539,8 +551,24 @@ export function DemoDawClient({
         durationMs: durationByTrackVersionId[track.trackVersionId] ?? track.durationMs,
         isMuted: mutedTrackVersionIds.has(track.trackVersionId),
         segments: selectDisplayedTrackSegments(track, segmentLayoutOverrides),
+        recordedTempoBpm:
+          recordedTempoByTrackVersionId[track.trackVersionId]?.recordedTempoBpm ??
+          track.recordedTempoBpm ??
+          sharedDemoTempoBpm,
+        sourceTempoBpm:
+          recordedTempoByTrackVersionId[track.trackVersionId]?.sourceTempoBpm ??
+          track.sourceTempoBpm ??
+          sharedDemoTempoBpm,
       })),
-    [durationByTrackVersionId, mutedTrackVersionIds, offsetOverrides, selectedTracks, segmentLayoutOverrides],
+    [
+      durationByTrackVersionId,
+      mutedTrackVersionIds,
+      offsetOverrides,
+      recordedTempoByTrackVersionId,
+      selectedTracks,
+      segmentLayoutOverrides,
+      sharedDemoTempoBpm,
+    ],
   );
 
   const visualProjection = useMemo(
@@ -620,8 +648,32 @@ export function DemoDawClient({
       mutedTrackVersionIds,
       soloTrackVersionIds,
       gainByTrackVersionId,
+      localTempoBpm: resolvedLocalTempoBpm,
+      sharedDemoTempoBpm,
     });
-  }, [gainByTrackVersionId, mutedTrackVersionIds, playbackEngine, playbackTracks, soloTrackVersionIds]);
+  }, [
+    gainByTrackVersionId,
+    mutedTrackVersionIds,
+    playbackEngine,
+    playbackTracks,
+    resolvedLocalTempoBpm,
+    sharedDemoTempoBpm,
+    soloTrackVersionIds,
+  ]);
+
+  useEffect(() => {
+    if (!isPlaying) {
+      lastAppliedTempoBpmRef.current = resolvedLocalTempoBpm;
+      return;
+    }
+    if (lastAppliedTempoBpmRef.current === resolvedLocalTempoBpm) return;
+    lastAppliedTempoBpmRef.current = resolvedLocalTempoBpm;
+    const playhead = currentTimeMsRef.current;
+    startPlayheadMsRef.current = playhead;
+    startWallTimeRef.current = performance.now();
+    seekAllTracks(playhead);
+    void playbackEngine.play(playhead);
+  }, [isPlaying, playbackEngine, resolvedLocalTempoBpm]);
 
   useEffect(() => {
     void projectSyncEngine.bootstrap({
@@ -632,6 +684,7 @@ export function DemoDawClient({
         currentVersionId,
         comments: [],
         annotations: [],
+        tempoMetadataByTrackVersionId: {},
       },
     });
   }, [demoId, currentVersionId, projectId, projectSyncEngine, versions]);
@@ -763,10 +816,6 @@ export function DemoDawClient({
       clearInterval(timer);
     };
   }, [processingJobIds, router, tempoAnalysisPrompt]);
-
-  useEffect(() => {
-    setTimingFormState(timingFormFromVersion(selectedVersion));
-  }, [selectedVersion]);
 
   useEffect(() => {
     return () => {
@@ -1046,36 +1095,26 @@ export function DemoDawClient({
     osc.stop(whenSeconds + 0.07);
   }
 
-  function scheduleMetronomeThrough(playheadMs: number) {
-    const timing = getActiveTiming();
-    if (!timing || !metronomeEnabled) return;
+  function restartMetronomeSchedule() {
+    stopMetronomeSchedule();
+    if (!metronomeEnabled) return;
 
     const ctx = ensureMetronomeContext();
-    const secondsPerBeat = getBeatSubdivisionSeconds(
-      timing.tempoBpm as number,
-      timing.timeSignature,
-      'beat',
-    );
-    if (!secondsPerBeat) return;
-    const nowSeconds = playheadMs / 1000;
-    const lookaheadSeconds = 1.25;
-    const endSeconds = nowSeconds + lookaheadSeconds;
-    const startBeat = Math.max(
-      Math.ceil(nowSeconds / secondsPerBeat),
-      (metronomeScheduledBeatRef.current ?? -1) + 1,
-    );
-    const endBeat = Math.floor(endSeconds / secondsPerBeat);
+    const beatDurationMs = 60000 / resolvedLocalTempoBpm;
 
     if (ctx.state === 'suspended') {
       void ctx.resume();
     }
 
-    for (let beatIndex = startBeat; beatIndex <= endBeat; beatIndex += 1) {
-      const beatTimeSeconds = beatIndex * secondsPerBeat;
-      const isAccent = beatIndex % timing.timeSignature.num === 0;
-      scheduleMetronomeClick(ctx.currentTime + Math.max(0, beatTimeSeconds - nowSeconds), isAccent);
-      metronomeScheduledBeatRef.current = beatIndex;
-    }
+    metronomeScheduledBeatRef.current = 0;
+    const scheduleBeat = () => {
+      const beatIndex = metronomeScheduledBeatRef.current ?? 0;
+      scheduleMetronomeClick(ctx.currentTime + 0.01, beatIndex % 4 === 0);
+      metronomeScheduledBeatRef.current = beatIndex + 1;
+    };
+
+    scheduleBeat();
+    metronomeTimerRef.current = setInterval(scheduleBeat, beatDurationMs);
   }
 
   const stopMetronomeSchedule = useCallback(() => {
@@ -1089,6 +1128,20 @@ export function DemoDawClient({
       metronomeAudioRef.current = null;
     }
   }, []);
+
+  useEffect(() => {
+    if (!isPlaying) {
+      stopMetronomeSchedule();
+      return;
+    }
+
+    if (metronomeEnabled) {
+      restartMetronomeSchedule();
+      return;
+    }
+
+    stopMetronomeSchedule();
+  }, [isPlaying, metronomeEnabled, resolvedLocalTempoBpm, stopMetronomeSchedule]);
 
   const stopTransport = useCallback(() => {
     if (clockRef.current) {
@@ -1119,6 +1172,15 @@ export function DemoDawClient({
     void publishPresence('idle');
   }
 
+  function handleTransportStop() {
+    if (currentRecordingState === 'recording') {
+      recordingControlsRef.current?.stopRecording();
+      return;
+    }
+
+    stopTransport();
+  }
+
   function seekAllTracks(timeMs: number) {
     playbackEngine.seek(timeMs);
   }
@@ -1135,12 +1197,10 @@ export function DemoDawClient({
     startWallTimeRef.current = performance.now();
 
     seekAllTracks(startMs);
-    scheduleMetronomeThrough(startMs);
     void playbackEngine.play(startMs);
 
     clockRef.current = setInterval(() => {
-      const elapsed = performance.now() - startWallTimeRef.current;
-      const newTimeMs = startPlayheadMsRef.current + elapsed;
+      const newTimeMs = playbackEngine.getCurrentTimeMs();
 
       // While a take is actively recording, the transport must keep running even if
       // the timeline length is being inferred from the live recording itself.
@@ -1151,7 +1211,6 @@ export function DemoDawClient({
       }
 
       setCurrentTimeMs(newTimeMs);
-      scheduleMetronomeThrough(newTimeMs);
     }, TICK_INTERVAL_MS);
 
     setIsPlaying(true);
@@ -2026,6 +2085,7 @@ export function DemoDawClient({
     stream: MediaStream,
     startOffsetMs: number,
     target: ResolvedRecordingTarget,
+    recordedTempoBpm: number,
   ) {
     isLiveRecordingRef.current = true;
     setRecordingStream(stream);
@@ -2038,6 +2098,8 @@ export function DemoDawClient({
       startOffsetMs,
       startedAtPlayheadMs: startOffsetMs,
       durationMs: 0,
+      recordedTempoBpm,
+      sourceTempoBpm: recordedTempoBpm,
       status: 'recording',
       syncStatus: 'idle',
       peaks: [],
@@ -2068,15 +2130,17 @@ export function DemoDawClient({
     });
     setTemporaryRecordingTrack((prev) =>
       prev
-        ? {
-            ...prev,
-            status: 'preview',
-            syncStatus: 'idle',
-            blob,
-            previewUrl,
-            durationMs,
-            peaks: [],
-          }
+          ? {
+              ...prev,
+              status: 'preview',
+              syncStatus: 'idle',
+              blob,
+              previewUrl,
+              durationMs,
+              recordedTempoBpm: prev.recordedTempoBpm,
+              sourceTempoBpm: prev.sourceTempoBpm,
+              peaks: [],
+            }
         : prev,
     );
     void publishPresence('online');
@@ -2135,9 +2199,22 @@ export function DemoDawClient({
         sourceVersionId: selectedVersionId,
         trackId: track.targetTrackId,
         startOffsetMs: track.startOffsetMs,
+        recordedTempoBpm: track.recordedTempoBpm,
+        sourceTempoBpm: track.sourceTempoBpm,
         timingChoice: 'uploadUnchanged',
         blob: track.blob,
       });
+      await projectSyncEngine.setTrackTempoMetadata(data.trackVersionId, {
+        recordedTempoBpm: track.recordedTempoBpm,
+        sourceTempoBpm: track.sourceTempoBpm,
+      });
+      setRecordedTempoByTrackVersionId((prev) => ({
+        ...prev,
+        [data.trackVersionId]: {
+          recordedTempoBpm: track.recordedTempoBpm,
+          sourceTempoBpm: track.sourceTempoBpm,
+        },
+      }));
 
       setTemporaryRecordingTrack((prev) =>
         prev
@@ -2177,15 +2254,29 @@ export function DemoDawClient({
     setIsUploading(true);
     setUploadError(null);
     setProcessingMessage(null);
+    const uploadTempoBpm = resolvedLocalTempoBpm;
     try {
       const data = await ingestEngine.uploadAudioFile({
         demoId,
         projectId,
         name,
         sourceVersionId: selectedVersionId,
+        recordedTempoBpm: uploadTempoBpm,
+        sourceTempoBpm: uploadTempoBpm,
         timingChoice,
         file,
       });
+      await projectSyncEngine.setTrackTempoMetadata(data.trackVersionId, {
+        recordedTempoBpm: uploadTempoBpm,
+        sourceTempoBpm: uploadTempoBpm,
+      });
+      setRecordedTempoByTrackVersionId((prev) => ({
+        ...prev,
+        [data.trackVersionId]: {
+          recordedTempoBpm: uploadTempoBpm,
+          sourceTempoBpm: uploadTempoBpm,
+        },
+      }));
       setUploadName('');
       setUploadFile(null);
       setSelectedVersionId(data.demoVersionId);
@@ -2252,39 +2343,6 @@ export function DemoDawClient({
     }
   }
 
-  async function confirmTempoAnalysisAsProjectTempo() {
-    if (!tempoAnalysisPrompt) return;
-    const tempoBpm = tempoAnalysisPrompt.tempoBpm;
-    if (!Number.isFinite(tempoBpm) || !isValidTempoBpm(tempoBpm)) {
-      setTempoAnalysisPrompt((prev) =>
-        prev ? { ...prev, error: 'Tempo analysis did not return a valid BPM' } : prev,
-      );
-      return;
-    }
-
-    setTempoAnalysisPrompt((prev) => (prev ? { ...prev, applying: true, error: null } : prev));
-    try {
-      await commitProjectOperation('VERSION_TIMING_UPDATED', {
-        versionId: selectedVersionId,
-        tempoBpm,
-        tempoSource: 'ANALYZED',
-      } satisfies DawOperationPayloadVersionTimingUpdated);
-      setTempoAnalysisPrompt(null);
-      setProcessingMessage(`Project tempo set to ${tempoBpm.toFixed(1)} BPM.`);
-      router.refresh();
-    } catch (error) {
-      setTempoAnalysisPrompt((prev) =>
-        prev
-          ? {
-              ...prev,
-              applying: false,
-              error: error instanceof Error ? error.message : 'Something went wrong while updating project tempo.',
-            }
-          : prev,
-      );
-    }
-  }
-
   async function onUploadTrack(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setUploadError(null);
@@ -2292,17 +2350,6 @@ export function DemoDawClient({
       setUploadError('Please choose an audio file to upload.');
       return;
     }
-    const hasTempo = isValidTempoBpm(selectedTiming?.tempoBpm);
-    if (hasTempo) {
-      setUploadModalState({
-        open: true,
-        file: uploadFile,
-        name: uploadName,
-        choice: 'keepProjectTempo',
-      });
-      return;
-    }
-
     await performUpload(uploadFile, uploadName, 'uploadUnchanged');
   }
 
@@ -2323,55 +2370,6 @@ export function DemoDawClient({
     if (file && !uploadName.trim()) {
       setUploadName(file.name.replace(/\.[^.]+$/, ''));
     }
-  }
-
-  async function saveTimingSettings() {
-    const tempoInput = timingFormState.tempoBpm.trim();
-    const tempoBpm = tempoInput ? Number(tempoInput) : null;
-    const timeSignatureNum = Number(timingFormState.timeSignatureNum);
-    const timeSignatureDen = Number(timingFormState.timeSignatureDen);
-    const musicalKey = timingFormState.musicalKey.trim();
-
-    if (tempoInput && (!Number.isFinite(tempoBpm) || !isValidTempoBpm(tempoBpm))) {
-      setTimingFormState((prev) => ({ ...prev, error: 'Tempo must be between 40 and 240 BPM' }));
-      return;
-    }
-
-    if (
-      !Number.isFinite(timeSignatureNum) ||
-      !Number.isFinite(timeSignatureDen) ||
-      timeSignatureNum < 1 ||
-      timeSignatureDen < 1
-    ) {
-      setTimingFormState((prev) => ({ ...prev, error: 'Time signature must use positive numbers' }));
-      return;
-    }
-
-    setTimingFormState((prev) => ({ ...prev, saving: true, error: null }));
-    try {
-      await commitProjectOperation('VERSION_TIMING_UPDATED', {
-        versionId: selectedVersionId,
-        tempoBpm: tempoInput ? tempoBpm : null,
-        timeSignatureNum: Math.floor(timeSignatureNum),
-        timeSignatureDen: Math.floor(timeSignatureDen),
-        musicalKey: musicalKey || null,
-        tempoSource: 'MANUAL',
-        keySource: 'MANUAL',
-      } satisfies DawOperationPayloadVersionTimingUpdated);
-      router.refresh();
-    } catch (error) {
-      setTimingFormState((prev) =>
-        prev
-          ? {
-              ...prev,
-              saving: false,
-              error: error instanceof Error ? error.message : 'Something went wrong while saving timing',
-            }
-          : prev,
-      );
-      return;
-    }
-    setTimingFormState((prev) => ({ ...prev, saving: false, error: null }));
   }
 
   const hasTimelineContent = selectedTracks.length > 0 || temporaryRecordingTrack !== null;
@@ -2740,28 +2738,21 @@ export function DemoDawClient({
           </div>
           <div className="flex h-full min-h-0 flex-col gap-4 xl:col-start-2 xl:row-start-1 xl:self-stretch">
             <ProjectTimingControls
-              tempoBpm={timingFormState.tempoBpm}
-              timeSignatureNum={timingFormState.timeSignatureNum}
-              timeSignatureDen={timingFormState.timeSignatureDen}
-              musicalKey={timingFormState.musicalKey}
-              saving={timingFormState.saving}
-              error={timingFormState.error}
-              onTempoChange={(value) => setTimingFormState((prev) => ({ ...prev, tempoBpm: value, error: null }))}
-              onTimeSignatureNumChange={(value) => setTimingFormState((prev) => ({ ...prev, timeSignatureNum: value, error: null }))}
-              onTimeSignatureDenChange={(value) => setTimingFormState((prev) => ({ ...prev, timeSignatureDen: value, error: null }))}
-              onMusicalKeyChange={(value) => setTimingFormState((prev) => ({ ...prev, musicalKey: value, error: null }))}
-              onSave={() => void saveTimingSettings()}
+              sharedDemoTempoBpm={sharedDemoTempoBpm}
+              localTempoBpm={localTempoBpmInput}
+              onLocalTempoChange={setLocalTempoBpmInput}
             />
             <TransportControls
               isPlaying={isPlaying}
               currentTimeMs={currentTimeMs}
               onPlay={() => playTransport()}
               onPause={pauseTransport}
-              onStop={stopTransport}
+              onStop={handleTransportStop}
               leadingSlot={
                 <RecordingControls
                   ref={recordingControlsRef}
                   currentTimeMs={currentTimeMs}
+                  recordedTempoBpm={resolvedLocalTempoBpm}
                   isDisabled={temporaryRecordingTrack !== null || !audioInputReady || !selectedAudioInputDeviceId}
                   recordingTarget={activeRecordingTarget}
                   selectedAudioInputDeviceId={selectedAudioInputDeviceId}
@@ -2955,14 +2946,7 @@ export function DemoDawClient({
               >
                 Dismiss
               </button>
-              <button
-                type="button"
-                onClick={() => void confirmTempoAnalysisAsProjectTempo()}
-                disabled={tempoAnalysisPrompt.applying}
-                className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
-              >
-                {tempoAnalysisPrompt.applying ? 'Saving…' : 'Set as project tempo?'}
-              </button>
+              <p className="text-xs text-slate-400">Project tempo edits are disabled in this version.</p>
             </div>
           </div>
         </div>

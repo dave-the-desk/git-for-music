@@ -1,4 +1,5 @@
 import { buildRenderableTrackSegments } from '@/features/daw/utils/segments';
+import { DEFAULT_DEMO_TEMPO_BPM, normalizeTempoBpm } from '@/features/daw/utils/timing';
 import type { DawTrack, TrackTimelineSegment } from '@/features/daw/state/local-project-state';
 
 type TrackMixState = {
@@ -10,7 +11,15 @@ type TrackMixState = {
 
 type PlaybackProjectTrack = Pick<
   DawTrack,
-  'trackId' | 'trackName' | 'trackVersionId' | 'storageKey' | 'startOffsetMs' | 'durationMs' | 'segments'
+  | 'trackId'
+  | 'trackName'
+  | 'trackVersionId'
+  | 'storageKey'
+  | 'startOffsetMs'
+  | 'durationMs'
+  | 'segments'
+  | 'recordedTempoBpm'
+  | 'sourceTempoBpm'
 > & {
   isMuted?: boolean;
 };
@@ -21,6 +30,8 @@ export type PlaybackProjectSnapshot = {
   soloTrackVersionIds?: Set<string>;
   gainByTrackVersionId?: Record<string, number>;
   panByTrackVersionId?: Record<string, number>;
+  localTempoBpm: number;
+  sharedDemoTempoBpm?: number | null;
 };
 
 export type PlaybackEnginePluginGraphFactory = (
@@ -87,6 +98,7 @@ export class AudioPlaybackEngine {
   private isPlaying = false;
   private playheadMs = 0;
   private pluginGraphFactory: PlaybackEnginePluginGraphFactory | null = null;
+  private playbackTimelineRate = 1;
 
   constructor(options?: { pluginGraphFactory?: PlaybackEnginePluginGraphFactory }) {
     this.pluginGraphFactory = options?.pluginGraphFactory ?? null;
@@ -303,7 +315,7 @@ export class AudioPlaybackEngine {
     if (!this.isPlaying || !this.audioContext) {
       return this.playheadMs;
     }
-    const elapsedMs = (this.audioContext.currentTime - this.playStartAudioTime) * 1000;
+    const elapsedMs = (this.audioContext.currentTime - this.playStartAudioTime) * 1000 * this.playbackTimelineRate;
     return Math.max(0, this.playStartWallTimeMs + elapsedMs);
   }
 
@@ -346,6 +358,9 @@ export class AudioPlaybackEngine {
     if (!this.project) return;
 
     const audioContext = this.ensureAudioContext();
+    const sharedTempoBpm = normalizeTempoBpm(this.project.sharedDemoTempoBpm, DEFAULT_DEMO_TEMPO_BPM);
+    const localTempoBpm = normalizeTempoBpm(this.project.localTempoBpm, sharedTempoBpm);
+    this.playbackTimelineRate = clamp(localTempoBpm / sharedTempoBpm, 0.25, 4.0);
     this.playStartWallTimeMs = timeMs;
     this.playStartAudioTime = audioContext.currentTime;
 
@@ -375,6 +390,11 @@ export class AudioPlaybackEngine {
         const trackAudible = !mix.muted && (!anySolo || mix.solo);
         const trackBaseGain = trackAudible ? clamp(mix.gain, 0, 8) : 0;
         const trackPan = clamp(mix.pan, -1, 1);
+        const recordedTempoBpm = normalizeTempoBpm(
+          track.recordedTempoBpm ?? track.sourceTempoBpm,
+          sharedTempoBpm,
+        );
+        const playbackRate = clamp(localTempoBpm / recordedTempoBpm, 0.25, 4.0);
         bus.gain.gain.setValueAtTime(trackBaseGain, audioContext.currentTime);
         bus.pan.pan.setValueAtTime(trackPan, audioContext.currentTime);
 
@@ -394,7 +414,7 @@ export class AudioPlaybackEngine {
 
           const source = audioContext.createBufferSource();
           source.buffer = buffer;
-          source.playbackRate.value = 1;
+          source.playbackRate.value = playbackRate;
 
           const segmentGain = audioContext.createGain();
           const baseSegmentGain = dbToLinear(segment.gainDb);

@@ -2,18 +2,24 @@ import { prisma } from '@git-for-music/db';
 import { NextResponse } from 'next/server';
 import type { ApiError } from '@git-for-music/shared';
 import { checkpointDemoDawSnapshot } from '@/features/daw/server/snapshot-builder';
+import { isValidTempoBpm } from '@/features/daw/utils/timing';
 
 const MAX_NAME_LENGTH = 80;
 const MAX_DESCRIPTION_LENGTH = 500;
+const DEFAULT_SHARED_TEMPO_BPM = 100;
 
 export async function createDemoCommand(input: {
   userId: string;
   projectId: string;
   name: string;
   description?: string | null;
+  sharedDemoTempoBpm?: number | null;
 }) {
   const name = input.name.trim();
   const description = input.description?.trim() ?? '';
+  const sharedDemoTempoBpm = isValidTempoBpm(input.sharedDemoTempoBpm)
+    ? input.sharedDemoTempoBpm
+    : DEFAULT_SHARED_TEMPO_BPM;
 
   if (!input.projectId || !name) {
     return NextResponse.json<ApiError>(
@@ -81,6 +87,7 @@ export async function createDemoCommand(input: {
         demoId: createdDemo.id,
         label: 'Initial version',
         description: 'Created demo',
+        tempoBpm: sharedDemoTempoBpm,
         parentId: null,
       },
       select: {

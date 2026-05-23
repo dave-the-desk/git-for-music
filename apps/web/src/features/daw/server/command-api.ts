@@ -248,7 +248,7 @@ function validateVersionTimingPayload(payload: DawOperationPayloadVersionTimingU
     (payload.tempoBpm !== null &&
       (typeof payload.tempoBpm !== 'number' || !Number.isFinite(payload.tempoBpm) || !isValidTempoBpm(payload.tempoBpm)))
   ) {
-    return 'Tempo must be between 40 and 240 BPM';
+    return 'Tempo must be between 20 and 300 BPM';
   }
 
   if (hasTimeSignature) {

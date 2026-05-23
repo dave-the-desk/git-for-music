@@ -42,6 +42,7 @@ export function ProjectPageClient({
   const [isCreateDemoModalOpen, setIsCreateDemoModalOpen] = useState(false);
   const [demoName, setDemoName] = useState('');
   const [demoDescription, setDemoDescription] = useState('');
+  const [sharedDemoTempoBpm, setSharedDemoTempoBpm] = useState('100');
   const [createDemoError, setCreateDemoError] = useState<string | null>(null);
   const [isSubmittingDemo, setIsSubmittingDemo] = useState(false);
 
@@ -49,6 +50,7 @@ export function ProjectPageClient({
     setIsCreateDemoModalOpen(false);
     setDemoName('');
     setDemoDescription('');
+    setSharedDemoTempoBpm('100');
     setCreateDemoError(null);
   }
 
@@ -56,6 +58,10 @@ export function ProjectPageClient({
     event.preventDefault();
     setCreateDemoError(null);
     setIsSubmittingDemo(true);
+
+    const parsedTempo = Number(sharedDemoTempoBpm);
+    const tempoBpm =
+      Number.isFinite(parsedTempo) && parsedTempo >= 20 && parsedTempo <= 300 ? parsedTempo : 100;
 
     try {
       const response = await fetch('/api/demos', {
@@ -67,6 +73,7 @@ export function ProjectPageClient({
           projectId,
           name: demoName,
           description: demoDescription,
+          sharedDemoTempoBpm: tempoBpm,
         }),
       });
 
@@ -193,6 +200,21 @@ export function ProjectPageClient({
                   className="min-h-24 w-full rounded-md border border-gray-700 bg-gray-950 px-3 py-2 text-sm outline-none ring-indigo-500 focus:ring"
                   placeholder="Current arrangement with guide vocal and scratch bass."
                 />
+              </label>
+
+              <label className="block">
+                <span className="mb-1 block text-sm text-gray-300">Shared demo tempo (bpm)</span>
+                <input
+                  type="number"
+                  min={20}
+                  max={300}
+                  step="0.1"
+                  value={sharedDemoTempoBpm}
+                  onChange={(event) => setSharedDemoTempoBpm(event.currentTarget.value)}
+                  className="w-full rounded-md border border-gray-700 bg-gray-950 px-3 py-2 text-sm outline-none ring-indigo-500 focus:ring"
+                  placeholder="100"
+                />
+                <p className="mt-1 text-xs text-gray-500">Saved with the demo and shown read-only in the DAW.</p>
               </label>
 
               {createDemoError ? <p className="text-sm text-red-400">{createDemoError}</p> : null}

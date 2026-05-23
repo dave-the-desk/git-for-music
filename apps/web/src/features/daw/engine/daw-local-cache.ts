@@ -68,6 +68,8 @@ export type DawLocalCacheAssetRecord = {
     channelCount?: number;
     sizeBytes?: number;
     mimeType?: string | null;
+    recordedTempoBpm?: number | null;
+    sourceTempoBpm?: number | null;
   } | null;
   createdAt: number;
   updatedAt: number;

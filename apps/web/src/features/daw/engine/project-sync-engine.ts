@@ -16,7 +16,7 @@ import {
   type LocalOperationQueueState,
   type LocalProjectSyncOperationStatus,
 } from '@/features/daw/state/local-operation-queue';
-import type { LocalProjectState } from '@/features/daw/state/local-project-state';
+import type { LocalProjectState, TempoMetadataEntry } from '@/features/daw/state/local-project-state';
 
 type SyncableOperationType = Exclude<DawOperationType, 'ASSET_ADDED'>;
 
@@ -157,6 +157,22 @@ export class ProjectSyncEngine {
 
   getState() {
     return this.state;
+  }
+
+  async setTrackTempoMetadata(trackVersionId: string, tempoMetadata: TempoMetadataEntry) {
+    if (!this.state.projectState) return;
+
+    this.setState({
+      projectState: {
+        ...this.state.projectState,
+        tempoMetadataByTrackVersionId: {
+          ...this.state.projectState.tempoMetadataByTrackVersionId,
+          [trackVersionId]: tempoMetadata,
+        },
+      },
+    });
+
+    await this.persistProjectState();
   }
 
   private emit() {
@@ -339,6 +355,12 @@ export class ProjectSyncEngine {
       if (bootstrapResponse) {
         this.bootstrapResponse = bootstrapResponse;
         const bootstrappedState = createLocalProjectStateFromBootstrap(bootstrapResponse);
+        if (bootstrappedState) {
+          bootstrappedState.tempoMetadataByTrackVersionId = {
+            ...(cachedProject?.projectState?.tempoMetadataByTrackVersionId ?? {}),
+            ...bootstrappedState.tempoMetadataByTrackVersionId,
+          };
+        }
         this.setState({
           projectState: bootstrappedState ? clone(bootstrappedState) : this.state.projectState,
           baseSnapshotId: bootstrapResponse.latestSnapshot?.id ?? this.state.baseSnapshotId,

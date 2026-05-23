@@ -372,15 +372,37 @@ export function createLocalProjectStateFromBootstrap(
   bootstrap: DawProjectBootstrapResponse | null | undefined,
 ): LocalProjectState | null {
   const snapshot = (bootstrap?.projectState ?? bootstrap?.latestSnapshot?.snapshot) as
-    | { versions?: DawVersion[]; currentVersionId?: string; comments?: DemoComment[]; annotations?: DemoAnnotation[] }
+    | {
+        versions?: DawVersion[];
+        currentVersionId?: string;
+        comments?: DemoComment[];
+        annotations?: DemoAnnotation[];
+        tempoMetadataByTrackVersionId?: Record<string, { recordedTempoBpm?: number | null; sourceTempoBpm?: number | null }>;
+      }
     | undefined;
 
   if (!snapshot?.versions || !snapshot.currentVersionId) return null;
+  const tempoMetadataByTrackVersionId = Object.fromEntries(
+    Object.entries(snapshot.tempoMetadataByTrackVersionId ?? {}).map(([trackVersionId, value]) => [
+      trackVersionId,
+      {
+        recordedTempoBpm:
+          typeof value?.recordedTempoBpm === 'number' && Number.isFinite(value.recordedTempoBpm)
+            ? value.recordedTempoBpm
+            : value?.recordedTempoBpm ?? null,
+        sourceTempoBpm:
+          typeof value?.sourceTempoBpm === 'number' && Number.isFinite(value.sourceTempoBpm)
+            ? value.sourceTempoBpm
+            : value?.sourceTempoBpm ?? null,
+      },
+    ]),
+  );
   return {
     versions: snapshot.versions,
     currentVersionId: snapshot.currentVersionId,
     comments: normalizeComments(snapshot.comments),
     annotations: normalizeAnnotations(snapshot.annotations),
+    tempoMetadataByTrackVersionId,
   };
 }
 

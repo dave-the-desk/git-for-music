@@ -1,7 +1,16 @@
 import type { DemoTimingMetadata, SnapResolution, TimeSignature } from '@git-for-music/shared';
 
+export const DEFAULT_DEMO_TEMPO_BPM = 100;
+
 export function isValidTempoBpm(tempoBpm: number | null | undefined) {
-  return typeof tempoBpm === 'number' && Number.isFinite(tempoBpm) && tempoBpm >= 40 && tempoBpm <= 240;
+  return typeof tempoBpm === 'number' && Number.isFinite(tempoBpm) && tempoBpm >= 20 && tempoBpm <= 300;
+}
+
+export function normalizeTempoBpm(
+  tempoBpm: number | null | undefined,
+  fallback = DEFAULT_DEMO_TEMPO_BPM,
+): number {
+  return isValidTempoBpm(tempoBpm) ? (tempoBpm as number) : fallback;
 }
 
 export function normalizeTimeSignature(timeSignature: Partial<TimeSignature> | null | undefined): TimeSignature {

@@ -30,6 +30,8 @@ export type IngestUploadInput = {
   trackId?: string;
   startOffsetMs?: number;
   sourceType?: 'recording' | 'upload';
+  recordedTempoBpm?: number | null;
+  sourceTempoBpm?: number | null;
   timingChoice: UploadTimingChoice;
   file: File;
 };
@@ -103,6 +105,8 @@ export class AudioIngestEngine {
     const localMetadata = {
       mimeType: input.file.type || 'application/octet-stream',
       sizeBytes: input.file.size,
+      recordedTempoBpm: input.recordedTempoBpm ?? null,
+      sourceTempoBpm: input.sourceTempoBpm ?? null,
     };
     await dawLocalCache.putAsset({
       projectId: input.projectId,

@@ -83,6 +83,7 @@ export interface CreateDemoRequest {
   projectId: string;
   name: string;
   description?: string;
+  sharedDemoTempoBpm?: number | null;
 }
 
 export interface CreateVersionRequest {

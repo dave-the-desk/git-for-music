@@ -15,5 +15,6 @@ export async function POST(req: NextRequest) {
     projectId: body.projectId ?? '',
     name: body.name ?? '',
     description: body.description,
+    sharedDemoTempoBpm: body.sharedDemoTempoBpm,
   });
 }

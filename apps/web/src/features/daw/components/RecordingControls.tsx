@@ -6,6 +6,7 @@ type RecordingState = 'idle' | 'requesting' | 'recording' | 'error';
 
 type Props = {
   currentTimeMs: number;
+  recordedTempoBpm: number;
   isDisabled: boolean;
   recordingTarget: {
     trackId: string;
@@ -23,6 +24,7 @@ type Props = {
       trackVersionId: string;
       trackName: string;
     },
+    recordedTempoBpm: number,
   ) => void;
   onDurationUpdate: (durationMs: number) => void;
   onStopped: (blob: Blob, durationMs: number) => void;
@@ -36,6 +38,7 @@ export type RecordingControlsHandle = {
 export const RecordingControls = forwardRef<RecordingControlsHandle, Props>(function RecordingControls(
   {
     currentTimeMs,
+    recordedTempoBpm,
     isDisabled,
     recordingTarget,
     selectedAudioInputDeviceId,
@@ -129,7 +132,7 @@ export const RecordingControls = forwardRef<RecordingControlsHandle, Props>(func
       startTimeRef.current = performance.now();
       setElapsedMs(0);
       setRecState('recording');
-      onStreamReady(stream, capturedStartOffsetMs, recordingTarget);
+      onStreamReady(stream, capturedStartOffsetMs, recordingTarget, recordedTempoBpm);
 
       const mimeType = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg'].find((t) =>
         MediaRecorder.isTypeSupported(t),

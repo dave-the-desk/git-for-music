@@ -30,6 +30,8 @@ export type DawTrack = {
   mimeType: string | null;
   durationMs: number | null;
   startOffsetMs: number;
+  recordedTempoBpm?: number | null;
+  sourceTempoBpm?: number | null;
   isDerived: boolean;
   operationType: 'ORIGINAL' | 'TIME_STRETCH';
   parentTrackVersionId: string | null;
@@ -52,9 +54,15 @@ export type DawVersion = {
   tracks: DawTrack[];
 };
 
+export type TempoMetadataEntry = {
+  recordedTempoBpm: number | null;
+  sourceTempoBpm: number | null;
+};
+
 export type LocalProjectState = {
   versions: DawVersion[];
   currentVersionId: string;
   comments: DemoComment[];
   annotations: DemoAnnotation[];
+  tempoMetadataByTrackVersionId: Record<string, TempoMetadataEntry>;
 };
