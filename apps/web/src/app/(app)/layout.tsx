@@ -10,9 +10,14 @@ export default function AppLayout({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const isDemoDawPage = /^\/groups\/[^/]+\/projects\/[^/]+\/demos\/[^/]+$/.test(pathname);
 
   function isActive(href: string) {
     return pathname === href || pathname.startsWith(`${href}/`);
+  }
+
+  if (isDemoDawPage) {
+    return <main>{children}</main>;
   }
 
   return (

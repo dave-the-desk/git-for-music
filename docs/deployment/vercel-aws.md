@@ -39,7 +39,7 @@ Use `.env.production.example` as the starting point for production secrets and U
 - Local development can keep using Docker Postgres and the current public-file-based audio flow.
 - Production should use RDS for the database and S3 for audio objects.
 - Local workers currently poll Postgres directly; the future production worker should poll SQS.
-- Local audio paths may still resolve through `apps/web/public/uploads`, while production should treat the storage key as an S3 object key.
+- Local audio paths may still resolve through `apps/web/public/projects`, while production should treat the storage key as an S3 object key.
 - Cognito is not required for the current local workflow and should not be forced into the app yet.
 
 ## Vercel Deployment Settings

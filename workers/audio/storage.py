@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 from pathlib import Path
-from pathlib import PurePosixPath
 
 from analysis import load_audio_multichannel, load_audio_mono, write_audio
 
@@ -29,12 +29,26 @@ def normalize_storage_key(storage_key: str) -> str:
 def sanitize_storage_name(value: str) -> str:
     sanitized = re.sub(r'[^a-zA-Z0-9._-]', '-', value)
     sanitized = re.sub(r'-+', '-', sanitized)
-    return sanitized.strip('-.') or 'audio.wav'
+    return sanitized.strip('-.') or 'asset'
 
 
 def resolve_storage_path(storage_key: str) -> Path:
     relative = normalize_storage_key(storage_key)
     return PUBLIC_DIR / relative
+
+
+def _storage_root(track_version: dict[str, str]) -> str:
+    return (
+        f"projects/{sanitize_storage_name(track_version['projectId'])}"
+        f"/demos/{sanitize_storage_name(track_version['demoId'])}"
+        f"/tracks/{sanitize_storage_name(track_version['trackId'])}"
+        f"/versions/{sanitize_storage_name(track_version['id'])}"
+    )
+
+
+def _asset_name(asset_id: str, extension: str = '.wav') -> str:
+    cleaned_extension = extension if extension.startswith('.') else f'.{extension}'
+    return f"{sanitize_storage_name(asset_id)}{cleaned_extension}"
 
 
 def load_audio_for_analysis(storage_key: str):
@@ -51,13 +65,40 @@ def write_derived_audio(storage_key: str, audio, sample_rate: int) -> Path:
     return path
 
 
-def make_derived_storage_key(track_version: dict, job_id: str, file_name: str | None = None) -> str:
-    storage_key = track_version['storageKey']
-    resolved_name = sanitize_storage_name(
-        file_name or PurePosixPath(normalize_storage_key(storage_key)).name or 'audio.wav'
+def build_json_artifact_bytes(payload: dict) -> bytes:
+    return json.dumps(payload, indent=2, sort_keys=True).encode('utf-8')
+
+
+def write_json_artifact(storage_key: str, payload: dict) -> Path:
+    path = resolve_storage_path(storage_key)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(build_json_artifact_bytes(payload))
+    return path
+
+
+def make_original_storage_key(track_version: dict, asset_id: str) -> str:
+    return f"{_storage_root(track_version)}/originals/{_asset_name(asset_id)}"
+
+
+def make_derived_storage_key(track_version: dict, asset_id: str) -> str:
+    return f"{_storage_root(track_version)}/derived/{_asset_name(asset_id)}"
+
+
+def make_peaks_storage_key(track_version: dict, asset_id: str) -> str:
+    return f"{_storage_root(track_version)}/peaks/{sanitize_storage_name(asset_id)}.json"
+
+
+def make_analysis_storage_key(project_id: str, demo_id: str, job_id: str) -> str:
+    return (
+        f"projects/{sanitize_storage_name(project_id)}/demos/{sanitize_storage_name(demo_id)}"
+        f"/analysis/{sanitize_storage_name(job_id)}.json"
     )
-    object_key = (
-        f"groups/{track_version['groupId']}/projects/{track_version['projectId']}/demos/{track_version['demoId']}"
-        f"/tracks/{track_version['trackId']}/versions/{track_version['id']}/derived/{job_id}/{resolved_name}"
-    )
-    return f'/uploads/{object_key}'
+
+
+def make_transcript_storage_key(track_version: dict, asset_id: str) -> str:
+    return f"{_storage_root(track_version)}/transcripts/{sanitize_storage_name(asset_id)}.json"
+
+
+def make_stem_storage_key(track_version: dict, asset_id: str, file_name: str | None = None) -> str:
+    extension = '.wav' if not file_name else Path(file_name).suffix or '.wav'
+    return f"{_storage_root(track_version)}/stems/{_asset_name(asset_id, extension)}"

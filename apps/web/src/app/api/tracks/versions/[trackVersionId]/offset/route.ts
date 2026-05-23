@@ -1,7 +1,7 @@
-import { prisma } from '@git-for-music/db';
 import { NextRequest, NextResponse } from 'next/server';
 import type { ApiError } from '@git-for-music/shared';
 import { getAuthenticatedUserFromRequest } from '@/lib/auth/current-user';
+import { updateTrackOffsetCommand } from '@/features/daw/server/commands';
 
 // startOffsetMs is timeline position metadata only — it does not touch the audio file
 // (storageKey). Mutating it directly does not violate the "audio is never mutated" rule.
@@ -18,43 +18,9 @@ export async function PATCH(
 
   const { trackVersionId } = await params;
   const body = (await req.json()) as { startOffsetMs?: unknown };
-
-  if (
-    typeof body.startOffsetMs !== 'number' ||
-    !Number.isFinite(body.startOffsetMs) ||
-    body.startOffsetMs < 0
-  ) {
-    return NextResponse.json<ApiError>(
-      { error: 'startOffsetMs must be a non-negative number' },
-      { status: 400 },
-    );
-  }
-
-  const trackVersion = await prisma.trackVersion.findFirst({
-    where: {
-      id: trackVersionId,
-      track: {
-        demo: {
-          project: {
-            group: {
-              members: { some: { userId: user.id } },
-            },
-          },
-        },
-      },
-    },
-    select: { id: true },
+  return updateTrackOffsetCommand({
+    userId: user.id,
+    trackVersionId,
+    startOffsetMs: body.startOffsetMs,
   });
-
-  if (!trackVersion) {
-    return NextResponse.json<ApiError>({ error: 'Track version not found' }, { status: 404 });
-  }
-
-  const updated = await prisma.trackVersion.update({
-    where: { id: trackVersion.id },
-    data: { startOffsetMs: body.startOffsetMs },
-    select: { id: true, startOffsetMs: true },
-  });
-
-  return NextResponse.json(updated);
 }

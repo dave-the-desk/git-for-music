@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildRenderableTrackSegments, splitSegment } from './segments';
+import { buildRenderableTrackSegments, splitSegment } from '@/features/daw/utils/segments';
 
 test('splitSegment preserves audio metadata while dividing the timeline bounds', () => {
   const result = splitSegment({

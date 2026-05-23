@@ -1,0 +1,468 @@
+import { buildRenderableTrackSegments } from '@/features/daw/utils/segments';
+import type { DawTrack, TrackTimelineSegment } from '@/features/daw/state/local-project-state';
+
+type TrackMixState = {
+  muted: boolean;
+  solo: boolean;
+  gain: number;
+  pan: number;
+};
+
+type PlaybackProjectTrack = Pick<
+  DawTrack,
+  'trackId' | 'trackName' | 'trackVersionId' | 'storageKey' | 'startOffsetMs' | 'durationMs' | 'segments'
+> & {
+  isMuted?: boolean;
+};
+
+export type PlaybackProjectSnapshot = {
+  tracks: PlaybackProjectTrack[];
+  mutedTrackVersionIds: Set<string>;
+  soloTrackVersionIds?: Set<string>;
+  gainByTrackVersionId?: Record<string, number>;
+  panByTrackVersionId?: Record<string, number>;
+};
+
+export type PlaybackEnginePluginGraphFactory = (
+  trackVersionId: string,
+  inputNode: AudioNode,
+  audioContext: AudioContext,
+) => AudioNode;
+
+type TrackBus = {
+  input: GainNode;
+  gain: GainNode;
+  pan: StereoPannerNode;
+};
+
+type ScheduledSource = {
+  source: AudioBufferSourceNode;
+  gain: GainNode;
+  trackVersionId: string;
+};
+
+const DEFAULT_GAIN = 1;
+const DEFAULT_PAN = 0;
+
+function dbToLinear(db: number) {
+  if (!Number.isFinite(db)) return 1;
+  return Math.pow(10, db / 20);
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function interpolateEnvelopeAt(segment: TrackTimelineSegment, elapsedMs: number) {
+  const fadeInMs = Math.max(0, segment.fadeInMs + (segment.crossfadeInMs ?? 0));
+  const fadeOutMs = Math.max(0, segment.fadeOutMs + (segment.crossfadeOutMs ?? 0));
+  const durationMs = Math.max(0, segment.durationMs);
+  if (durationMs <= 0) return 0;
+
+  const clampedElapsed = clamp(elapsedMs, 0, durationMs);
+  let envelope = 1;
+
+  if (fadeInMs > 0 && clampedElapsed < fadeInMs) {
+    envelope *= clampedElapsed / fadeInMs;
+  }
+
+  if (fadeOutMs > 0) {
+    const remainingMs = durationMs - clampedElapsed;
+    if (remainingMs < fadeOutMs) {
+      envelope *= Math.max(0, remainingMs / fadeOutMs);
+    }
+  }
+
+  return clamp(envelope, 0, 1);
+}
+
+export class AudioPlaybackEngine {
+  private audioContext: AudioContext | null = null;
+  private masterGain: GainNode | null = null;
+  private readonly bufferCache = new Map<string, Promise<AudioBuffer> | AudioBuffer>();
+  private readonly trackBuses = new Map<string, TrackBus>();
+  private readonly scheduledSources = new Set<ScheduledSource>();
+  private readonly trackMixByTrackVersionId = new Map<string, TrackMixState>();
+  private project: PlaybackProjectSnapshot | null = null;
+  private isPlaying = false;
+  private playheadMs = 0;
+  private pluginGraphFactory: PlaybackEnginePluginGraphFactory | null = null;
+
+  constructor(options?: { pluginGraphFactory?: PlaybackEnginePluginGraphFactory }) {
+    this.pluginGraphFactory = options?.pluginGraphFactory ?? null;
+  }
+
+  private ensureAudioContext() {
+    if (!this.audioContext) {
+      this.audioContext = new AudioContext();
+      this.masterGain = this.audioContext.createGain();
+      this.masterGain.gain.value = 1;
+      this.masterGain.connect(this.audioContext.destination);
+    }
+
+    return this.audioContext;
+  }
+
+  private getMasterGain() {
+    return this.masterGain ?? this.ensureAudioContext().createGain();
+  }
+
+  private ensureTrackBus(trackVersionId: string) {
+    const existing = this.trackBuses.get(trackVersionId);
+    if (existing) return existing;
+
+    const audioContext = this.ensureAudioContext();
+    const input = audioContext.createGain();
+    const pluginOutput = this.pluginGraphFactory
+      ? this.pluginGraphFactory(trackVersionId, input, audioContext)
+      : input;
+    const gain = audioContext.createGain();
+    const pan = audioContext.createStereoPanner();
+
+    pluginOutput.connect(gain);
+    gain.connect(pan);
+    pan.connect(this.getMasterGain());
+
+    const bus: TrackBus = { input, gain, pan };
+    this.trackBuses.set(trackVersionId, bus);
+    this.applyTrackMix(trackVersionId);
+    return bus;
+  }
+
+  private applyTrackMix(trackVersionId: string) {
+    const bus = this.trackBuses.get(trackVersionId);
+    if (!bus) return;
+
+    const mix = this.trackMixByTrackVersionId.get(trackVersionId) ?? {
+      muted: false,
+      solo: false,
+      gain: DEFAULT_GAIN,
+      pan: DEFAULT_PAN,
+    };
+
+    const anySolo = Array.from(this.trackMixByTrackVersionId.values()).some((entry) => entry.solo);
+    const audible = !mix.muted && (!anySolo || mix.solo);
+    bus.gain.gain.value = audible ? clamp(mix.gain, 0, 8) : 0;
+    bus.pan.pan.value = clamp(mix.pan, -1, 1);
+  }
+
+  private applyTrackMixes() {
+    for (const trackVersionId of this.trackBuses.keys()) {
+      this.applyTrackMix(trackVersionId);
+    }
+  }
+
+  private async loadBuffer(storageKey: string) {
+    const cached = this.bufferCache.get(storageKey);
+    if (cached instanceof AudioBuffer) {
+      return cached;
+    }
+    if (cached) {
+      return cached;
+    }
+
+    const loadPromise = (async () => {
+      const response = await fetch(storageKey);
+      if (!response.ok) {
+        throw new Error(`Could not load audio buffer: ${response.status}`);
+      }
+
+      const bytes = await response.arrayBuffer();
+      const audioContext = this.ensureAudioContext();
+      return audioContext.decodeAudioData(bytes.slice(0));
+    })();
+
+    this.bufferCache.set(storageKey, loadPromise);
+
+    try {
+      const buffer = await loadPromise;
+      this.bufferCache.set(storageKey, buffer);
+      return buffer;
+    } catch (error) {
+      this.bufferCache.delete(storageKey);
+      throw error;
+    }
+  }
+
+  async preloadTracks(tracks: Pick<DawTrack, 'storageKey'>[]) {
+    await Promise.all(
+      [...new Set(tracks.map((track) => track.storageKey))].map(async (storageKey) => {
+        try {
+          await this.loadBuffer(storageKey);
+        } catch {
+          // Best effort preloading; playback can still attempt to load on demand.
+        }
+      }),
+    );
+  }
+
+  setProject(project: PlaybackProjectSnapshot) {
+    this.project = project;
+
+    for (const track of project.tracks) {
+      const currentMix = this.trackMixByTrackVersionId.get(track.trackVersionId);
+      this.trackMixByTrackVersionId.set(track.trackVersionId, {
+        muted: project.mutedTrackVersionIds.has(track.trackVersionId),
+        solo: project.soloTrackVersionIds?.has(track.trackVersionId) ?? false,
+        gain: project.gainByTrackVersionId?.[track.trackVersionId] ?? currentMix?.gain ?? DEFAULT_GAIN,
+        pan: project.panByTrackVersionId?.[track.trackVersionId] ?? currentMix?.pan ?? DEFAULT_PAN,
+      });
+      this.ensureTrackBus(track.trackVersionId);
+    }
+
+    for (const trackVersionId of [...this.trackMixByTrackVersionId.keys()]) {
+      if (!project.tracks.some((track) => track.trackVersionId === trackVersionId)) {
+        this.trackMixByTrackVersionId.delete(trackVersionId);
+        this.trackBuses.delete(trackVersionId);
+      }
+    }
+
+    this.applyTrackMixes();
+  }
+
+  setTrackMuted(trackVersionId: string, muted: boolean) {
+    const existing = this.trackMixByTrackVersionId.get(trackVersionId) ?? {
+      muted: false,
+      solo: false,
+      gain: DEFAULT_GAIN,
+      pan: DEFAULT_PAN,
+    };
+    this.trackMixByTrackVersionId.set(trackVersionId, { ...existing, muted });
+    this.applyTrackMix(trackVersionId);
+  }
+
+  setTrackSolo(trackVersionId: string, solo: boolean) {
+    const existing = this.trackMixByTrackVersionId.get(trackVersionId) ?? {
+      muted: false,
+      solo: false,
+      gain: DEFAULT_GAIN,
+      pan: DEFAULT_PAN,
+    };
+    this.trackMixByTrackVersionId.set(trackVersionId, { ...existing, solo });
+    this.applyTrackMixes();
+  }
+
+  setTrackGain(trackVersionId: string, gain: number) {
+    const existing = this.trackMixByTrackVersionId.get(trackVersionId) ?? {
+      muted: false,
+      solo: false,
+      gain: DEFAULT_GAIN,
+      pan: DEFAULT_PAN,
+    };
+    this.trackMixByTrackVersionId.set(trackVersionId, { ...existing, gain });
+    this.applyTrackMix(trackVersionId);
+  }
+
+  setTrackPan(trackVersionId: string, pan: number) {
+    const existing = this.trackMixByTrackVersionId.get(trackVersionId) ?? {
+      muted: false,
+      solo: false,
+      gain: DEFAULT_GAIN,
+      pan: DEFAULT_PAN,
+    };
+    this.trackMixByTrackVersionId.set(trackVersionId, { ...existing, pan });
+    this.applyTrackMix(trackVersionId);
+  }
+
+  async play(timeMs?: number) {
+    if (!this.project) return;
+
+    const nextTimeMs = Math.max(0, timeMs ?? this.playheadMs);
+    this.playheadMs = nextTimeMs;
+    this.isPlaying = true;
+
+    const audioContext = this.ensureAudioContext();
+    if (audioContext.state === 'suspended') {
+      await audioContext.resume();
+    }
+
+    this.stopScheduledSources();
+    await this.schedulePlayback(nextTimeMs);
+  }
+
+  pause() {
+    this.playheadMs = this.getCurrentTimeMs();
+    this.isPlaying = false;
+    this.stopScheduledSources();
+  }
+
+  stop() {
+    this.playheadMs = 0;
+    this.isPlaying = false;
+    this.stopScheduledSources();
+  }
+
+  seek(timeMs: number) {
+    this.playheadMs = Math.max(0, timeMs);
+    if (this.isPlaying) {
+      void this.restartPlayback(this.playheadMs);
+    }
+  }
+
+  getCurrentTimeMs() {
+    if (!this.isPlaying || !this.audioContext) {
+      return this.playheadMs;
+    }
+    const elapsedMs = (this.audioContext.currentTime - this.playStartAudioTime) * 1000;
+    return Math.max(0, this.playStartWallTimeMs + elapsedMs);
+  }
+
+  dispose() {
+    this.stopScheduledSources();
+    this.project = null;
+    this.trackBuses.clear();
+    this.trackMixByTrackVersionId.clear();
+    this.bufferCache.clear();
+    if (this.audioContext) {
+      void this.audioContext.close().catch(() => {});
+      this.audioContext = null;
+    }
+    this.masterGain = null;
+  }
+
+  private playStartWallTimeMs = 0;
+  private playStartAudioTime = 0;
+
+  private async restartPlayback(timeMs: number) {
+    if (!this.project) return;
+    this.stopScheduledSources();
+    this.playheadMs = Math.max(0, timeMs);
+    await this.schedulePlayback(this.playheadMs);
+  }
+
+  private stopScheduledSources() {
+    for (const scheduled of this.scheduledSources) {
+      try {
+        scheduled.source.stop();
+      } catch {
+        // Ignore nodes that already ended.
+      }
+      scheduled.source.onended = null;
+    }
+    this.scheduledSources.clear();
+  }
+
+  private async schedulePlayback(timeMs: number) {
+    if (!this.project) return;
+
+    const audioContext = this.ensureAudioContext();
+    this.playStartWallTimeMs = timeMs;
+    this.playStartAudioTime = audioContext.currentTime;
+
+    const tracksWithSegments = this.project.tracks.map((track) => ({
+      track,
+      segments: buildRenderableTrackSegments({
+        trackVersionId: track.trackVersionId,
+        trackStartOffsetMs: track.startOffsetMs,
+        segments: track.segments,
+        fallbackDurationMs: Math.max(0, track.durationMs ?? 0),
+      }),
+    }));
+
+    await Promise.all(
+      tracksWithSegments.map(async ({ track, segments }) => {
+        const buffer = await this.loadBuffer(track.storageKey).catch(() => null);
+        if (!buffer) return;
+
+        const bus = this.ensureTrackBus(track.trackVersionId);
+        const mix = this.trackMixByTrackVersionId.get(track.trackVersionId) ?? {
+          muted: false,
+          solo: false,
+          gain: DEFAULT_GAIN,
+          pan: DEFAULT_PAN,
+        };
+        const anySolo = Array.from(this.trackMixByTrackVersionId.values()).some((entry) => entry.solo);
+        const trackAudible = !mix.muted && (!anySolo || mix.solo);
+        const trackBaseGain = trackAudible ? clamp(mix.gain, 0, 8) : 0;
+        const trackPan = clamp(mix.pan, -1, 1);
+        bus.gain.gain.setValueAtTime(trackBaseGain, audioContext.currentTime);
+        bus.pan.pan.setValueAtTime(trackPan, audioContext.currentTime);
+
+        for (const segment of segments) {
+          if (segment.timelineEndMs <= timeMs) continue;
+
+          const segmentStartTimelineMs = Math.max(timeMs, segment.timelineStartMs);
+          const elapsedInSegmentMs = Math.max(0, segmentStartTimelineMs - segment.timelineStartMs);
+          const sourceOffsetMs = segment.sourceStartMs + elapsedInSegmentMs;
+          const remainingSegmentMs = Math.max(0, segment.timelineEndMs - segmentStartTimelineMs);
+          const sourceDurationMs = Math.max(0, segment.durationMs - elapsedInSegmentMs);
+          const sourceDurationSec = Math.min(
+            sourceDurationMs / 1000,
+            Math.max(0, (segment.sourceEndMs - sourceOffsetMs) / 1000),
+          );
+          if (sourceDurationSec <= 0) continue;
+
+          const source = audioContext.createBufferSource();
+          source.buffer = buffer;
+          source.playbackRate.value = 1;
+
+          const segmentGain = audioContext.createGain();
+          const baseSegmentGain = dbToLinear(segment.gainDb);
+          const segmentAudible = segment.isMuted ? 0 : 1;
+          const segmentEnvelopeAtStart = interpolateEnvelopeAt(segment, elapsedInSegmentMs);
+          const startingGain = baseSegmentGain * segmentAudible * segmentEnvelopeAtStart;
+
+          segmentGain.gain.setValueAtTime(startingGain, audioContext.currentTime);
+
+          const fadeInMs = Math.max(0, segment.fadeInMs + (segment.crossfadeInMs ?? 0));
+          const fadeOutMs = Math.max(0, segment.fadeOutMs + (segment.crossfadeOutMs ?? 0));
+          if (fadeInMs > elapsedInSegmentMs) {
+            const remainingFadeInMs = fadeInMs - elapsedInSegmentMs;
+            segmentGain.gain.linearRampToValueAtTime(
+              baseSegmentGain * segmentAudible,
+              audioContext.currentTime + remainingFadeInMs / 1000,
+            );
+          } else {
+            segmentGain.gain.setValueAtTime(
+              baseSegmentGain * segmentAudible,
+              audioContext.currentTime,
+            );
+          }
+
+          if (fadeOutMs > 0) {
+            const remainingToFadeOutMs = segment.durationMs - elapsedInSegmentMs - fadeOutMs;
+            if (remainingToFadeOutMs > 0) {
+              segmentGain.gain.setValueAtTime(
+                baseSegmentGain * segmentAudible,
+                audioContext.currentTime + remainingToFadeOutMs / 1000,
+              );
+            }
+            segmentGain.gain.linearRampToValueAtTime(
+              0,
+              audioContext.currentTime + Math.max(0, remainingSegmentMs) / 1000,
+            );
+          }
+
+          source.connect(segmentGain);
+          segmentGain.connect(bus.input);
+          source.start(
+            audioContext.currentTime + Math.max(0, (segmentStartTimelineMs - timeMs) / 1000),
+            sourceOffsetMs / 1000,
+            sourceDurationSec,
+          );
+
+          const scheduled: ScheduledSource = {
+            source,
+            gain: segmentGain,
+            trackVersionId: track.trackVersionId,
+          };
+          this.scheduledSources.add(scheduled);
+          source.onended = () => {
+            this.scheduledSources.delete(scheduled);
+            source.onended = null;
+            try {
+              segmentGain.disconnect();
+            } catch {
+              // Ignore disconnect failures on finished nodes.
+            }
+            try {
+              source.disconnect();
+            } catch {
+              // Ignore disconnect failures on finished nodes.
+            }
+          };
+        }
+      }),
+    );
+  }
+}

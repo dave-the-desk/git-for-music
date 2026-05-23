@@ -107,6 +107,38 @@ def get_demo_version(conn, demo_version_id: str):
         return cur.fetchone()
 
 
+def get_audio_asset_by_track_version(conn, track_version_id: str, asset_kind: str):
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT
+              id,
+              "projectId" AS "projectId",
+              "demoId" AS "demoId",
+              "trackId" AS "trackId",
+              "trackVersionId" AS "trackVersionId",
+              "assetKind" AS "assetKind",
+              "storageKey" AS "storageKey",
+              "mimeType" AS "mimeType",
+              "sampleRate" AS "sampleRate",
+              "bitDepth" AS "bitDepth",
+              "channelCount" AS "channelCount",
+              "durationMs" AS "durationMs",
+              "sizeBytes" AS "sizeBytes",
+              checksum,
+              "parentAssetId" AS "parentAssetId",
+              "createdAt" AS "createdAt"
+            FROM "AudioAssetMetadata"
+            WHERE "trackVersionId" = %s
+              AND "assetKind" = %s
+            ORDER BY "createdAt" DESC
+            LIMIT 1
+            """,
+            (track_version_id, asset_kind),
+        )
+        return cur.fetchone()
+
+
 def update_job(conn, job_id: str, *, status: str, progress: int | None = None, error: str | None = None, result: Any | None = None):
     with conn.cursor() as cur:
         cur.execute(
@@ -144,8 +176,104 @@ def update_demo_version_timing(
             WHERE id = %s
             """,
             (tempo_bpm, musical_key, tempo_source, key_source, demo_version_id),
-        )
+    )
     conn.commit()
+
+
+def upsert_audio_asset_metadata(
+    conn,
+    *,
+    asset_id: str,
+    project_id: str,
+    demo_id: str,
+    track_id: str | None,
+    track_version_id: str | None,
+    asset_kind: str,
+    storage_key: str,
+    mime_type: str,
+    sample_rate: int,
+    bit_depth: int,
+    channel_count: int,
+    duration_ms: int,
+    size_bytes: int,
+    checksum: str,
+    parent_asset_id: str | None = None,
+):
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO "AudioAssetMetadata" (
+              id,
+              "projectId",
+              "demoId",
+              "trackId",
+              "trackVersionId",
+              "assetKind",
+              "storageKey",
+              "mimeType",
+              "sampleRate",
+              "bitDepth",
+              "channelCount",
+              "durationMs",
+              "sizeBytes",
+              checksum,
+              "parentAssetId"
+            )
+            VALUES (
+              %s,
+              %s,
+              %s,
+              %s,
+              %s,
+              %s,
+              %s,
+              %s,
+              %s,
+              %s,
+              %s,
+              %s,
+              %s,
+              %s,
+              %s
+            )
+            ON CONFLICT (id) DO UPDATE SET
+              "projectId" = EXCLUDED."projectId",
+              "demoId" = EXCLUDED."demoId",
+              "trackId" = EXCLUDED."trackId",
+              "trackVersionId" = EXCLUDED."trackVersionId",
+              "assetKind" = EXCLUDED."assetKind",
+              "storageKey" = EXCLUDED."storageKey",
+              "mimeType" = EXCLUDED."mimeType",
+              "sampleRate" = EXCLUDED."sampleRate",
+              "bitDepth" = EXCLUDED."bitDepth",
+              "channelCount" = EXCLUDED."channelCount",
+              "durationMs" = EXCLUDED."durationMs",
+              "sizeBytes" = EXCLUDED."sizeBytes",
+              checksum = EXCLUDED.checksum,
+              "parentAssetId" = EXCLUDED."parentAssetId"
+            RETURNING id
+            """,
+            (
+                asset_id,
+                project_id,
+                demo_id,
+                track_id,
+                track_version_id,
+                asset_kind,
+                storage_key,
+                mime_type,
+                sample_rate,
+                bit_depth,
+                channel_count,
+                duration_ms,
+                size_bytes,
+                checksum,
+                parent_asset_id,
+            ),
+        )
+        row = cur.fetchone()
+    conn.commit()
+    return row['id']
 
 
 def create_derived_track_version(

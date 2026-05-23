@@ -2,21 +2,17 @@
 
 import { useEffect, useRef, type RefObject } from 'react';
 import { PX_PER_SECOND } from '@/features/daw/components/TimelineRuler';
-import type { TemporaryRecordingTrack } from '@/features/daw/state/daw-state';
+import type { RecordingTakeVisualProjection } from '@/features/daw/rendering/visual-renderer';
 
-const TRACK_LABEL_WIDTH = 160;
 const TRACK_HEIGHT = 72;
-const MIN_RECORDING_HIT_AREA_PX = 120;
 const MS_PER_PEAK = 10;
 
 type Peak = { timeMs: number; min: number; max: number };
 
 type Props = {
-  track: TemporaryRecordingTrack;
+  recording: RecordingTakeVisualProjection;
   stream: MediaStream | null;
   currentTimeMs: number;
-  totalTimelineWidth: number;
-  currentRecordingTrackId: string | null;
   scrollContainerRef: RefObject<HTMLDivElement | null>;
   onNameChange: (name: string) => void;
   onSave: () => void;
@@ -24,11 +20,9 @@ type Props = {
 };
 
 export function RecordingTrackLane({
-  track,
+  recording,
   stream,
   currentTimeMs,
-  totalTimelineWidth,
-  currentRecordingTrackId,
   scrollContainerRef,
   onNameChange,
   onSave,
@@ -46,42 +40,42 @@ export function RecordingTrackLane({
   const dataBufferRef = useRef<Float32Array<ArrayBuffer> | null>(null);
   const peaksRef = useRef<Peak[]>([]);
   const sampleAccRef = useRef<{ min: number; max: number }>({ min: 0, max: 0 });
-  const recordingDurationMsRef = useRef(track.durationMs);
-  const gainRef = useRef(1);
-  const isRecording = track.status === 'recording';
+  const recordingDurationMsRef = useRef(recording.durationMs);
   const currentTimeMsRef = useRef(currentTimeMs);
   const autoFollowArmedRef = useRef(false);
   const autoFollowLeftRef = useRef(0);
-  const leftPx = (track.startOffsetMs / 1000) * PX_PER_SECOND;
-  // Keep the live waveform canvas on the same timeline scale as saved tracks.
-  const waveformWidthPx = isRecording
-    ? Math.max((track.durationMs / 1000) * PX_PER_SECOND, 1)
-    : Math.max((track.durationMs / 1000) * PX_PER_SECOND, 8);
-  const hitAreaWidthPx = isRecording ? Math.max(waveformWidthPx, MIN_RECORDING_HIT_AREA_PX) : waveformWidthPx;
+  const isRecording = recording.status === 'recording';
+  const leftPx = recording.leftPx;
+  const waveformWidthPx = recording.waveformWidthPx;
+  const hitAreaWidthPx = recording.hitAreaWidthPx;
 
   useEffect(() => {
     currentTimeMsRef.current = currentTimeMs;
   }, [currentTimeMs]);
 
   useEffect(() => {
-    recordingDurationMsRef.current = track.durationMs;
-  }, [track.durationMs]);
+    recordingDurationMsRef.current = recording.durationMs;
+  }, [recording.durationMs]);
+
+  useEffect(() => {
+    if (isRecording) return;
+    peaksRef.current = recording.peaks ?? [];
+    redrawAllPeaks();
+    // redrawAllPeaks only reads refs, so it is safe to omit from deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isRecording, recording.peaks]);
 
   function paintPeak(ctx: CanvasRenderingContext2D, peak: Peak) {
-    const H = canvasCssHeightRef.current;
-    const halfH = H / 2;
-    const gain = gainRef.current;
+    const height = canvasCssHeightRef.current;
+    const halfHeight = height / 2;
     const x = (peak.timeMs / 1000) * PX_PER_SECOND;
-    const yTop = Math.max(0, halfH - peak.max * gain * halfH);
-    const yBot = Math.min(H, halfH - peak.min * gain * halfH);
+    const yTop = Math.max(0, halfHeight - peak.max * halfHeight);
+    const yBottom = Math.min(height, halfHeight - peak.min * halfHeight);
 
     ctx.fillStyle = '#ef4444';
-    ctx.fillRect(x, yTop, 1, Math.max(1, yBot - yTop));
+    ctx.fillRect(x, yTop, 1, Math.max(1, yBottom - yTop));
   }
 
-  // The live waveform uses timeline CSS pixels, while devicePixelRatio is only
-  // for sharp rendering. Saved and live waveforms must share PX_PER_SECOND so
-  // the preview does not visually jump after stopping.
   function redrawAllPeaks() {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -89,20 +83,20 @@ export function RecordingTrackLane({
     if (!ctx) return;
 
     const peaks = peaksRef.current;
-    const W = canvasCssWidthRef.current;
-    const H = canvasCssHeightRef.current;
-    const halfH = H / 2;
+    const width = canvasCssWidthRef.current;
+    const height = canvasCssHeightRef.current;
+    const halfHeight = height / 2;
     const dpr = canvasDprRef.current;
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, W, H);
+    ctx.clearRect(0, 0, width, height);
     ctx.fillStyle = '#030712';
-    ctx.fillRect(0, 0, W, H);
+    ctx.fillRect(0, 0, width, height);
 
     if (peaks.length === 0) return;
 
     ctx.fillStyle = '#374151';
-    ctx.fillRect(0, halfH, W, 1);
+    ctx.fillRect(0, halfHeight, width, 1);
 
     for (const peak of peaks) {
       paintPeak(ctx, peak);
@@ -150,13 +144,13 @@ export function RecordingTrackLane({
 
     const acc = sampleAccRef.current;
     for (let i = 0; i < bufLen; i++) {
-      const s = data[i] as number;
-      if (s < acc.min) acc.min = s;
-      if (s > acc.max) acc.max = s;
+      const sample = data[i] as number;
+      if (sample < acc.min) acc.min = sample;
+      if (sample > acc.max) acc.max = sample;
     }
 
     const targetPeaks = Math.floor(recordingDurationMsRef.current / MS_PER_PEAK);
-    const prevCount = peaksRef.current.length;
+    const previousCount = peaksRef.current.length;
 
     while (peaksRef.current.length < targetPeaks) {
       const peakTimeMs = peaksRef.current.length * MS_PER_PEAK;
@@ -167,7 +161,7 @@ export function RecordingTrackLane({
       });
     }
 
-    if (peaksRef.current.length > prevCount) {
+    if (peaksRef.current.length > previousCount) {
       sampleAccRef.current = { min: 0, max: 0 };
     }
 
@@ -180,7 +174,7 @@ export function RecordingTrackLane({
 
     peaksRef.current = [];
     sampleAccRef.current = { min: 0, max: 0 };
-    recordingDurationMsRef.current = track.durationMs;
+    recordingDurationMsRef.current = recording.durationMs;
     dataBufferRef.current = null;
 
     redrawAllPeaks();
@@ -208,6 +202,8 @@ export function RecordingTrackLane({
       analyserRef.current?.disconnect();
       void audioCtxRef.current?.close();
       audioCtxRef.current = null;
+      sourceRef.current = null;
+      analyserRef.current = null;
     };
     // captureAndDraw and redrawAllPeaks only access refs — safe to omit from deps.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -216,7 +212,6 @@ export function RecordingTrackLane({
   useEffect(() => {
     if (!isRecording) return;
     if (!stream) return;
-    if (!currentRecordingTrackId || currentRecordingTrackId !== track.id) return;
 
     const scrollContainer = scrollContainerRef.current;
     if (!scrollContainer) return;
@@ -230,7 +225,6 @@ export function RecordingTrackLane({
     const followPlayhead = () => {
       const container = scrollContainerRef.current;
       if (!container) return;
-      if (!currentRecordingTrackId || currentRecordingTrackId !== track.id) return;
       if (!isRecording || !stream) return;
 
       const playheadX = (currentTimeMsRef.current / 1000) * PX_PER_SECOND;
@@ -241,11 +235,12 @@ export function RecordingTrackLane({
       }
 
       if (autoFollowArmedRef.current) {
-        const targetLeft = Math.max(autoFollowLeftRef.current, playheadX - container.clientWidth + rightEdgePaddingPx);
+        const targetLeft = Math.max(
+          autoFollowLeftRef.current,
+          playheadX - container.clientWidth + rightEdgePaddingPx,
+        );
         autoFollowLeftRef.current = targetLeft;
         if (Math.abs(container.scrollLeft - targetLeft) > 1) {
-          // Intentionally scoped to the active recording lane so we only follow the
-          // current take and never pull the user around for playback or other tracks.
           container.scrollTo({ left: targetLeft, behavior: 'auto' });
         }
       }
@@ -260,49 +255,57 @@ export function RecordingTrackLane({
       autoFollowArmedRef.current = false;
       autoFollowLeftRef.current = 0;
     };
-  }, [currentRecordingTrackId, isRecording, scrollContainerRef, stream, track.id]);
+  }, [isRecording, scrollContainerRef, stream]);
 
   return (
-    <div
-      className="flex border-b border-gray-800"
-      style={{ minWidth: TRACK_LABEL_WIDTH + totalTimelineWidth, height: TRACK_HEIGHT }}
-    >
+    <div className="pointer-events-none absolute inset-0 z-40">
       <div
-        className="flex shrink-0 flex-col gap-2 border-r border-gray-800 bg-gray-900 px-2 py-2"
-        style={{ width: TRACK_LABEL_WIDTH }}
-      >
-        <input
-          value={track.name}
-          onChange={(event) => onNameChange(event.currentTarget.value)}
-          placeholder="Recording"
-          className="w-full rounded border border-gray-700 bg-gray-950 px-1.5 py-0.5 text-xs text-white outline-none"
-        />
-        <div className="flex items-center gap-2">
-          <button type="button" onClick={onSave} className="text-[10px] text-indigo-400 hover:text-indigo-300">
-            Save
-          </button>
-          <button type="button" onClick={onDiscard} className="text-[10px] text-gray-500 hover:text-gray-300">
-            Discard
-          </button>
-        </div>
-      </div>
-
-      <div
-        className="relative shrink-0 select-none bg-gray-950"
-        style={{ width: totalTimelineWidth, minHeight: TRACK_HEIGHT }}
+        className="absolute top-0 pointer-events-auto"
+        style={{
+          left: leftPx,
+          width: hitAreaWidthPx,
+          minWidth: isRecording ? 120 : 8,
+        }}
       >
         <div
-          className="pointer-events-none absolute top-0 z-20 h-full w-px bg-yellow-400/80"
-          style={{ left: (currentTimeMs / 1000) * PX_PER_SECOND }}
-        />
-        <div
-          className="absolute top-0 h-full rounded border border-red-500/50 bg-gray-950"
-          style={{ left: leftPx, width: hitAreaWidthPx, minWidth: isRecording ? MIN_RECORDING_HIT_AREA_PX : 8 }}
+          className="relative overflow-hidden rounded border border-red-500/50 bg-gray-950"
+          style={{ width: waveformWidthPx, minWidth: isRecording ? 120 : 8, height: TRACK_HEIGHT }}
         >
+          <div className="absolute left-1 top-1 z-20 flex max-w-[calc(100%-8px)] items-center gap-1 rounded-md border border-red-500/50 bg-gray-950/90 px-1.5 py-0.5 shadow-lg shadow-black/30 backdrop-blur-sm">
+            <input
+              value={recording.name}
+              onChange={(event) => onNameChange(event.currentTarget.value)}
+              placeholder={recording.targetTrackName}
+              className="w-24 rounded border border-gray-700 bg-gray-950 px-1 py-0.5 text-[10px] text-white outline-none"
+            />
+            <button type="button" onClick={onSave} className="text-[10px] text-indigo-400 hover:text-indigo-300">
+              {recording.syncStatus === 'complete' ? 'Saved' : recording.syncStatus === 'uploading' ? 'Saving…' : 'Save'}
+            </button>
+            <button type="button" onClick={onDiscard} className="text-[10px] text-gray-500 hover:text-gray-300">
+              Discard
+            </button>
+            <span className="rounded bg-red-500/10 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-red-200">
+              {recording.status === 'recording'
+                ? 'Rec'
+                : recording.syncStatus === 'error'
+                  ? 'Err'
+                  : recording.syncStatus === 'complete'
+                    ? 'Saved'
+                    : 'Preview'}
+            </span>
+          </div>
+
           <div ref={waveformContainerRef} className="h-full" style={{ width: waveformWidthPx }}>
             <canvas ref={canvasRef} className="h-full w-full" />
           </div>
+          <div className="absolute inset-0 bg-gradient-to-b from-gray-950/10 via-transparent to-gray-950/45" />
+          <div className="absolute inset-0 border border-white/5" />
+          {!recording.previewUrl && recording.status === 'recording' ? (
+            <div className="absolute inset-0 animate-pulse bg-gray-900/20" aria-hidden />
+          ) : null}
         </div>
+
+        {recording.error ? <p className="mt-1 text-[11px] text-red-400">{recording.error}</p> : null}
       </div>
     </div>
   );

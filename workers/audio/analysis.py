@@ -31,6 +31,13 @@ class KeyAnalysisResult:
     confidence: float
 
 
+@dataclass(frozen=True)
+class LoudnessAnalysisResult:
+    integrated_lufs: float
+    peak_dbfs: float
+    rms_dbfs: float
+
+
 def calculate_stretch_ratio(source_tempo_bpm: float, target_tempo_bpm: float) -> float:
     if source_tempo_bpm <= 0 or target_tempo_bpm <= 0:
         raise ValueError('Tempo values must be positive')
@@ -113,6 +120,56 @@ def analyze_key(audio: np.ndarray, sample_rate: int) -> KeyAnalysisResult:
         scale=best_scale,
         confidence=float(confidence),
     )
+
+
+def analyze_loudness(audio: np.ndarray, sample_rate: int) -> LoudnessAnalysisResult:
+    del sample_rate
+    audio_array = np.asarray(audio, dtype=np.float32)
+    if audio_array.ndim == 2:
+        audio_array = np.mean(audio_array, axis=1)
+    elif audio_array.ndim != 1:
+        raise ValueError('Audio must be mono or multichannel')
+
+    if audio_array.size == 0:
+        raise ValueError('Unable to analyze silent audio')
+
+    peak = float(np.max(np.abs(audio_array)))
+    rms = float(np.sqrt(np.mean(np.square(audio_array))))
+    peak_dbfs = 20.0 * np.log10(max(peak, 1e-9))
+    rms_dbfs = 20.0 * np.log10(max(rms, 1e-9))
+    integrated_lufs = rms_dbfs - 0.691
+
+    return LoudnessAnalysisResult(
+        integrated_lufs=float(integrated_lufs),
+        peak_dbfs=float(peak_dbfs),
+        rms_dbfs=float(rms_dbfs),
+    )
+
+
+def compute_waveform_peaks(audio: np.ndarray, sample_rate: int, window_ms: int = 10) -> list[dict[str, float]]:
+    if sample_rate <= 0:
+        raise ValueError('Sample rate must be positive')
+
+    audio_array = np.asarray(audio, dtype=np.float32)
+    if audio_array.ndim not in (1, 2):
+        raise ValueError('Audio must be mono or multichannel')
+
+    window_size = max(1, int(round(sample_rate * window_ms / 1000)))
+    peaks: list[dict[str, float]] = []
+
+    for start in range(0, audio_array.shape[0], window_size):
+        chunk = audio_array[start : start + window_size]
+        if chunk.size == 0:
+            continue
+        peaks.append(
+            {
+                'timeMs': float(round((start / sample_rate) * 1000)),
+                'min': float(np.min(chunk)),
+                'max': float(np.max(chunk)),
+            }
+        )
+
+    return peaks
 
 
 def time_stretch_audio(audio: np.ndarray, sample_rate: int, ratio: float) -> np.ndarray:

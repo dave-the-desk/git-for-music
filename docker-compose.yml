@@ -2,6 +2,10 @@ x-web-image: &web_image git-for-music-web
 x-web-build: &web_build
   context: .
   dockerfile: apps/web/Dockerfile
+x-daw-db-url: &daw_db_url postgresql://postgres:postgres@postgres:5432/git_for_music
+x-daw-web-url: &daw_web_url http://web:3000
+x-daw-asset-secret: &daw_asset_secret dev-only-daw-asset-token-secret
+x-daw-worker-secret: &daw_worker_secret dev-only-daw-worker-callback-secret
 
 services:
   postgres:
@@ -47,7 +51,7 @@ services:
       - push
       - --accept-data-loss
     environment:
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/git_for_music
+      DATABASE_URL: *daw_db_url
     depends_on:
       postgres:
         condition: service_healthy
@@ -57,9 +61,11 @@ services:
     build: *web_build
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/git_for_music
+      DATABASE_URL: *daw_db_url
       REDIS_URL: redis://redis:6379
       NEXT_PUBLIC_APP_URL: http://localhost:3000
+      DAW_ASSET_UPLOAD_TOKEN_SECRET: *daw_asset_secret
+      DAW_WORKER_CALLBACK_SECRET: *daw_worker_secret
       NODE_ENV: production
     ports:
       - "127.0.0.1:3000:3000"
@@ -78,9 +84,11 @@ services:
       context: ./workers/audio
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/git_for_music
+      DATABASE_URL: *daw_db_url
       POLL_INTERVAL_SECONDS: "2"
       WEB_PUBLIC_DIR: /app/apps/web/public
+      DAW_WEB_APP_URL: *daw_web_url
+      DAW_WORKER_CALLBACK_SECRET: *daw_worker_secret
     depends_on:
       db-init:
         condition: service_completed_successfully

@@ -2,7 +2,7 @@
 
 This is the active home for DAW work in `apps/web/src`.
 
-New DAW logic should go here first. Treat `apps/web/src/components/daw`, `apps/web/src/lib/daw`, and `apps/web/src/lib/demos` as legacy compatibility surfaces until they can be retired.
+New DAW logic should go here first.
 
 - `components/` for DAW UI components.
 - `engine/` for browser-side engines such as playback, editing, ingest, and sync.

@@ -19,9 +19,10 @@ The web app keeps DAW-specific code under `apps/web/src/features/daw`.
 ## Audio Storage
 
 - Generated user media should not live in source control.
-- Original uploads, derived audio, waveform artifacts, and analysis artifacts should each use separate storage prefixes under the same TrackVersion root.
+- Original uploads, derived audio, waveform peaks, analysis artifacts, transcripts, and stems should each use separate storage prefixes.
 - TrackVersion storage should be organized by IDs, not names, so paths remain stable even if a user renames a group, project, demo, or track.
-- A stable TrackVersion path should look like `groups/{groupId}/projects/{projectId}/demos/{demoId}/tracks/{trackId}/versions/{trackVersionId}/...`.
+- A stable TrackVersion path should look like `projects/{projectId}/demos/{demoId}/tracks/{trackId}/versions/{trackVersionId}/...`.
+- Analysis artifacts that are not tied to a single TrackVersion should live under `projects/{projectId}/demos/{demoId}/analysis/{jobId}.json`.
 
 ## Why `TrackVersion.storageKey` Matters
 

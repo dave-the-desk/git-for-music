@@ -1,30 +1,52 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 
 type RecordingState = 'idle' | 'requesting' | 'recording' | 'error';
 
 type Props = {
   currentTimeMs: number;
   isDisabled: boolean;
+  recordingTarget: {
+    trackId: string;
+    trackVersionId: string;
+    trackName: string;
+  } | null;
   selectedAudioInputDeviceId: string | null;
   isAudioInputReady: boolean;
   onNeedsAudioInput?: () => void;
-  onStreamReady: (stream: MediaStream, startOffsetMs: number) => void;
+  onStreamReady: (
+    stream: MediaStream,
+    startOffsetMs: number,
+    target: {
+      trackId: string;
+      trackVersionId: string;
+      trackName: string;
+    },
+  ) => void;
   onDurationUpdate: (durationMs: number) => void;
-  onStopped: (blob: Blob, previewUrl: string, durationMs: number) => void;
+  onStopped: (blob: Blob, durationMs: number) => void;
 };
 
-export function RecordingControls({
-  currentTimeMs,
-  isDisabled,
-  selectedAudioInputDeviceId,
-  isAudioInputReady,
-  onNeedsAudioInput,
-  onStreamReady,
-  onDurationUpdate,
-  onStopped,
-}: Props) {
+export type RecordingControlsHandle = {
+  startRecording: () => Promise<void>;
+  stopRecording: () => void;
+};
+
+export const RecordingControls = forwardRef<RecordingControlsHandle, Props>(function RecordingControls(
+  {
+    currentTimeMs,
+    isDisabled,
+    recordingTarget,
+    selectedAudioInputDeviceId,
+    isAudioInputReady,
+    onNeedsAudioInput,
+    onStreamReady,
+    onDurationUpdate,
+    onStopped,
+  },
+  ref,
+) {
   const [recState, setRecState] = useState<RecordingState>('idle');
   const [elapsedMs, setElapsedMs] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -78,6 +100,12 @@ export function RecordingControls({
   async function startRecording() {
     setError(null);
 
+    if (!recordingTarget) {
+      setError('Arm a track before recording.');
+      setRecState('error');
+      return;
+    }
+
     if (!isAudioInputReady || !selectedAudioInputDeviceId) {
       onNeedsAudioInput?.();
       setError('Choose a microphone before recording.');
@@ -101,7 +129,7 @@ export function RecordingControls({
       startTimeRef.current = performance.now();
       setElapsedMs(0);
       setRecState('recording');
-      onStreamReady(stream, capturedStartOffsetMs);
+      onStreamReady(stream, capturedStartOffsetMs, recordingTarget);
 
       const mimeType = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg'].find((t) =>
         MediaRecorder.isTypeSupported(t),
@@ -116,8 +144,7 @@ export function RecordingControls({
 
       recorder.onstop = () => {
         const blob = new Blob(chunksRef.current, { type: recorder.mimeType || 'audio/webm' });
-        const previewUrl = URL.createObjectURL(blob);
-        onStopped(blob, previewUrl, finalDurationMsRef.current);
+        onStopped(blob, finalDurationMsRef.current);
         setRecState('idle');
         setElapsedMs(0);
       };
@@ -144,6 +171,11 @@ export function RecordingControls({
     streamRef.current = null;
   }
 
+  useImperativeHandle(ref, () => ({
+    startRecording,
+    stopRecording,
+  }));
+
   if (isSupported === null) return null;
 
   if (!isSupported) {
@@ -169,6 +201,8 @@ export function RecordingControls({
           </button>
           {error ? (
             <p className="text-sm text-red-400">{error}</p>
+          ) : !recordingTarget ? (
+            <p className="text-sm text-amber-300">Arm a track before recording.</p>
           ) : !isAudioInputReady || !selectedAudioInputDeviceId ? (
             <p className="text-sm text-amber-300">
               {selectedAudioInputDeviceId
@@ -200,4 +234,4 @@ export function RecordingControls({
       )}
     </div>
   );
-}
+});

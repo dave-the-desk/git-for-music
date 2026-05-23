@@ -36,6 +36,8 @@ export type UploadTimingChoice =
   | 'updateProjectTempoFromUpload'
   | 'uploadUnchanged';
 
+export type AudioAssetKind = 'ORIGINAL' | 'DERIVED' | 'PEAKS' | 'ANALYSIS';
+
 export interface TempoAnalysisJobPayload {
   demoId: string;
   demoVersionId?: string;
@@ -147,12 +149,16 @@ export interface CreateCommentRequest {
 export interface CreateDemoCommentRequest {
   body: string;
   trackId?: string;
-  timestampMs?: number;
+  segmentId?: string;
+  startTimeMs?: number;
+  endTimeMs?: number | null;
 }
 
 export interface UpdateCommentRequest {
   body?: string;
-  isResolved?: boolean;
+  resolved?: boolean;
+  startTimeMs?: number | null;
+  endTimeMs?: number | null;
 }
 
 export interface CommentAuthor {
@@ -165,9 +171,27 @@ export interface DemoComment {
   id: string;
   demoId: string;
   trackId: string | null;
+  segmentId: string | null;
+  startTimeMs: number | null;
+  endTimeMs: number | null;
   body: string;
-  isResolved: boolean;
-  timestampMs: number | null;
+  createdBy: string;
+  resolved: boolean;
+  createdAt: string;
+  updatedAt: string;
+  author: CommentAuthor;
+}
+
+export interface DemoAnnotation {
+  id: string;
+  demoId: string;
+  trackId: string | null;
+  segmentId: string | null;
+  startTimeMs: number | null;
+  endTimeMs: number | null;
+  body: string;
+  createdBy: string;
+  resolved: boolean;
   createdAt: string;
   updatedAt: string;
   author: CommentAuthor;
@@ -189,6 +213,47 @@ export interface UploadTrackResponse {
   demoVersionId: string;
   status: 'ready';
   processingJobIds: string[];
+}
+
+export interface DawAssetUploadRequest {
+  demoId: string;
+  projectId: string;
+  trackId?: string;
+  trackVersionId?: string;
+  name?: string;
+  sourceVersionId?: string;
+  timingChoice?: UploadTimingChoice;
+  fileName: string;
+  contentType: string;
+  sizeBytes: number;
+}
+
+export interface DawAssetUploadResponse {
+  assetId: string;
+  objectKey: string;
+  uploadUrl: string;
+  method: 'PUT';
+  headers: Record<string, string>;
+  expiresAt: string;
+  uploadToken: string;
+  localFallback: boolean;
+}
+
+export interface DawAssetCompleteUploadRequest {
+  uploadToken: string;
+  checksum: string;
+  durationMs: number;
+  sampleRate: number;
+  bitDepth: number;
+  channelCount: number;
+  sizeBytes: number;
+}
+
+export interface DawAssetSignedDownloadResponse {
+  assetId: string;
+  url: string;
+  expiresAt: string;
+  localFallback: boolean;
 }
 
 // ─── API response shapes ─────────────────────────────────────────────────────

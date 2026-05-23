@@ -1,9 +1,8 @@
 'use client';
 
 import type { DemoTimingMetadata } from '@git-for-music/shared';
+import { PX_PER_SECOND } from '@/features/daw/rendering/visual-renderer';
 import { formatBarBeatLabel, getBeatTimes, isValidTempoBpm } from '@/features/daw/utils/timing';
-
-const PX_PER_SECOND = 80;
 
 type TimelineRulerProps = {
   totalDurationMs: number;

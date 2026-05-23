@@ -31,7 +31,7 @@ def test_calculate_stretch_ratio() -> None:
 def test_time_stretch_creates_derived_track_version(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     source_track_version = {
         'id': 'track_version_1',
-        'storageKey': '/uploads/demos/demo_1/source.wav',
+        'storageKey': '/projects/project_1/demos/demo_1/tracks/track_1/versions/track_version_1/originals/source_asset_1.wav',
         'startOffsetMs': 0,
         'durationMs': 1000,
         'sampleRate': 48000,
@@ -66,6 +66,7 @@ def test_time_stretch_creates_derived_track_version(monkeypatch: pytest.MonkeyPa
     }
     conn = SimpleNamespace()
     created = {}
+    upserted_assets = []
 
     monkeypatch.setattr(jobs, 'get_track_version', lambda _conn, _id: source_track_version)
     monkeypatch.setattr(jobs, 'get_demo_version', lambda _conn, _id: demo_version)
@@ -73,12 +74,19 @@ def test_time_stretch_creates_derived_track_version(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(jobs, 'analyze_tempo', lambda audio, sr: SimpleNamespace(tempo_bpm=120.0, beat_times=[0.0], confidence=0.9))
     monkeypatch.setattr(jobs, 'calculate_stretch_ratio', lambda source, target: 0.75)
     monkeypatch.setattr(jobs, 'time_stretch_audio', lambda audio, sr, ratio: np.zeros((3, 2), dtype='float32'))
+    monkeypatch.setattr(jobs, 'get_audio_asset_by_track_version', lambda _conn, _track_version_id, _kind: {'id': 'source_asset_1'})
+
     def fake_write_derived_audio(storage_key, audio, sample_rate):
         derived_path = tmp_path / 'derived.wav'
         derived_path.write_bytes(b'fake-audio')
         return derived_path
 
     monkeypatch.setattr(jobs, 'write_derived_audio', fake_write_derived_audio)
+    monkeypatch.setattr(
+        jobs,
+        'upsert_audio_asset_metadata',
+        lambda _conn, **kwargs: upserted_assets.append(kwargs),
+    )
 
     def fake_create_derived_track_version(**kwargs):
         created['kwargs'] = kwargs
@@ -86,13 +94,18 @@ def test_time_stretch_creates_derived_track_version(monkeypatch: pytest.MonkeyPa
 
     monkeypatch.setattr(jobs, 'create_derived_track_version', fake_create_derived_track_version)
 
-    result = jobs.handle_time_stretch_to_project(
+    result = jobs.handle_create_derived_audio(
         conn,
         {'id': 'job_1', 'type': 'TIME_STRETCH_TO_PROJECT'},
         {'trackVersionId': 'track_version_1', 'demoVersionId': 'demo_version_1'},
     )
 
     assert result['derivedTrackVersionId'] == 'derived_track_version_1'
-    assert source_track_version['storageKey'] == '/uploads/demos/demo_1/source.wav'
+    assert result['derivedAssetId'] == 'job_1:derived'
+    assert result['derivedStorageKey'] == '/projects/project_1/demos/demo_1/tracks/track_1/versions/track_version_1/derived/job_1.wav'
+    assert source_track_version['storageKey'] == '/projects/project_1/demos/demo_1/tracks/track_1/versions/track_version_1/originals/source_asset_1.wav'
     assert created['kwargs']['source_track_version']['id'] == 'track_version_1'
     assert created['kwargs']['processing_job_id'] == 'job_1'
+    assert upserted_assets[0]['asset_kind'] == 'PEAKS'
+    assert upserted_assets[1]['asset_kind'] == 'DERIVED'
+    assert upserted_assets[1]['track_version_id'] == 'derived_track_version_1'

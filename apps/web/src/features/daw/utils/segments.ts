@@ -9,6 +9,9 @@ export type SegmentLike = {
   fadeOutMs: number;
   isMuted: boolean;
   position: number;
+  crossfadeInMs?: number | null;
+  crossfadeOutMs?: number | null;
+  crossfadeCurve?: string | null;
 };
 
 export type TrackTimelineSegment = SegmentLike & {

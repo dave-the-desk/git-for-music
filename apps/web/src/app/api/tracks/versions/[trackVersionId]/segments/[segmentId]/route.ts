@@ -1,7 +1,7 @@
-import { prisma } from '@git-for-music/db';
 import { NextRequest, NextResponse } from 'next/server';
 import type { ApiError } from '@git-for-music/shared';
 import { getAuthenticatedUserFromRequest } from '@/lib/auth/current-user';
+import { deleteSegmentCommand } from '@/features/daw/server/commands';
 
 export async function DELETE(
   req: NextRequest,
@@ -13,52 +13,9 @@ export async function DELETE(
   }
 
   const { trackVersionId, segmentId } = await params;
-
-  const segment = await prisma.segment.findFirst({
-    where: {
-      id: segmentId,
-      trackVersionId,
-      trackVersion: {
-        track: {
-          demo: {
-            project: {
-              group: {
-                members: { some: { userId: user.id } },
-              },
-            },
-          },
-        },
-      },
-    },
-    select: {
-      id: true,
-      position: true,
-    },
+  return deleteSegmentCommand({
+    userId: user.id,
+    trackVersionId,
+    segmentId,
   });
-
-  if (!segment) {
-    return NextResponse.json<ApiError>({ error: 'Segment not found' }, { status: 404 });
-  }
-
-  await prisma.$transaction(async (tx) => {
-    await tx.segment.delete({
-      where: { id: segment.id },
-    });
-
-    await tx.segment.updateMany({
-      where: {
-        trackVersionId,
-        position: {
-          gt: segment.position,
-        },
-      },
-      data: {
-        position: {
-          decrement: 1,
-        },
-      },
-    });
-  });
-
-  return new NextResponse(null, { status: 204 });
 }

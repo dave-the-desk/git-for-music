@@ -23,6 +23,8 @@ model User {
   annotations      Annotation[]
   processingJobs   ProcessingJob[]
   notifications    Notification[]
+  projectOperationLogs ProjectOperationLog[]
+  projectSnapshots     ProjectSnapshot[]
 }
 
 // ─── Group ───────────────────────────────────────────────────────────────────
@@ -73,6 +75,9 @@ model Project {
 
   demos                 Demo[]
   equipmentRequirements ProjectEquipmentRequirement[]
+  operationLogs         ProjectOperationLog[]
+  snapshots             ProjectSnapshot[]
+  audioAssets           AudioAssetMetadata[]
 
   @@unique([groupId, slug])
 }
@@ -94,6 +99,9 @@ model Demo {
   currentVersion DemoVersion?  @relation("CurrentDemoVersion", fields: [currentVersionId], references: [id])
   tracks   Track[]
   comments Comment[]
+  operationLogs ProjectOperationLog[]
+  snapshots     ProjectSnapshot[]
+  audioAssets   AudioAssetMetadata[]
 }
 
 // DemoVersion is the git-like snapshot/branch node.
@@ -136,6 +144,7 @@ model Track {
 
   versions TrackVersion[]
   comments Comment[]
+  audioAssets AudioAssetMetadata[]
 }
 
 // TrackVersion is immutable — original audio is never overwritten.
@@ -171,6 +180,7 @@ model TrackVersion {
   processingJobs ProcessingJob[]
   annotations    Annotation[]
   lyricSegments  LyricSegment[]
+  audioAssets    AudioAssetMetadata[]
 }
 
 // Segment is a timeline edit region within a TrackVersion.
@@ -344,4 +354,117 @@ model ProjectEquipmentRequirement {
 
   equipment   EquipmentItem @relation(fields: [equipmentId], references: [id])
   equipmentId String
+}
+
+// ─── Project History / Assets / Plugins ──────────────────────────────────────
+
+model ProjectOperationLog {
+  id String @id @default(cuid())
+
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId String
+  demo      Demo    @relation(fields: [demoId], references: [id], onDelete: Cascade)
+  demoId    String
+
+  actorUser   User   @relation(fields: [actorUserId], references: [id])
+  actorUserId String
+
+  baseSnapshot   ProjectSnapshot? @relation("ProjectOperationLogBaseSnapshot", fields: [baseSnapshotId], references: [id])
+  baseSnapshotId String?
+  baseOperationSeq Int
+  operationSeq   Int
+  operationType  String
+  payload        Json
+  createdAt      DateTime @default(now())
+  idempotencyKey String
+  clientOperationId String
+
+  @@index([projectId, operationSeq])
+  @@index([demoId, operationSeq])
+  @@index([actorUserId, createdAt])
+  @@index([baseSnapshotId])
+  @@index([idempotencyKey])
+  @@index([clientOperationId])
+  @@unique([demoId, operationSeq])
+  @@unique([demoId, idempotencyKey])
+  @@unique([demoId, clientOperationId])
+}
+
+model ProjectSnapshot {
+  id String @id @default(cuid())
+
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId String
+  demo      Demo    @relation(fields: [demoId], references: [id], onDelete: Cascade)
+  demoId    String
+
+  operationSeq Int
+  snapshot     Json
+
+  createdBy   User   @relation(fields: [createdById], references: [id])
+  createdById String
+  createdAt   DateTime @default(now())
+
+  baseOperationLogs ProjectOperationLog[] @relation("ProjectOperationLogBaseSnapshot")
+
+  @@index([projectId, operationSeq])
+  @@index([demoId, operationSeq])
+  @@index([createdById, createdAt])
+}
+
+enum AudioAssetKind {
+  ORIGINAL
+  DERIVED
+  PEAKS
+  ANALYSIS
+}
+
+model AudioAssetMetadata {
+  id String @id @default(cuid())
+
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId String
+  demo      Demo    @relation(fields: [demoId], references: [id], onDelete: Cascade)
+  demoId    String
+
+  track   Track? @relation(fields: [trackId], references: [id], onDelete: Cascade)
+  trackId String?
+  trackVersion   TrackVersion? @relation(fields: [trackVersionId], references: [id], onDelete: Cascade)
+  trackVersionId String?
+
+  assetKind AudioAssetKind
+  storageKey String @unique
+  mimeType   String
+  sampleRate Int
+  bitDepth   Int
+  channelCount Int
+  durationMs Int
+  sizeBytes  BigInt
+  checksum   String
+
+  parentAsset   AudioAssetMetadata? @relation("AudioAssetParent", fields: [parentAssetId], references: [id], onDelete: SetNull)
+  parentAssetId String?
+  createdAt     DateTime @default(now())
+
+  derivedAssets AudioAssetMetadata[] @relation("AudioAssetParent")
+
+  @@index([projectId, createdAt])
+  @@index([demoId, createdAt])
+  @@index([trackId, createdAt])
+  @@index([trackVersionId, createdAt])
+  @@index([assetKind])
+  @@index([parentAssetId])
+}
+
+model PluginMetadata {
+  id String @id @default(cuid())
+  pluginKey String
+  name String
+  version String
+  manufacturer String?
+  parameterSchema Json
+  createdAt DateTime @default(now())
+
+  @@unique([pluginKey, version])
+  @@index([pluginKey])
 }

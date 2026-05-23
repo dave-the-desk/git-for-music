@@ -1,28 +1,43 @@
 'use client';
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import type {
-  CreateDemoCommentRequest,
-  DemoComment as SharedDemoComment,
   DemoTimingMetadata,
   JobStatusResponse,
   SnapResolution,
-  SplitSegmentRequest,
-  SplitSegmentResponse,
   UploadTimingChoice,
-  UploadTrackResponse,
 } from '@git-for-music/shared';
+import type {
+  DawOperationAffectedTimeRange,
+  DawCommandPayload,
+  DawOperationCommitMetadata,
+  DawOperationCommitRequest,
+  DawOperationType,
+  DawProjectOperationRecord,
+  DawOperationPayloadVersionTimingUpdated,
+} from '@/features/daw/protocol';
+import { AddTrackButton } from '@/features/daw/components/AddTrackButton';
+import { DawToolbarTabs, type DawToolbarTab } from '@/features/daw/components/DawToolbarTabs';
+import { ProjectTimingControls } from '@/features/daw/components/ProjectTimingControls';
 import { TransportControls } from '@/features/daw/components/TransportControls';
-import { TimelineRuler, PX_PER_SECOND } from '@/features/daw/components/TimelineRuler';
+import { TimelineRuler } from '@/features/daw/components/TimelineRuler';
 import { RecordingControls } from '@/features/daw/components/RecordingControls';
+import type { RecordingControlsHandle } from '@/features/daw/components/RecordingControls';
 import { RecordingTrackLane } from '@/features/daw/components/RecordingTrackLane';
-import { TrackSegmentClip, type TrackSegmentClipHandle } from '@/features/daw/components/TrackSegmentClip';
+import { TrackSegmentClip } from '@/features/daw/components/TrackSegmentClip';
 import { VersionHistoryTree } from '@/features/daw/components/VersionHistoryTree';
 import { AudioInputSelector } from '@/features/daw/components/AudioInputSelector';
-import { useDemoComments } from '@/features/daw/hooks/useDemoComments';
-import { buildRenderableTrackSegments, isValidSplitTime, type TrackTimelineSegment } from '@/features/daw/utils/segments';
+import { AudioEditingEngine } from '@/features/daw/engine/audio-editing-engine';
+import { AudioIngestEngine } from '@/features/daw/engine/ingest-engine';
+import { ProjectSyncEngine } from '@/features/daw/engine/project-sync-engine';
+import { AudioPlaybackEngine } from '@/features/daw/engine/playback-engine';
+import {
+  buildDawVisualProjection,
+  PX_PER_SECOND,
+  type WaveformCache,
+} from '@/features/daw/rendering/visual-renderer';
+import { isValidSplitTime } from '@/features/daw/utils/segments';
 import {
   formatBarBeatLabel,
   getBeatSubdivisionSeconds,
@@ -35,9 +50,6 @@ import {
   TICK_INTERVAL_MS,
   TRACK_HEIGHT,
   TRACK_LABEL_WIDTH,
-  type CommentComposerState,
-  type DawTrack,
-  type DawVersion,
   type RenameState,
   type TempoAnalysisPromptState,
   type TimingFormState,
@@ -45,38 +57,21 @@ import {
   type UploadModalState,
   formatTimeMs,
   timingFormFromVersion,
-} from '@/features/daw/state/daw-state';
+} from '@/features/daw/state/ui-state';
+import type { DawTrack, DawVersion, TrackTimelineSegment } from '@/features/daw/state/local-project-state';
+import type { TimelineHistoryEntry } from '@/features/daw/state/operation-reducer';
+import {
+  getDisplayedTrackSegments as selectDisplayedTrackSegments,
+  getRenderableTrackSegments as selectRenderableTrackSegments,
+  getTrackDurationMs as selectTrackDurationMs,
+  getTrackStartOffsetMs as selectTrackStartOffsetMs,
+  groupCommentsByTrackId,
+  selectTracks,
+  selectVersionById,
+  selectTotalDurationMs,
+} from '@/features/daw/state/selectors';
 
 const DEMO_PAGE_TRACK_HEIGHT = TRACK_HEIGHT;
-
-type TimelineHistoryEntry =
-  | {
-      kind: 'move-track';
-      trackVersionId: string;
-      previousStartOffsetMs: number;
-      nextStartOffsetMs: number;
-    }
-  | {
-      kind: 'move-segment';
-      trackVersionId: string;
-      segmentId: string;
-      previousTimelineStartMs: number;
-      nextTimelineStartMs: number;
-    }
-  | {
-      kind: 'cut';
-      trackVersionId: string;
-      previousSegments: TrackTimelineSegment[];
-      nextSegments: TrackTimelineSegment[];
-      previousSelectedSegmentId: string | null;
-    }
-  | {
-      kind: 'delete-segment';
-      trackVersionId: string;
-      previousSegments: TrackTimelineSegment[];
-      nextSegments: TrackTimelineSegment[];
-      previousSelectedSegmentId: string | null;
-    };
 
 type TimelineDragState =
   | {
@@ -101,24 +96,95 @@ type SplitHoverState = {
 type DemoDawClientProps = {
   groupSlug: string;
   projectSlug: string;
+  projectId: string;
   demoId: string;
+  currentUserId: string;
   demoName: string;
   demoDescription: string | null;
   currentVersionId: string;
   versions: DawVersion[];
 };
 
+type ProjectPresenceRecord = {
+  presenceId: string;
+  projectId: string;
+  demoId: string;
+  actorUserId: string;
+  presenceSeed: string;
+  status: 'online' | 'idle' | 'away';
+  cursorTimeMs: number | null;
+  selectedTrackId: string | null;
+  currentTool: 'select' | 'split';
+  recordingState: 'idle' | 'recording' | 'preview' | 'uploading' | 'error';
+  playbackFollowState: boolean;
+  updatedAt: string;
+};
+
+type ResolvedRecordingTarget = {
+  trackId: string;
+  trackVersionId: string;
+  trackName: string;
+};
+
+function resolveArmedRecordingTarget(
+  recordArmedTrackVersionId: string | null,
+  selectedTracks: DawTrack[],
+): ResolvedRecordingTarget | null {
+  if (!recordArmedTrackVersionId) return null;
+  const armedTrack = selectedTracks.find((track) => track.trackVersionId === recordArmedTrackVersionId);
+  if (!armedTrack) return null;
+  return {
+    trackId: armedTrack.trackId,
+    trackVersionId: armedTrack.trackVersionId,
+    trackName: armedTrack.trackName,
+  };
+}
+
+function createSilentWavBlob(durationMs = 500, sampleRate = 44100) {
+  const sampleCount = Math.max(1, Math.round((durationMs / 1000) * sampleRate));
+  const channels = 1;
+  const bitsPerSample = 16;
+  const blockAlign = (channels * bitsPerSample) / 8;
+  const byteRate = sampleRate * blockAlign;
+  const dataSize = sampleCount * blockAlign;
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+
+  const writeString = (offset: number, value: string) => {
+    for (let index = 0; index < value.length; index += 1) {
+      view.setUint8(offset + index, value.charCodeAt(index));
+    }
+  };
+
+  writeString(0, 'RIFF');
+  view.setUint32(4, 36 + dataSize, true);
+  writeString(8, 'WAVE');
+  writeString(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, channels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, byteRate, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, bitsPerSample, true);
+  writeString(36, 'data');
+  view.setUint32(40, dataSize, true);
+
+  return new Blob([buffer], { type: 'audio/wav' });
+}
+
 export function DemoDawClient({
   groupSlug,
   projectSlug,
+  projectId,
   demoId,
+  currentUserId,
   demoName,
   demoDescription,
   currentVersionId,
   versions,
 }: DemoDawClientProps) {
   const router = useRouter();
-  const { comments, setComments, commentsLoading, commentsError } = useDemoComments(demoId);
 
   const [selectedVersionId, setSelectedVersionId] = useState(currentVersionId);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -130,7 +196,6 @@ export function DemoDawClient({
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadName, setUploadName] = useState('');
   const [uploadFile, setUploadFile] = useState<File | null>(null);
-  const [versionHistoryExpanded, setVersionHistoryExpanded] = useState(false);
   const [timingFormState, setTimingFormState] = useState<TimingFormState>(() =>
     timingFormFromVersion(versions.find((v) => v.id === currentVersionId)),
   );
@@ -145,16 +210,41 @@ export function DemoDawClient({
   const [processingJobIds, setProcessingJobIds] = useState<string[]>([]);
   const [processingJobs, setProcessingJobs] = useState<Record<string, JobStatusResponse>>({});
   const [processingMessage, setProcessingMessage] = useState<string | null>(null);
-  const [tempoAnalysisPrompt, setTempoAnalysisPrompt] = useState<TempoAnalysisPromptState | null>(null);
   const [processingStartedAt, setProcessingStartedAt] = useState<number | null>(null);
-  const [lastProcessingAt, setLastProcessingAt] = useState<number | null>(null);
+  const [tempoAnalysisPrompt, setTempoAnalysisPrompt] = useState<TempoAnalysisPromptState | null>(null);
 
   const [temporaryRecordingTrack, setTemporaryRecordingTrack] = useState<TemporaryRecordingTrack | null>(null);
   const [recordingStream, setRecordingStream] = useState<MediaStream | null>(null);
   const [selectedAudioInputDeviceId, setSelectedAudioInputDeviceId] = useState<string | null>(null);
   const [audioInputReady, setAudioInputReady] = useState(false);
+  const [toolbarTab, setToolbarTab] = useState<DawToolbarTab>('edit');
+  const [selectedTrackVersionId, setSelectedTrackVersionId] = useState<string | null>(null);
+  const [presenceRecords, setPresenceRecords] = useState<ProjectPresenceRecord[]>([]);
+  const [pluginDefinitions, setPluginDefinitions] = useState<
+    Array<{
+      id: string;
+      pluginKey: string;
+      name: string;
+      version: string;
+      manufacturer: string | null;
+      parameterSchema: unknown;
+      createdAt: string;
+    }>
+  >([]);
+  const [gainByTrackVersionId, setGainByTrackVersionId] = useState<Record<string, number>>({});
+  const [soloTrackVersionIds, setSoloTrackVersionIds] = useState<Set<string>>(() => new Set());
+  const [recordArmedTrackVersionId, setRecordArmedTrackVersionId] = useState<string | null>(null);
+  const recordArmInitializedRef = useRef(false);
+  const [addCommentModalOpen, setAddCommentModalOpen] = useState(false);
+  const [addCommentBody, setAddCommentBody] = useState('');
+  const [addCommentTrackId, setAddCommentTrackId] = useState<string | null>(null);
+  const [addCommentTimestampMs, setAddCommentTimestampMs] = useState<number>(0);
+  const [addCommentSubmitting, setAddCommentSubmitting] = useState(false);
+  const [addCommentError, setAddCommentError] = useState<string | null>(null);
+  const [timelineCommentOpenId, setTimelineCommentOpenId] = useState<string | null>(null);
   const recordingPreviewUrlRef = useRef<string | null>(null);
   const isLiveRecordingRef = useRef(false);
+  const recordingControlsRef = useRef<RecordingControlsHandle | null>(null);
 
   const [offsetOverrides, setOffsetOverrides] = useState<Record<string, number>>({});
   const [segmentLayoutOverrides, setSegmentLayoutOverrides] = useState<Record<string, TrackTimelineSegment[]>>({});
@@ -167,13 +257,10 @@ export function DemoDawClient({
   const [splitError, setSplitError] = useState<string | null>(null);
 
   const [renameState, setRenameState] = useState<RenameState | null>(null);
-  const [commentComposerState, setCommentComposerState] = useState<Record<string, CommentComposerState>>({});
-
   const clockRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startWallTimeRef = useRef<number>(0);
   const startPlayheadMsRef = useRef<number>(0);
   const tracksScrollContainerRef = useRef<HTMLDivElement | null>(null);
-  const segmentRefs = useRef<Record<string, TrackSegmentClipHandle | null>>({});
   const metronomeAudioRef = useRef<AudioContext | null>(null);
   const metronomeTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const metronomeScheduledBeatRef = useRef<number | null>(null);
@@ -181,16 +268,176 @@ export function DemoDawClient({
   const deleteSelectedClipRef = useRef<() => Promise<boolean>>(async () => false);
   const cancelTimelineDragRef = useRef<() => void>(() => {});
   const timelineToolRef = useRef<'select' | 'split'>('select');
+  const presenceIdRef = useRef(crypto.randomUUID());
+  const currentTimeMsRef = useRef(0);
+  const selectedTrackIdRef = useRef<string | null>(null);
+  const currentRecordingStateRef = useRef<'idle' | 'recording' | 'preview' | 'uploading' | 'error'>('idle');
+  const playbackFollowStateRef = useRef(false);
+  const lastPresencePayloadRef = useRef<string | null>(null);
+
+  const publishPresence = useCallback(async (statusOverride?: 'online' | 'idle' | 'away') => {
+    const status =
+      statusOverride ??
+      (typeof document !== 'undefined' && document.visibilityState === 'hidden' ? 'away' : 'online');
+
+    const payload = {
+      presenceId: presenceIdRef.current,
+      status,
+      cursorTimeMs: currentTimeMsRef.current,
+      selectedTrackId: selectedTrackIdRef.current,
+      currentTool: timelineToolRef.current,
+      recordingState: currentRecordingStateRef.current,
+      playbackFollowState: playbackFollowStateRef.current,
+    };
+
+    const serialized = JSON.stringify(payload);
+    if (serialized === lastPresencePayloadRef.current) return;
+    lastPresencePayloadRef.current = serialized;
+
+    try {
+      await fetch(`/api/daw/projects/${projectId}/presence?demoId=${demoId}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: serialized,
+        keepalive: true,
+      });
+    } catch {
+      // Presence is best-effort and should never block editing.
+    }
+  }, [demoId, projectId]);
+
+  const clearPresence = useCallback(async () => {
+    try {
+      await fetch(
+        `/api/daw/projects/${projectId}/presence?demoId=${demoId}&presenceId=${presenceIdRef.current}`,
+        {
+          method: 'DELETE',
+          keepalive: true,
+        },
+      );
+    } catch {
+      // Best effort cleanup on tab close.
+    }
+  }, [demoId, projectId]);
 
   const selectedVersion = useMemo(
-    () => versions.find((v) => v.id === selectedVersionId) ?? versions[0],
+    () => selectVersionById(versions, selectedVersionId),
     [selectedVersionId, versions],
   );
 
-  const selectedTracks = useMemo(() => {
-    if (!selectedVersion) return [];
-    return [...selectedVersion.tracks].sort((a, b) => a.trackPosition - b.trackPosition);
-  }, [selectedVersion]);
+  const selectedTracks = useMemo(() => selectTracks(selectedVersion), [selectedVersion]);
+  const selectedTrack = useMemo(
+    () => selectedTracks.find((track) => track.trackVersionId === selectedTrackVersionId) ?? selectedTracks[0] ?? null,
+    [selectedTrackVersionId, selectedTracks],
+  );
+  useEffect(() => {
+    if (recordArmedTrackVersionId && selectedTracks.some((track) => track.trackVersionId === recordArmedTrackVersionId)) {
+      recordArmInitializedRef.current = true;
+      return;
+    }
+    if (recordArmedTrackVersionId) {
+      setRecordArmedTrackVersionId(null);
+      return;
+    }
+    if (recordArmInitializedRef.current || selectedTracks.length === 0) return;
+    recordArmInitializedRef.current = true;
+    setRecordArmedTrackVersionId(selectedTracks[0]?.trackVersionId ?? null);
+    // Seed a single armed track once, then let the user change or clear it.
+  }, [recordArmedTrackVersionId, selectedTracks]);
+  const activeRecordingTarget = useMemo(
+    () => resolveArmedRecordingTarget(recordArmedTrackVersionId, selectedTracks),
+    [recordArmedTrackVersionId, selectedTracks],
+  );
+  const audioEditingEngine = useMemo(() => new AudioEditingEngine({ demoId }), [demoId]);
+  const ingestEngine = useMemo(() => new AudioIngestEngine(), []);
+  const playbackEngine = useMemo(() => new AudioPlaybackEngine(), []);
+  const projectSyncEngine = useMemo(() => new ProjectSyncEngine(), []);
+  const [projectSyncState, setProjectSyncState] = useState(() => projectSyncEngine.getState());
+
+  useEffect(() => {
+    return projectSyncEngine.subscribe((state) => {
+      setProjectSyncState(state);
+    });
+  }, [projectSyncEngine]);
+
+  useEffect(() => {
+    return projectSyncEngine.subscribeAssetStatus((event) => {
+      setProcessingMessage(
+        event.message ??
+          (event.status === 'processing'
+            ? 'Processing asset...'
+            : event.status === 'complete'
+              ? 'Processing complete.'
+              : event.status === 'failed'
+                ? 'Processing failed.'
+                : 'Processing queued.'),
+      );
+
+      if (event.status === 'complete' || event.status === 'failed') {
+        router.refresh();
+      }
+    });
+  }, [projectSyncEngine, router]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    async function loadBootstrapData() {
+      try {
+        const response = await fetch(`/api/daw/projects/${projectId}/bootstrap?demoId=${demoId}`, {
+          signal: controller.signal,
+        });
+        if (!response.ok) return;
+        const data = (await response.json()) as {
+          pluginDefinitions?: Array<{
+            id: string;
+            pluginKey: string;
+            name: string;
+            version: string;
+            manufacturer: string | null;
+            parameterSchema: unknown;
+            createdAt: string;
+          }>;
+        };
+        setPluginDefinitions(data.pluginDefinitions ?? []);
+      } catch {
+        // Best effort only.
+      }
+    }
+
+    void loadBootstrapData();
+    return () => controller.abort();
+  }, [demoId, projectId]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadPresence() {
+      try {
+        const response = await fetch(`/api/daw/projects/${projectId}/presence?demoId=${demoId}`);
+        if (!response.ok) return;
+        const data = (await response.json()) as { presences?: ProjectPresenceRecord[] };
+        if (!cancelled) {
+          setPresenceRecords(data.presences ?? []);
+        }
+      } catch {
+        // Presence is best effort.
+      }
+    }
+
+    void loadPresence();
+    if (toolbarTab !== 'members') return () => {
+      cancelled = true;
+    };
+
+    const timer = setInterval(() => void loadPresence(), 2000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [demoId, projectId, toolbarTab]);
 
   const activeProcessingJobs = useMemo(
     () => processingJobIds.map((id) => processingJobs[id]).filter(Boolean),
@@ -201,40 +448,22 @@ export function DemoDawClient({
     if (!tempoAnalysisPrompt) return null;
     return processingJobs[tempoAnalysisPrompt.jobId] ?? null;
   }, [processingJobs, tempoAnalysisPrompt]);
-
-  const workerStatus = (() => {
-    const activeJobs = activeProcessingJobs.filter(
-      (job) => job.status === 'PENDING' || job.status === 'PROCESSING',
-    );
-    const hasActiveJobs = activeJobs.length > 0;
-    const latestCompletedAt = lastProcessingAt;
-    const now = Date.now();
-
-    if (hasActiveJobs) {
-      const stalled = processingStartedAt !== null && now - processingStartedAt > 20000;
-      return {
-        label: stalled ? 'Worker stalled' : 'Worker busy',
-        tone: stalled ? 'red' : 'amber',
-        detail: stalled
-          ? 'Jobs have been waiting too long.'
-          : `Processing ${activeJobs.length} job${activeJobs.length === 1 ? '' : 's'} now.`,
-      };
+  const currentRecordingState = temporaryRecordingTrack?.status ?? 'idle';
+  const microphoneStatus = useMemo(() => {
+    if (currentRecordingState === 'recording') {
+      return 'Recording on selected mic';
     }
 
-    if (latestCompletedAt !== null && now - latestCompletedAt < 60000) {
-      return {
-        label: 'Worker active',
-        tone: 'emerald',
-        detail: 'Recent jobs completed successfully.',
-      };
+    if (selectedAudioInputDeviceId && audioInputReady) {
+      return 'Mic ready';
     }
 
-    return {
-      label: 'Worker idle',
-      tone: 'gray',
-      detail: 'No processing jobs are currently running.',
-    };
-  })();
+    if (selectedAudioInputDeviceId && !audioInputReady) {
+      return 'Mic needs permission';
+    }
+
+    return 'Choose a microphone';
+  }, [audioInputReady, currentRecordingState, selectedAudioInputDeviceId]);
 
   const selectedTiming = useMemo<DemoTimingMetadata | null>(() => {
     if (!selectedVersion) return null;
@@ -250,18 +479,15 @@ export function DemoDawClient({
     };
   }, [selectedVersion]);
 
+  const comments = projectSyncState.projectState?.comments ?? [];
+
   const commentsByTrackId = useMemo(() => {
-    const grouped = comments.reduce<Record<string, SharedDemoComment[]>>((acc, comment) => {
-      if (!comment.trackId) return acc;
-      if (!acc[comment.trackId]) acc[comment.trackId] = [];
-      acc[comment.trackId]!.push(comment);
-      return acc;
-    }, {});
+    const grouped = groupCommentsByTrackId(comments);
 
     for (const trackComments of Object.values(grouped)) {
       trackComments.sort((a, b) => {
-        const aPoint = a.timestampMs ?? Number.POSITIVE_INFINITY;
-        const bPoint = b.timestampMs ?? Number.POSITIVE_INFINITY;
+        const aPoint = a.startTimeMs ?? Number.POSITIVE_INFINITY;
+        const bPoint = b.startTimeMs ?? Number.POSITIVE_INFINITY;
         if (aPoint !== bPoint) return aPoint - bPoint;
         return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
       });
@@ -269,27 +495,112 @@ export function DemoDawClient({
 
     return grouped;
   }, [comments]);
+  const projectTimelineComments = useMemo(
+    () =>
+      [...comments]
+        .filter((comment) => comment.trackId === null)
+        .sort((a, b) => {
+          const aPoint = a.startTimeMs ?? Number.POSITIVE_INFINITY;
+          const bPoint = b.startTimeMs ?? Number.POSITIVE_INFINITY;
+          if (aPoint !== bPoint) return aPoint - bPoint;
+          return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+        }),
+    [comments],
+  );
+  const allComments = useMemo(
+    () =>
+      [...comments].sort((a, b) => {
+        const aPoint = a.startTimeMs ?? Number.POSITIVE_INFINITY;
+        const bPoint = b.startTimeMs ?? Number.POSITIVE_INFINITY;
+        if (aPoint !== bPoint) return aPoint - bPoint;
+        return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+      }),
+    [comments],
+  );
+  const processingElapsedSeconds =
+    processingStartedAt !== null ? Math.max(0, Math.floor((Date.now() - processingStartedAt) / 1000)) : null;
 
-  const totalDurationMs = useMemo(() => {
-    const ends = selectedTracks.flatMap((t) => {
-      const dur = durationByTrackVersionId[t.trackVersionId] ?? t.durationMs ?? 0;
-      const offset = offsetOverrides[t.trackVersionId] ?? t.startOffsetMs;
-      const trackSegments = buildRenderableTrackSegments({
-        trackVersionId: t.trackVersionId,
-        trackStartOffsetMs: offset,
-        segments: segmentLayoutOverrides[t.trackVersionId] ?? t.segments,
-        fallbackDurationMs: dur,
+  const waveformCache = useMemo<WaveformCache>(() => {
+    const cache = new Map<string, { peaks: { timeMs: number; min: number; max: number }[]; durationMs: number }>();
+    if (temporaryRecordingTrack?.peaks?.length) {
+      cache.set(temporaryRecordingTrack.id, {
+        peaks: temporaryRecordingTrack.peaks,
+        durationMs: temporaryRecordingTrack.durationMs,
       });
-      return trackSegments.map((segment) => segment.timelineEndMs);
-    });
-    if (temporaryRecordingTrack) {
-      ends.push(temporaryRecordingTrack.startOffsetMs + temporaryRecordingTrack.durationMs);
     }
-    return ends.length ? Math.max(...ends) : 0;
-  }, [selectedTracks, durationByTrackVersionId, offsetOverrides, segmentLayoutOverrides, temporaryRecordingTrack]);
+    return cache;
+  }, [temporaryRecordingTrack]);
 
-  const totalTimelineWidth = Math.max((totalDurationMs / 1000) * PX_PER_SECOND, 400);
-  const currentRecordingTrackId = temporaryRecordingTrack?.status === 'recording' ? temporaryRecordingTrack.id : null;
+  const playbackTracks = useMemo(
+    () =>
+      selectedTracks.map((track) => ({
+        ...track,
+        startOffsetMs: selectTrackStartOffsetMs(track, offsetOverrides),
+        durationMs: durationByTrackVersionId[track.trackVersionId] ?? track.durationMs,
+        isMuted: mutedTrackVersionIds.has(track.trackVersionId),
+        segments: selectDisplayedTrackSegments(track, segmentLayoutOverrides),
+      })),
+    [durationByTrackVersionId, mutedTrackVersionIds, offsetOverrides, selectedTracks, segmentLayoutOverrides],
+  );
+
+  const visualProjection = useMemo(
+    () =>
+      buildDawVisualProjection({
+        tracks: playbackTracks,
+        currentTimeMs,
+        splitHover,
+        durationByTrackVersionId,
+        offsetOverrides,
+        segmentLayoutOverrides,
+        temporaryRecordingTrack,
+        waveformCache,
+        minimumWidthPx: 400,
+      }),
+    [
+      currentTimeMs,
+      durationByTrackVersionId,
+      offsetOverrides,
+      playbackTracks,
+      segmentLayoutOverrides,
+      splitHover,
+      temporaryRecordingTrack,
+      waveformCache,
+    ],
+  );
+
+  const totalDurationMs = useMemo(
+    () =>
+      selectTotalDurationMs({
+        tracks: selectedTracks,
+        durationByTrackVersionId,
+        offsetOverrides,
+        segmentLayoutOverrides,
+        temporaryRecordingTrack,
+      }),
+    [selectedTracks, durationByTrackVersionId, offsetOverrides, segmentLayoutOverrides, temporaryRecordingTrack],
+  );
+
+  const totalTimelineWidth = visualProjection.totalTimelineWidthPx;
+
+  useEffect(() => {
+    if (!temporaryRecordingTrack) return;
+    if (temporaryRecordingTrack.syncStatus !== 'complete') return;
+    if (!temporaryRecordingTrack.serverTrackVersionId) return;
+
+    const recordingHasBeenMaterialized = selectedTracks.some(
+      (track) =>
+        track.trackId === temporaryRecordingTrack.targetTrackId &&
+        track.trackVersionId === temporaryRecordingTrack.serverTrackVersionId,
+    );
+    if (!recordingHasBeenMaterialized) return;
+
+    if (recordingPreviewUrlRef.current) {
+      ingestEngine.revokeObjectUrl(recordingPreviewUrlRef.current);
+      recordingPreviewUrlRef.current = null;
+    }
+
+    setTemporaryRecordingTrack(null);
+  }, [ingestEngine, selectedTracks, temporaryRecordingTrack]);
 
   useEffect(() => {
     setOffsetOverrides({});
@@ -297,11 +608,58 @@ export function DemoDawClient({
     setTimelineHistory([]);
     setDragError(null);
     setSelectedSegmentId(null);
+    setSelectedTrackVersionId(selectedTracks[0]?.trackVersionId ?? null);
     setSplitHover(null);
     setSplitError(null);
     setTimelineTool('select');
-    segmentRefs.current = {};
-  }, [selectedVersionId]);
+  }, [selectedTracks, selectedVersionId]);
+
+  useEffect(() => {
+    playbackEngine.setProject({
+      tracks: playbackTracks,
+      mutedTrackVersionIds,
+      soloTrackVersionIds,
+      gainByTrackVersionId,
+    });
+  }, [gainByTrackVersionId, mutedTrackVersionIds, playbackEngine, playbackTracks, soloTrackVersionIds]);
+
+  useEffect(() => {
+    void projectSyncEngine.bootstrap({
+      projectId,
+      demoId,
+      initialProjectState: {
+        versions,
+        currentVersionId,
+        comments: [],
+        annotations: [],
+      },
+    });
+  }, [demoId, currentVersionId, projectId, projectSyncEngine, versions]);
+
+  useEffect(() => {
+    function handleOnline() {
+      void projectSyncEngine.handleReconnect();
+    }
+
+    window.addEventListener('online', handleOnline);
+    return () => window.removeEventListener('online', handleOnline);
+  }, [projectSyncEngine]);
+
+  useEffect(() => {
+    void playbackEngine.preloadTracks(playbackTracks);
+  }, [playbackEngine, playbackTracks]);
+
+  useEffect(() => {
+    return () => {
+      playbackEngine.dispose();
+    };
+  }, [playbackEngine]);
+
+  useEffect(() => {
+    return () => {
+      projectSyncEngine.dispose();
+    };
+  }, [projectSyncEngine]);
 
   useEffect(() => {
     if (processingJobIds.length === 0) return;
@@ -329,7 +687,7 @@ export function DemoDawClient({
           }
           return next;
         });
-        setLastProcessingAt(Date.now());
+        setProcessingStartedAt(Date.now());
 
         const stillPending = statuses.some((status) => status.status === 'PENDING' || status.status === 'PROCESSING');
         if (stillPending) {
@@ -425,13 +783,81 @@ export function DemoDawClient({
 
   useEffect(() => {
     return () => {
-      if (recordingPreviewUrlRef.current) URL.revokeObjectURL(recordingPreviewUrlRef.current);
+      if (recordingPreviewUrlRef.current) ingestEngine.revokeObjectUrl(recordingPreviewUrlRef.current);
     };
-  }, []);
+  }, [ingestEngine]);
 
   useEffect(() => {
     timelineToolRef.current = timelineTool;
   }, [timelineTool]);
+
+  useEffect(() => {
+    currentTimeMsRef.current = currentTimeMs;
+  }, [currentTimeMs]);
+
+  useEffect(() => {
+    selectedTrackIdRef.current = selectedTrack?.trackId ?? null;
+  }, [selectedTrack]);
+
+  useEffect(() => {
+    currentRecordingStateRef.current = currentRecordingState;
+  }, [currentRecordingState]);
+
+  useEffect(() => {
+    playbackFollowStateRef.current = isPlaying;
+  }, [isPlaying]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      void publishPresence();
+    }, 150);
+
+    return () => clearTimeout(timer);
+  }, [currentRecordingState, isPlaying, publishPresence, selectedTrack?.trackId, timelineTool]);
+
+  useEffect(() => {
+    if (!isPlaying && currentRecordingState === 'idle') return;
+
+    const timer = setInterval(() => {
+      void publishPresence();
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [currentRecordingState, isPlaying, publishPresence]);
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      void publishPresence();
+    };
+
+    const handleOnline = () => {
+      void publishPresence('online');
+    };
+
+    const handleOffline = () => {
+      void publishPresence('away');
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, [publishPresence]);
+
+  useEffect(() => {
+    void publishPresence();
+  }, [publishPresence]);
+
+  useEffect(() => {
+    return () => {
+      void clearPresence();
+    };
+  }, [clearPresence]);
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -478,19 +904,19 @@ export function DemoDawClient({
   }
 
   function getTrackStartOffsetMs(track: DawTrack) {
-    return offsetOverrides[track.trackVersionId] ?? track.startOffsetMs;
+    return selectTrackStartOffsetMs(track, offsetOverrides);
   }
 
   function getDisplayedTrackSegments(track: DawTrack) {
-    return segmentLayoutOverrides[track.trackVersionId] ?? track.segments;
+    return selectDisplayedTrackSegments(track, segmentLayoutOverrides);
   }
 
   function getRenderableTrackSegments(track: DawTrack) {
-    return buildRenderableTrackSegments({
-      trackVersionId: track.trackVersionId,
-      trackStartOffsetMs: getTrackStartOffsetMs(track),
-      segments: getDisplayedTrackSegments(track),
-      fallbackDurationMs: getTrackDurationMs(track),
+    return selectRenderableTrackSegments({
+      track,
+      offsetOverrides,
+      segmentLayoutOverrides,
+      durationByTrackVersionId,
     });
   }
 
@@ -515,14 +941,9 @@ export function DemoDawClient({
         [lastEntry.trackVersionId]: lastEntry.previousStartOffsetMs,
       }));
       try {
-        const res = await fetch(`/api/tracks/versions/${lastEntry.trackVersionId}/offset`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ startOffsetMs: lastEntry.previousStartOffsetMs }),
-        });
-        if (!res.ok) {
-          throw new Error('Could not undo track move');
-        }
+        await commitEditingOperation(
+          audioEditingEngine.moveTrack(lastEntry.trackVersionId, lastEntry.previousStartOffsetMs),
+        );
       } catch (error) {
         setDragError(error instanceof Error ? error.message : 'Could not undo track move');
       }
@@ -542,17 +963,13 @@ export function DemoDawClient({
       );
       setTrackSegmentLayout(lastEntry.trackVersionId, nextSegments);
       try {
-        const res = await fetch(
-          `/api/tracks/versions/${lastEntry.trackVersionId}/segments/${lastEntry.segmentId}/position`,
-          {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ timelineStartMs: lastEntry.previousTimelineStartMs }),
-          },
+        await commitEditingOperation(
+          audioEditingEngine.moveSegment(
+            lastEntry.trackVersionId,
+            lastEntry.segmentId,
+            lastEntry.previousTimelineStartMs,
+          ),
         );
-        if (!res.ok) {
-          throw new Error('Could not undo segment move');
-        }
       } catch (error) {
         setDragError(error instanceof Error ? error.message : 'Could not undo segment move');
       }
@@ -588,16 +1005,7 @@ export function DemoDawClient({
       }));
 
     try {
-      const res = await fetch(
-        `/api/tracks/versions/${selectedTrack.trackVersionId}/segments/${selectedSegment.id}`,
-        {
-          method: 'DELETE',
-        },
-      );
-      if (!res.ok) {
-        const data = (await res.json()) as { error?: string };
-        throw new Error(data.error ?? 'Could not delete clip');
-      }
+      await commitEditingOperation(audioEditingEngine.deleteSegment(selectedTrack.trackVersionId, selectedSegment.id));
     } catch (error) {
       setDragError(error instanceof Error ? error.message : 'Could not delete clip');
       return false;
@@ -689,9 +1097,10 @@ export function DemoDawClient({
     }
     setIsPlaying(false);
     setCurrentTimeMs(0);
-    Object.values(segmentRefs.current).forEach((clip) => clip?.stop());
+    playbackEngine.stop();
     stopMetronomeSchedule();
-  }, [stopMetronomeSchedule]);
+    void publishPresence('idle');
+  }, [playbackEngine, publishPresence, stopMetronomeSchedule]);
 
   useEffect(() => {
     setSelectedVersionId(currentVersionId);
@@ -703,22 +1112,21 @@ export function DemoDawClient({
       clearInterval(clockRef.current);
       clockRef.current = null;
     }
+    setCurrentTimeMs(playbackEngine.getCurrentTimeMs());
     setIsPlaying(false);
-    Object.values(segmentRefs.current).forEach((clip) => clip?.pause());
+    playbackEngine.pause();
     stopMetronomeSchedule();
+    void publishPresence('idle');
   }
 
   function seekAllTracks(timeMs: number) {
-    selectedTracks.forEach((track) => {
-      getRenderableTrackSegments(track).forEach((segment) => {
-        segmentRefs.current[`${track.trackVersionId}:${segment.id}`]?.seekToTimelineTimeMs(timeMs);
-      });
-    });
+    playbackEngine.seek(timeMs);
   }
 
   function seekTransport(timeMs: number) {
     setCurrentTimeMs(timeMs);
     seekAllTracks(timeMs);
+    void publishPresence();
   }
 
   function playTransport(fromMs?: number) {
@@ -728,16 +1136,7 @@ export function DemoDawClient({
 
     seekAllTracks(startMs);
     scheduleMetronomeThrough(startMs);
-
-    selectedTracks.forEach((t) => {
-      const muted = mutedTrackVersionIds.has(t.trackVersionId);
-      getRenderableTrackSegments(t).forEach((segment) => {
-        const clip = segmentRefs.current[`${t.trackVersionId}:${segment.id}`];
-        if (!clip) return;
-        clip.setMuted(muted);
-        clip.playSegmentFromTimelineTime(startMs);
-      });
-    });
+    void playbackEngine.play(startMs);
 
     clockRef.current = setInterval(() => {
       const elapsed = performance.now() - startWallTimeRef.current;
@@ -753,19 +1152,10 @@ export function DemoDawClient({
 
       setCurrentTimeMs(newTimeMs);
       scheduleMetronomeThrough(newTimeMs);
-
-      selectedTracks.forEach((t) => {
-        const muted = mutedTrackVersionIds.has(t.trackVersionId);
-        getRenderableTrackSegments(t).forEach((segment) => {
-          const clip = segmentRefs.current[`${t.trackVersionId}:${segment.id}`];
-          if (!clip) return;
-          clip.setMuted(muted);
-          clip.playSegmentFromTimelineTime(newTimeMs);
-        });
-      });
     }, TICK_INTERVAL_MS);
 
     setIsPlaying(true);
+    void publishPresence('online');
   }
 
   function handleSeek(timeMs: number) {
@@ -774,6 +1164,7 @@ export function DemoDawClient({
     setCurrentTimeMs(timeMs);
     seekAllTracks(timeMs);
     if (wasPlaying) playTransport(timeMs);
+    void publishPresence();
   }
 
   const handleDurationReady = useCallback((trackVersionId: string, durationMs: number) => {
@@ -781,7 +1172,197 @@ export function DemoDawClient({
   }, []);
 
   function getTrackDurationMs(track: DawTrack) {
-    return durationByTrackVersionId[track.trackVersionId] ?? track.durationMs ?? 0;
+    return selectTrackDurationMs(track, durationByTrackVersionId);
+  }
+
+  function findTrackByVersionId(trackVersionId: string) {
+    return selectedTracks.find((track) => track.trackVersionId === trackVersionId) ?? null;
+  }
+
+  function findSegmentById(trackVersionId: string, segmentId: string) {
+    return (
+      findTrackByVersionId(trackVersionId)?.segments.find((segment) => segment.id === segmentId) ?? null
+    );
+  }
+
+  function resolveCommitTargetTrackId(
+    operationType: Exclude<DawOperationType, 'ASSET_ADDED'>,
+    payload: DawCommandPayload,
+  ) {
+    switch (operationType) {
+      case 'TRACK_RENAMED':
+        return (payload as Extract<DawCommandPayload, { trackId: string }>).trackId;
+      case 'TRACK_OFFSET_UPDATED':
+        return findTrackByVersionId(
+          (payload as Extract<DawCommandPayload, { trackVersionId: string }>).trackVersionId,
+        )?.trackId ?? null;
+      case 'SEGMENT_SPLIT':
+        return findTrackByVersionId(
+          (payload as Extract<DawCommandPayload, { trackVersionId: string }>).trackVersionId,
+        )?.trackId ?? null;
+      case 'SEGMENT_MOVED':
+      case 'SEGMENT_DELETED':
+      case 'SEGMENT_TRIMMED':
+      case 'SEGMENT_MERGED':
+      case 'CROSSFADE_SET':
+        return findTrackByVersionId(
+          (payload as Extract<DawCommandPayload, { trackVersionId: string }>).trackVersionId,
+        )?.trackId ?? null;
+      case 'VERSION_TIMING_UPDATED':
+        return null;
+      case 'COMMENT_ADDED':
+      case 'COMMENT_UPDATED':
+      case 'COMMENT_DELETED':
+      case 'ANNOTATION_ADDED':
+      case 'ANNOTATION_UPDATED':
+      case 'ANNOTATION_DELETED':
+        return (payload as Extract<DawCommandPayload, { trackId: string | null }>).trackId ?? null;
+      default:
+        return null;
+    }
+  }
+
+  function resolveCommitTargetSegmentId(
+    operationType: Exclude<DawOperationType, 'ASSET_ADDED'>,
+    payload: DawCommandPayload,
+  ) {
+    switch (operationType) {
+      case 'SEGMENT_SPLIT':
+        return (payload as Extract<DawCommandPayload, { segmentId?: string }>).segmentId ?? null;
+      case 'SEGMENT_MOVED':
+      case 'SEGMENT_DELETED':
+      case 'SEGMENT_TRIMMED':
+        return (payload as Extract<DawCommandPayload, { segmentId: string }>).segmentId ?? null;
+      case 'SEGMENT_MERGED':
+        return (payload as Extract<DawCommandPayload, { segmentIds: string[] }>).segmentIds[0] ?? null;
+      case 'CROSSFADE_SET':
+        {
+          const crossfade = payload as Extract<
+            DawCommandPayload,
+            { leftSegmentId: string; rightSegmentId: string }
+          >;
+          return crossfade.leftSegmentId ?? crossfade.rightSegmentId ?? null;
+        }
+      case 'COMMENT_ADDED':
+      case 'COMMENT_UPDATED':
+      case 'COMMENT_DELETED':
+      case 'ANNOTATION_ADDED':
+      case 'ANNOTATION_UPDATED':
+      case 'ANNOTATION_DELETED':
+        return (payload as Extract<DawCommandPayload, { segmentId?: string | null }>).segmentId ?? null;
+      default:
+        return null;
+    }
+  }
+
+  function resolveCommitAffectedTimeRange(
+    operationType: Exclude<DawOperationType, 'ASSET_ADDED'>,
+    payload: DawCommandPayload,
+  ): DawOperationAffectedTimeRange | null {
+    switch (operationType) {
+      case 'TRACK_OFFSET_UPDATED':
+        return null;
+      case 'SEGMENT_SPLIT':
+        {
+          const split = payload as Extract<
+            DawCommandPayload,
+            { segmentStartMs: number; segmentEndMs: number }
+          >;
+          return { startMs: split.segmentStartMs, endMs: split.segmentEndMs };
+        }
+      case 'SEGMENT_MOVED': {
+        const moved = payload as Extract<DawCommandPayload, { trackVersionId: string; segmentId: string }>;
+        const segment = findSegmentById(moved.trackVersionId, moved.segmentId);
+        return segment ? { startMs: segment.timelineStartMs, endMs: segment.timelineEndMs } : null;
+      }
+      case 'SEGMENT_DELETED': {
+        const deleted = payload as Extract<DawCommandPayload, { trackVersionId: string; segmentId: string }>;
+        const segment = findSegmentById(deleted.trackVersionId, deleted.segmentId);
+        return segment ? { startMs: segment.timelineStartMs, endMs: segment.timelineEndMs } : null;
+      }
+      case 'SEGMENT_TRIMMED':
+        {
+          const trimmed = payload as Extract<DawCommandPayload, { to: { startMs: number; endMs: number } }>;
+          return { startMs: trimmed.to.startMs, endMs: trimmed.to.endMs };
+        }
+      case 'SEGMENT_MERGED':
+        {
+          const merged = payload as Extract<
+            DawCommandPayload,
+            { mergedSegment: { timelineStartMs?: number | null; startMs: number; endMs: number } }
+          >;
+          return {
+            startMs: merged.mergedSegment.timelineStartMs ?? merged.mergedSegment.startMs,
+            endMs:
+              (merged.mergedSegment.timelineStartMs ?? merged.mergedSegment.startMs) +
+              (merged.mergedSegment.endMs - merged.mergedSegment.startMs),
+          };
+        }
+      case 'CROSSFADE_SET': {
+        const crossfade = payload as Extract<
+          DawCommandPayload,
+          { trackVersionId: string; leftSegmentId: string; rightSegmentId: string }
+        >;
+        const left = findSegmentById(crossfade.trackVersionId, crossfade.leftSegmentId);
+        const right = findSegmentById(crossfade.trackVersionId, crossfade.rightSegmentId);
+        if (!left && !right) return null;
+        const startMs = Math.min(left?.timelineStartMs ?? Number.POSITIVE_INFINITY, right?.timelineStartMs ?? Number.POSITIVE_INFINITY);
+        const endMs = Math.max(left?.timelineEndMs ?? Number.NEGATIVE_INFINITY, right?.timelineEndMs ?? Number.NEGATIVE_INFINITY);
+        return Number.isFinite(startMs) && Number.isFinite(endMs) ? { startMs, endMs } : null;
+      }
+      case 'COMMENT_ADDED':
+      case 'COMMENT_UPDATED':
+      case 'COMMENT_DELETED':
+      case 'ANNOTATION_ADDED':
+      case 'ANNOTATION_UPDATED':
+      case 'ANNOTATION_DELETED': {
+        const note = payload as Extract<DawCommandPayload, { startTimeMs: number | null; endTimeMs: number | null }>;
+        if (note.startTimeMs === null && note.endTimeMs === null) return null;
+        const startMs = note.startTimeMs ?? note.endTimeMs ?? 0;
+        const endMs = note.endTimeMs ?? note.startTimeMs ?? startMs;
+        return { startMs, endMs };
+      }
+      default:
+        return null;
+    }
+  }
+
+  function buildCommitRequest(
+    operationType: Exclude<DawOperationType, 'ASSET_ADDED'>,
+    payload: DawCommandPayload,
+    overrides: Partial<DawOperationCommitMetadata> = {},
+  ): DawOperationCommitRequest {
+    const idempotencyKey = overrides.idempotencyKey ?? crypto.randomUUID();
+    const clientOperationId = overrides.clientOperationId ?? crypto.randomUUID();
+
+    return {
+      demoId,
+      operationType,
+      payload,
+      baseSnapshotId: overrides.baseSnapshotId ?? selectedVersionId,
+      baseOperationSeq: overrides.baseOperationSeq ?? projectSyncState.lastSyncedOperationSeq,
+      targetTrackId: overrides.targetTrackId ?? resolveCommitTargetTrackId(operationType, payload),
+      targetSegmentId: overrides.targetSegmentId ?? resolveCommitTargetSegmentId(operationType, payload),
+      affectedTimeRange: overrides.affectedTimeRange ?? resolveCommitAffectedTimeRange(operationType, payload),
+      idempotencyKey,
+      clientOperationId,
+      checkpointTailOperations: overrides.checkpointTailOperations,
+    } as DawOperationCommitRequest;
+  }
+
+  async function commitProjectOperation(
+    operationType: Exclude<DawOperationType, 'ASSET_ADDED'>,
+    payload: DawCommandPayload,
+  ): Promise<DawProjectOperationRecord> {
+    return projectSyncEngine.commitOperation(buildCommitRequest(operationType, payload));
+  }
+
+  async function commitEditingOperation(
+    request: DawOperationCommitRequest,
+  ) {
+    return projectSyncEngine.commitOperation(
+      buildCommitRequest(request.operationType, request.payload, request),
+    );
   }
 
   function getTimelineTimeFromPointer(element: HTMLElement, clientX: number, timelineBaseMs = 0) {
@@ -802,57 +1383,90 @@ export function DemoDawClient({
   }
 
   async function splitSegmentOnTrack(track: DawTrack, segment: TrackTimelineSegment, splitTimeMs: number) {
-    const body: SplitSegmentRequest = {
-      segmentId: segment.isImplicit ? undefined : segment.id,
-      segmentStartMs: segment.startMs,
-      segmentEndMs: segment.endMs,
-      splitTimeMs,
-    };
+    const splitOperation = audioEditingEngine.splitSegment(track.trackVersionId, segment, splitTimeMs);
+    const result = await commitEditingOperation(splitOperation.request);
 
-    const response = await fetch(`/api/tracks/versions/${track.trackVersionId}/segments/split`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
-    });
+    const payload = result.payload as Partial<{
+      trackVersionId: string;
+      sourceSegmentId: string | null;
+      leftSegment: {
+        id: string;
+        trackVersionId: string;
+        startMs: number;
+        endMs: number;
+        timelineStartMs: number;
+        gainDb: number;
+        fadeInMs: number;
+        fadeOutMs: number;
+        isMuted: boolean;
+        position: number;
+      };
+      rightSegment: {
+        id: string;
+        trackVersionId: string;
+        startMs: number;
+        endMs: number;
+        timelineStartMs: number;
+        gainDb: number;
+        fadeInMs: number;
+        fadeOutMs: number;
+        isMuted: boolean;
+        position: number;
+      };
+    }>;
 
-    const data = (await response.json()) as SplitSegmentResponse | { error?: string };
-    if (!response.ok) {
-      const errorData = data as { error?: string };
-      throw new Error(errorData.error ?? 'Could not split clip');
-    }
-
-    const payload = data as SplitSegmentResponse;
     const currentSegments = getDisplayedTrackSegments(track);
+    const splitResult = splitOperation.split;
+    const leftId = payload.leftSegment?.id ?? crypto.randomUUID();
+    const rightId = payload.rightSegment?.id ?? crypto.randomUUID();
+    const leftTimelineStartMs = payload.leftSegment?.timelineStartMs ?? segment.timelineStartMs;
+    const rightTimelineStartMs = payload.rightSegment?.timelineStartMs ?? segment.timelineStartMs;
     const nextSegments = currentSegments
       .filter((current) => current.id !== segment.id)
       .concat([
         {
-          ...payload.leftSegment,
+          id: leftId,
+          trackVersionId: track.trackVersionId,
           isImplicit: false,
-          sourceStartMs: payload.leftSegment.startMs,
-          sourceEndMs: payload.leftSegment.endMs,
-          durationMs: payload.leftSegment.endMs - payload.leftSegment.startMs,
+          sourceStartMs: splitResult.leftSegment.startMs,
+          sourceEndMs: splitResult.leftSegment.endMs,
+          durationMs: splitResult.leftSegment.endMs - splitResult.leftSegment.startMs,
+          startMs: splitResult.leftSegment.startMs,
+          endMs: splitResult.leftSegment.endMs,
+          timelineStartMs: leftTimelineStartMs,
           timelineEndMs:
-            payload.leftSegment.timelineStartMs +
-            (payload.leftSegment.endMs - payload.leftSegment.startMs),
+            leftTimelineStartMs +
+            (splitResult.leftSegment.endMs - splitResult.leftSegment.startMs),
+          gainDb: payload.leftSegment?.gainDb ?? segment.gainDb,
+          fadeInMs: payload.leftSegment?.fadeInMs ?? segment.fadeInMs,
+          fadeOutMs: payload.leftSegment?.fadeOutMs ?? segment.fadeOutMs,
+          isMuted: payload.leftSegment?.isMuted ?? segment.isMuted,
+          position: payload.leftSegment?.position ?? segment.position,
         },
         {
-          ...payload.rightSegment,
+          id: rightId,
+          trackVersionId: track.trackVersionId,
           isImplicit: false,
-          sourceStartMs: payload.rightSegment.startMs,
-          sourceEndMs: payload.rightSegment.endMs,
-          durationMs: payload.rightSegment.endMs - payload.rightSegment.startMs,
+          sourceStartMs: splitResult.rightSegment.startMs,
+          sourceEndMs: splitResult.rightSegment.endMs,
+          durationMs: splitResult.rightSegment.endMs - splitResult.rightSegment.startMs,
+          startMs: splitResult.rightSegment.startMs,
+          endMs: splitResult.rightSegment.endMs,
+          timelineStartMs: rightTimelineStartMs,
           timelineEndMs:
-            payload.rightSegment.timelineStartMs +
-            (payload.rightSegment.endMs - payload.rightSegment.startMs),
+            rightTimelineStartMs +
+            (splitResult.rightSegment.endMs - splitResult.rightSegment.startMs),
+          gainDb: payload.rightSegment?.gainDb ?? segment.gainDb,
+          fadeInMs: payload.rightSegment?.fadeInMs ?? segment.fadeInMs,
+          fadeOutMs: payload.rightSegment?.fadeOutMs ?? segment.fadeOutMs,
+          isMuted: payload.rightSegment?.isMuted ?? segment.isMuted,
+          position: payload.rightSegment?.position ?? segment.position + 1,
         },
       ])
       .sort((a, b) => a.position - b.position);
 
     setTrackSegmentLayout(track.trackVersionId, nextSegments);
-    setSelectedSegmentId(payload.leftSegment.id);
+    setSelectedSegmentId(leftId);
     setSplitError(null);
     pushTimelineHistory({
       kind: 'cut',
@@ -865,12 +1479,7 @@ export function DemoDawClient({
 
   function toggleMute(trackVersionId: string) {
     const willMute = !mutedTrackVersionIds.has(trackVersionId);
-    const track = selectedTracks.find((currentTrack) => currentTrack.trackVersionId === trackVersionId);
-    if (track) {
-      getRenderableTrackSegments(track).forEach((segment) => {
-        segmentRefs.current[`${trackVersionId}:${segment.id}`]?.setMuted(willMute);
-      });
-    }
+    playbackEngine.setTrackMuted(trackVersionId, willMute);
     setMutedTrackVersionIds((prev) => {
       const next = new Set(prev);
       if (willMute) next.add(trackVersionId);
@@ -879,7 +1488,28 @@ export function DemoDawClient({
     });
   }
 
+  function toggleSolo(trackVersionId: string) {
+    const willSolo = !soloTrackVersionIds.has(trackVersionId);
+    playbackEngine.setTrackSolo(trackVersionId, willSolo);
+    setSoloTrackVersionIds((prev) => {
+      const next = new Set(prev);
+      if (willSolo) next.add(trackVersionId);
+      else next.delete(trackVersionId);
+      return next;
+    });
+  }
+
+  function setTrackGain(trackVersionId: string, gain: number) {
+    const normalizedGain = Math.max(0, Math.min(2, gain));
+    playbackEngine.setTrackGain(trackVersionId, normalizedGain);
+    setGainByTrackVersionId((prev) => ({
+      ...prev,
+      [trackVersionId]: normalizedGain,
+    }));
+  }
+
   function beginTrackDrag(track: DawTrack, startX: number) {
+    setSelectedTrackVersionId(track.trackVersionId);
     dragRef.current = {
       kind: 'track',
       trackVersionId: track.trackVersionId,
@@ -889,6 +1519,7 @@ export function DemoDawClient({
   }
 
   function beginSegmentDrag(track: DawTrack, segment: TrackTimelineSegment, startX: number) {
+    setSelectedTrackVersionId(track.trackVersionId);
     dragRef.current = {
       kind: 'segment',
       trackVersionId: track.trackVersionId,
@@ -928,17 +1559,7 @@ export function DemoDawClient({
     if (finalOffset === drag.originalStartOffsetMs) return;
 
     try {
-      const res = await fetch(`/api/tracks/versions/${track.trackVersionId}/offset`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ startOffsetMs: finalOffset }),
-      });
-      if (!res.ok) {
-        const data = (await res.json()) as { error?: string };
-        updateTrackDrag(track.trackVersionId, drag.originalStartOffsetMs);
-        setDragError(data.error ?? 'Could not save track position');
-        return;
-      }
+      await commitEditingOperation(audioEditingEngine.moveTrack(track.trackVersionId, finalOffset));
 
       pushTimelineHistory({
         kind: 'move-track',
@@ -946,9 +1567,9 @@ export function DemoDawClient({
         previousStartOffsetMs: drag.originalStartOffsetMs,
         nextStartOffsetMs: finalOffset,
       });
-    } catch {
+    } catch (error) {
       updateTrackDrag(track.trackVersionId, drag.originalStartOffsetMs);
-      setDragError('Something went wrong saving track position');
+      setDragError(error instanceof Error ? error.message : 'Something went wrong saving track position');
     }
   }
 
@@ -965,40 +1586,24 @@ export function DemoDawClient({
 
     if (currentSegment?.isImplicit) {
       try {
-        const res = await fetch(`/api/tracks/versions/${track.trackVersionId}/offset`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ startOffsetMs: finalTimelineStartMs }),
-        });
-        if (!res.ok) {
-          const data = (await res.json()) as { error?: string };
-          updateTrackDrag(track.trackVersionId, drag.originalTimelineStartMs);
-          setDragError(data.error ?? 'Could not save track position');
-          return;
-        }
+        await commitEditingOperation(audioEditingEngine.moveTrack(track.trackVersionId, finalTimelineStartMs));
         pushTimelineHistory({
           kind: 'move-track',
           trackVersionId: track.trackVersionId,
           previousStartOffsetMs: drag.originalTimelineStartMs,
           nextStartOffsetMs: finalTimelineStartMs,
         });
-      } catch {
+      } catch (error) {
         updateTrackDrag(track.trackVersionId, drag.originalTimelineStartMs);
-        setDragError('Something went wrong saving track position');
+        setDragError(error instanceof Error ? error.message : 'Something went wrong saving track position');
       }
       return;
     }
 
     try {
-      const res = await fetch(`/api/tracks/versions/${track.trackVersionId}/segments/${drag.segmentId}/position`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ timelineStartMs: finalTimelineStartMs }),
-      });
-      const data = (await res.json()) as { error?: string; segment?: { timelineStartMs?: number } };
-      if (!res.ok) {
-        throw new Error(data.error ?? 'Could not move segment');
-      }
+      await commitEditingOperation(
+        audioEditingEngine.moveSegment(track.trackVersionId, drag.segmentId, finalTimelineStartMs),
+      );
       pushTimelineHistory({
         kind: 'move-segment',
         trackVersionId: track.trackVersionId,
@@ -1030,6 +1635,7 @@ export function DemoDawClient({
   cancelTimelineDragRef.current = cancelTimelineDrag;
 
   function handleTrackPointerDown(e: React.PointerEvent<HTMLDivElement>, track: DawTrack) {
+    setSelectedTrackVersionId(track.trackVersionId);
     if (timelineTool !== 'select') return;
 
     const visibleSegments = getRenderableTrackSegments(track);
@@ -1083,6 +1689,7 @@ export function DemoDawClient({
     track: DawTrack,
     segment: TrackTimelineSegment,
   ) {
+    setSelectedTrackVersionId(track.trackVersionId);
     if (timelineTool !== 'select') return;
     e.stopPropagation();
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -1211,20 +1818,13 @@ export function DemoDawClient({
     }
     setRenameState((prev) => (prev ? { ...prev, saving: true, error: null } : null));
     try {
-      const res = await fetch(`/api/tracks/${renameState.trackId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: trimmed }),
-      });
-      if (!res.ok) {
-        const data = (await res.json()) as { error?: string };
-        setRenameState((prev) => (prev ? { ...prev, saving: false, error: data.error ?? 'Could not rename track' } : null));
-        return;
-      }
+      await commitEditingOperation(audioEditingEngine.renameTrack(renameState.trackId, trimmed));
       setRenameState(null);
       router.refresh();
-    } catch {
-      setRenameState((prev) => (prev ? { ...prev, saving: false, error: 'Something went wrong' } : null));
+    } catch (error) {
+      setRenameState((prev) =>
+        prev ? { ...prev, saving: false, error: error instanceof Error ? error.message : 'Something went wrong' } : null,
+      );
     }
   }
 
@@ -1232,114 +1832,230 @@ export function DemoDawClient({
     setRenameState(null);
   }
 
-  function getComposerState(trackId: string) {
-    return commentComposerState[trackId] ?? {
-      trackId,
-      open: false,
-      value: '',
-      submitting: false,
-      error: null,
-    };
+  function buildCommentOperationPayload(input: {
+    trackId: string | null;
+    body: string;
+    startTimeMs: number;
+    endTimeMs?: number | null;
+    segmentId?: string | null;
+    resolved?: boolean;
+  }) {
+    return {
+      commentId: crypto.randomUUID(),
+      demoId,
+      trackId: input.trackId,
+      segmentId: input.segmentId ?? null,
+      startTimeMs: input.startTimeMs,
+      endTimeMs: input.endTimeMs ?? null,
+      body: input.body,
+      createdBy: currentUserId,
+      resolved: input.resolved ?? false,
+    } as const;
   }
 
-  function updateComposerState(trackId: string, next: Partial<CommentComposerState>) {
-    setCommentComposerState((prev) => {
-      const current = prev[trackId] ?? {
-        trackId,
-        open: false,
-        value: '',
-        submitting: false,
-        error: null,
-      };
-      return {
-        ...prev,
-        [trackId]: {
-          ...current,
-          ...next,
-        },
-      };
-    });
+  function getActiveTrackForSelection() {
+    return (
+      selectedTracks.find((track) => track.trackVersionId === selectedTrackVersionId) ?? selectedTrack ?? null
+    );
   }
 
-  function openCommentComposer(trackId: string) {
-    updateComposerState(trackId, { open: true, error: null });
+  function openAddCommentModal() {
+    const activeTrack = getActiveTrackForSelection();
+    setAddCommentTrackId(activeTrack?.trackId ?? null);
+    setAddCommentTimestampMs(currentTimeMs);
+    setAddCommentBody('');
+    setAddCommentError(null);
+    setAddCommentModalOpen(true);
   }
 
-  function closeCommentComposer(trackId: string) {
-    updateComposerState(trackId, { open: false, value: '', error: null });
+  function closeAddCommentModal() {
+    setAddCommentModalOpen(false);
+    setAddCommentBody('');
+    setAddCommentError(null);
+    setAddCommentSubmitting(false);
   }
 
-  async function submitComment(track: DawTrack) {
-    const composer = getComposerState(track.trackId);
-    const body = composer.value.trim();
-
+  async function submitAddComment() {
+    const body = addCommentBody.trim();
     if (!body) {
-      updateComposerState(track.trackId, { error: 'Comment body cannot be empty' });
+      setAddCommentError('Comment body cannot be empty.');
       return;
     }
 
-    updateComposerState(track.trackId, { submitting: true, error: null });
+    setAddCommentSubmitting(true);
+    setAddCommentError(null);
 
     try {
-      const payload: CreateDemoCommentRequest = {
-        body,
-        trackId: track.trackId,
-        timestampMs: currentTimeMs,
-      };
-
-      const res = await fetch(`/api/demos/${demoId}/comments`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
+      await commitEditingOperation({
+        demoId,
+        operationType: 'COMMENT_ADDED',
+        payload: buildCommentOperationPayload({
+          trackId: addCommentTrackId,
+          segmentId: null,
+          startTimeMs: addCommentTimestampMs,
+          endTimeMs: null,
+          body,
+          resolved: false,
+        }),
       });
-
-      const data = (await res.json()) as SharedDemoComment | { error?: string };
-
-      if (!res.ok) {
-        updateComposerState(track.trackId, {
-          submitting: false,
-          error: 'error' in data ? data.error ?? 'Could not save comment' : 'Could not save comment',
-        });
-        return;
-      }
-
-      setComments((prev) => [...prev, data as SharedDemoComment]);
-      closeCommentComposer(track.trackId);
-    } catch {
-      updateComposerState(track.trackId, {
-        submitting: false,
-        error: 'Something went wrong while saving the comment',
-      });
+      closeAddCommentModal();
+    } catch (error) {
+      setAddCommentError(error instanceof Error ? error.message : 'Could not add comment');
     } finally {
-      updateComposerState(track.trackId, { submitting: false });
+      setAddCommentSubmitting(false);
     }
   }
 
-  function handleRecordingStreamReady(stream: MediaStream, startOffsetMs: number) {
+  function getSelectedSegment(track = getActiveTrackForSelection()) {
+    if (!track || !selectedSegmentId) return null;
+    return getDisplayedTrackSegments(track).find((segment) => segment.id === selectedSegmentId) ?? null;
+  }
+
+  async function handleTrimSelectedSegment() {
+    const track = getActiveTrackForSelection();
+    if (!track) return;
+    const segment = getSelectedSegment(track);
+    if (!segment || segment.isImplicit) return;
+
+    const targetEndMs = Math.max(segment.timelineStartMs + 10, currentTimeMs);
+    if (targetEndMs <= segment.timelineStartMs || targetEndMs >= segment.timelineEndMs) {
+      setDragError('Move the playhead inside the clip to trim it.');
+      return;
+    }
+
+    try {
+      await commitEditingOperation(
+        audioEditingEngine.trimSegment({
+          trackVersionId: track.trackVersionId,
+          segmentId: segment.id,
+          from: {
+            startMs: segment.sourceStartMs,
+            endMs: segment.sourceEndMs,
+          },
+          to: {
+            startMs: segment.sourceStartMs,
+            endMs: segment.sourceStartMs + (targetEndMs - segment.timelineStartMs),
+          },
+        }),
+      );
+    } catch (error) {
+      setDragError(error instanceof Error ? error.message : 'Could not trim clip');
+    }
+  }
+
+  async function handleMergeSelectedSegments() {
+    const track = getActiveTrackForSelection();
+    if (!track) return;
+    const segments = getDisplayedTrackSegments(track).filter((segment) => !segment.isImplicit);
+    const selectedIndex = segments.findIndex((segment) => segment.id === selectedSegmentId);
+    if (selectedIndex < 0 || segments.length < 2) return;
+
+    const left = segments[Math.max(0, selectedIndex - 1)];
+    const right = segments[selectedIndex + 1] ?? segments[selectedIndex];
+    if (!left || !right || left.id === right.id) return;
+
+    const mergedStartMs = Math.min(left.timelineStartMs, right.timelineStartMs);
+    const mergedEndMs = Math.max(left.timelineEndMs, right.timelineEndMs);
+    const mergedSegment = {
+      id: crypto.randomUUID(),
+      trackVersionId: track.trackVersionId,
+      startMs: Math.min(left.startMs, right.startMs),
+      endMs: Math.max(left.endMs, right.endMs),
+      timelineStartMs: mergedStartMs,
+      timelineEndMs: mergedEndMs,
+      gainDb: Math.max(left.gainDb, right.gainDb),
+      fadeInMs: left.fadeInMs,
+      fadeOutMs: right.fadeOutMs,
+      isMuted: left.isMuted || right.isMuted,
+      position: left.position,
+      crossfadeInMs: left.crossfadeInMs ?? null,
+      crossfadeOutMs: right.crossfadeOutMs ?? null,
+      crossfadeCurve: left.crossfadeCurve ?? right.crossfadeCurve ?? null,
+    };
+
+    try {
+      await commitEditingOperation(
+        audioEditingEngine.mergeSegments({
+          trackVersionId: track.trackVersionId,
+          segmentIds: [left.id, right.id],
+          mergedSegment,
+        }),
+      );
+    } catch (error) {
+      setDragError(error instanceof Error ? error.message : 'Could not merge clips');
+    }
+  }
+
+  async function handleCrossfadeSelectedSegments() {
+    const track = getActiveTrackForSelection();
+    if (!track) return;
+    const segments = getDisplayedTrackSegments(track).filter((segment) => !segment.isImplicit);
+    const selectedIndex = segments.findIndex((segment) => segment.id === selectedSegmentId);
+    if (selectedIndex < 0 || segments.length < 2) return;
+    const left = segments[selectedIndex];
+    const right = segments[selectedIndex + 1];
+    if (!left || !right) return;
+
+    try {
+      await commitEditingOperation(
+        audioEditingEngine.setCrossfade({
+          trackVersionId: track.trackVersionId,
+          leftSegmentId: left.id,
+          rightSegmentId: right.id,
+          crossfadeInMs: 250,
+          crossfadeOutMs: 250,
+          curve: 'linear',
+        }),
+      );
+    } catch (error) {
+      setDragError(error instanceof Error ? error.message : 'Could not set crossfade');
+    }
+  }
+
+  function toggleRecordArm(trackVersionId: string) {
+    setRecordArmedTrackVersionId((prev) => (prev === trackVersionId ? null : trackVersionId));
+  }
+
+  async function handleAddTrack() {
+    const silentBlob = createSilentWavBlob();
+    const silentFile = new File([silentBlob], `empty-track-${Date.now()}.wav`, { type: 'audio/wav' });
+    await performUpload(silentFile, 'Empty Track', 'uploadUnchanged');
+  }
+
+  function handleRecordingStreamReady(
+    stream: MediaStream,
+    startOffsetMs: number,
+    target: ResolvedRecordingTarget,
+  ) {
     isLiveRecordingRef.current = true;
     setRecordingStream(stream);
     setTemporaryRecordingTrack({
       id: `rec-${Date.now()}`,
-      name: '',
+      name: target.trackName,
+      targetTrackId: target.trackId,
+      targetTrackVersionId: target.trackVersionId,
+      targetTrackName: target.trackName,
       startOffsetMs,
+      startedAtPlayheadMs: startOffsetMs,
       durationMs: 0,
       status: 'recording',
+      syncStatus: 'idle',
+      peaks: [],
     });
     if (clockRef.current) {
       clearInterval(clockRef.current);
       clockRef.current = null;
     }
-    Object.values(segmentRefs.current).forEach((clip) => clip?.pause());
     playTransport(startOffsetMs);
+    void publishPresence('online');
   }
 
   function handleRecordingDurationUpdate(durationMs: number) {
     setTemporaryRecordingTrack((prev) => (prev ? { ...prev, durationMs } : prev));
   }
 
-  function handleRecordingStopped(blob: Blob, previewUrl: string, durationMs: number) {
+  async function handleRecordingStopped(blob: Blob, durationMs: number) {
+    const previewUrl = ingestEngine.createObjectUrl(blob);
     recordingPreviewUrlRef.current = previewUrl;
     isLiveRecordingRef.current = false;
     setRecordingStream(null);
@@ -1351,8 +2067,28 @@ export function DemoDawClient({
       behavior: 'auto',
     });
     setTemporaryRecordingTrack((prev) =>
-      prev ? { ...prev, status: 'preview', blob, previewUrl, durationMs } : prev,
+      prev
+        ? {
+            ...prev,
+            status: 'preview',
+            syncStatus: 'idle',
+            blob,
+            previewUrl,
+            durationMs,
+            peaks: [],
+          }
+        : prev,
     );
+    void publishPresence('online');
+
+    try {
+      const peaks = await ingestEngine.generateLocalPeaks(blob);
+      setTemporaryRecordingTrack((prev) =>
+        prev && prev.previewUrl === previewUrl ? { ...prev, peaks } : prev,
+      );
+    } catch {
+      // Peak generation is best effort; playback still works via the preview URL.
+    }
   }
 
   function handleRecordingNameChange(name: string) {
@@ -1367,50 +2103,72 @@ export function DemoDawClient({
 
   function handleDiscardRecording() {
     if (recordingPreviewUrlRef.current) {
-      URL.revokeObjectURL(recordingPreviewUrlRef.current);
+      ingestEngine.revokeObjectUrl(recordingPreviewUrlRef.current);
       recordingPreviewUrlRef.current = null;
     }
     isLiveRecordingRef.current = false;
     setTemporaryRecordingTrack(null);
     setRecordingStream(null);
+    void publishPresence('online');
   }
 
   async function handleSaveRecording() {
     const track = temporaryRecordingTrack;
-    if (!track?.blob) return;
+    if (!track?.blob || !track.targetTrackId) {
+      setTemporaryRecordingTrack((prev) =>
+        prev ? { ...prev, status: 'error', syncStatus: 'error', error: 'Arm a track before saving.' } : prev,
+      );
+      return;
+    }
 
     isLiveRecordingRef.current = false;
     setTemporaryRecordingTrack((prev) =>
-      prev ? { ...prev, status: 'uploading', error: undefined } : prev,
+      prev ? { ...prev, status: 'uploading', syncStatus: 'uploading', error: undefined } : prev,
     );
+    void publishPresence('online');
 
     try {
-      const ext = track.blob.type.includes('ogg') ? 'ogg' : track.blob.type.includes('mp4') ? 'mp4' : 'webm';
-      const file = new File([track.blob], `recording-${Date.now()}.${ext}`, { type: track.blob.type });
-      const formData = new FormData();
-      formData.append('demoId', demoId);
-      formData.append('sourceVersionId', selectedVersionId);
-      if (track.name.trim()) formData.append('name', track.name.trim());
-      formData.append('file', file);
+      const data = await ingestEngine.uploadRecordedBlob({
+        demoId,
+        projectId,
+        name: track.name,
+        sourceVersionId: selectedVersionId,
+        trackId: track.targetTrackId,
+        startOffsetMs: track.startOffsetMs,
+        timingChoice: 'uploadUnchanged',
+        blob: track.blob,
+      });
 
-      const res = await fetch('/api/tracks/upload', { method: 'POST', body: formData });
-      const data = (await res.json()) as { error?: string };
-      if (!res.ok) {
-        setTemporaryRecordingTrack((prev) =>
-          prev ? { ...prev, status: 'error', error: data.error ?? 'Could not save recording' } : prev,
-        );
-        return;
-      }
-
-      if (recordingPreviewUrlRef.current) {
-        URL.revokeObjectURL(recordingPreviewUrlRef.current);
-        recordingPreviewUrlRef.current = null;
-      }
-      setTemporaryRecordingTrack(null);
-      router.refresh();
-    } catch {
       setTemporaryRecordingTrack((prev) =>
-        prev ? { ...prev, status: 'error', error: 'Something went wrong while saving.' } : prev,
+        prev
+          ? {
+              ...prev,
+              status: 'preview',
+              syncStatus: 'complete',
+              serverAssetId: data.assetId,
+              serverTrackVersionId: data.trackVersionId,
+              serverDemoVersionId: data.demoVersionId,
+            }
+          : prev,
+      );
+      setSelectedVersionId(data.demoVersionId);
+      if ('processingJobIds' in data && data.processingJobIds.length > 0) {
+        setProcessingStartedAt(Date.now());
+        setProcessingJobIds(data.processingJobIds);
+        setProcessingMessage('Processing recording in the background...');
+      } else {
+        router.refresh();
+      }
+    } catch (error) {
+      setTemporaryRecordingTrack((prev) =>
+        prev
+          ? {
+              ...prev,
+              status: 'error',
+              syncStatus: 'error',
+              error: error instanceof Error ? error.message : 'Something went wrong while saving.',
+            }
+          : prev,
       );
     }
   }
@@ -1420,21 +2178,17 @@ export function DemoDawClient({
     setUploadError(null);
     setProcessingMessage(null);
     try {
-      const formData = new FormData();
-      formData.append('demoId', demoId);
-      formData.append('sourceVersionId', selectedVersionId);
-      if (name.trim()) formData.append('name', name.trim());
-      formData.append('file', file);
-      formData.append('timingChoice', timingChoice);
-
-      const response = await fetch('/api/tracks/upload', { method: 'POST', body: formData });
-      const data = (await response.json()) as UploadTrackResponse | { error?: string };
-      if (!response.ok) {
-        setUploadError('error' in data ? data.error ?? 'Could not upload track' : 'Could not upload track');
-        return;
-      }
+      const data = await ingestEngine.uploadAudioFile({
+        demoId,
+        projectId,
+        name,
+        sourceVersionId: selectedVersionId,
+        timingChoice,
+        file,
+      });
       setUploadName('');
       setUploadFile(null);
+      setSelectedVersionId(data.demoVersionId);
       if ('processingJobIds' in data && data.processingJobIds.length > 0) {
         setProcessingStartedAt(Date.now());
         setProcessingJobIds(data.processingJobIds);
@@ -1442,8 +2196,8 @@ export function DemoDawClient({
       } else {
         router.refresh();
       }
-    } catch {
-      setUploadError('Something went wrong while uploading. Please try again.');
+    } catch (error) {
+      setUploadError(error instanceof Error ? error.message : 'Something went wrong while uploading. Please try again.');
     } finally {
       setIsUploading(false);
     }
@@ -1510,29 +2264,23 @@ export function DemoDawClient({
 
     setTempoAnalysisPrompt((prev) => (prev ? { ...prev, applying: true, error: null } : prev));
     try {
-      const res = await fetch(`/api/versions/${selectedVersionId}`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          tempoBpm,
-          tempoSource: 'ANALYZED',
-        }),
-      });
-      const data = (await res.json()) as { error?: string };
-      if (!res.ok) {
-        setTempoAnalysisPrompt((prev) =>
-          prev ? { ...prev, applying: false, error: data.error ?? 'Could not set project tempo' } : prev,
-        );
-        return;
-      }
+      await commitProjectOperation('VERSION_TIMING_UPDATED', {
+        versionId: selectedVersionId,
+        tempoBpm,
+        tempoSource: 'ANALYZED',
+      } satisfies DawOperationPayloadVersionTimingUpdated);
       setTempoAnalysisPrompt(null);
       setProcessingMessage(`Project tempo set to ${tempoBpm.toFixed(1)} BPM.`);
       router.refresh();
-    } catch {
+    } catch (error) {
       setTempoAnalysisPrompt((prev) =>
-        prev ? { ...prev, applying: false, error: 'Something went wrong while updating project tempo.' } : prev,
+        prev
+          ? {
+              ...prev,
+              applying: false,
+              error: error instanceof Error ? error.message : 'Something went wrong while updating project tempo.',
+            }
+          : prev,
       );
     }
   }
@@ -1570,6 +2318,13 @@ export function DemoDawClient({
     setUploadModalState({ open: false, file: null, name: '', choice: 'keepProjectTempo' });
   }
 
+  function handleUploadFilePicked(file: File | null) {
+    setUploadFile(file);
+    if (file && !uploadName.trim()) {
+      setUploadName(file.name.replace(/\.[^.]+$/, ''));
+    }
+  }
+
   async function saveTimingSettings() {
     const tempoInput = timingFormState.tempoBpm.trim();
     const tempoBpm = tempoInput ? Number(tempoInput) : null;
@@ -1594,236 +2349,532 @@ export function DemoDawClient({
 
     setTimingFormState((prev) => ({ ...prev, saving: true, error: null }));
     try {
-      const res = await fetch(`/api/versions/${selectedVersionId}`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          tempoBpm: tempoInput ? tempoBpm : null,
-          timeSignatureNum: Math.floor(timeSignatureNum),
-          timeSignatureDen: Math.floor(timeSignatureDen),
-          musicalKey: musicalKey || null,
-          tempoSource: 'MANUAL',
-          keySource: 'MANUAL',
-        }),
-      });
-      const data = (await res.json()) as { error?: string };
-      if (!res.ok) {
-        setTimingFormState((prev) => ({ ...prev, saving: false, error: data.error ?? 'Could not save timing' }));
-        return;
-      }
+      await commitProjectOperation('VERSION_TIMING_UPDATED', {
+        versionId: selectedVersionId,
+        tempoBpm: tempoInput ? tempoBpm : null,
+        timeSignatureNum: Math.floor(timeSignatureNum),
+        timeSignatureDen: Math.floor(timeSignatureDen),
+        musicalKey: musicalKey || null,
+        tempoSource: 'MANUAL',
+        keySource: 'MANUAL',
+      } satisfies DawOperationPayloadVersionTimingUpdated);
       router.refresh();
-    } catch {
-      setTimingFormState((prev) => ({ ...prev, saving: false, error: 'Something went wrong while saving timing' }));
+    } catch (error) {
+      setTimingFormState((prev) =>
+        prev
+          ? {
+              ...prev,
+              saving: false,
+              error: error instanceof Error ? error.message : 'Something went wrong while saving timing',
+            }
+          : prev,
+      );
       return;
     }
     setTimingFormState((prev) => ({ ...prev, saving: false, error: null }));
   }
 
   const hasTimelineContent = selectedTracks.length > 0 || temporaryRecordingTrack !== null;
+  const selectedTrackSegments = selectedTrack
+    ? getDisplayedTrackSegments(selectedTrack).filter((segment) => !segment.isImplicit)
+    : [];
+  const selectedTrackSegmentIndex = selectedTrackSegments.findIndex((segment) => segment.id === selectedSegmentId);
+  const canMergeSelectedSegments = selectedTrackSegmentIndex >= 0 && selectedTrackSegments.length > 1;
+  const canCrossfadeSelectedSegments =
+    selectedTrackSegmentIndex >= 0 && selectedTrackSegmentIndex < selectedTrackSegments.length - 1;
 
   return (
-    <div className="flex flex-col gap-4">
-      <div>
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <Link
-              href={`/groups/${groupSlug}/projects/${projectSlug}`}
-              className="inline-flex rounded-md border border-gray-700 px-3 py-1.5 text-sm text-gray-200 hover:bg-gray-800"
+    <div className="min-h-screen bg-slate-950 text-slate-100">
+      <div className="mx-auto flex min-h-screen max-w-[1760px] flex-col gap-4 px-4 py-4">
+        <header className="flex flex-wrap items-start justify-between gap-4">
+          <div className="flex items-start gap-4">
+            <button
+              type="button"
+              onClick={() => {
+                if (typeof window !== 'undefined' && window.history.length > 1) {
+                  router.back();
+                } else {
+                  router.push(`/groups/${groupSlug}/projects/${projectSlug}`);
+                }
+              }}
+              className="mt-1 inline-flex h-10 items-center justify-center rounded-full border border-slate-700 bg-slate-950 px-4 text-sm font-semibold text-slate-100 hover:bg-slate-900"
             >
-              Back to Project
-            </Link>
-            <h1 className="mt-3 text-2xl font-bold text-white">{demoName}</h1>
-            {demoDescription ? <p className="mt-1 text-sm text-gray-300">{demoDescription}</p> : null}
+              Back
+            </button>
+            <div>
+              <h1 className="text-3xl font-semibold tracking-tight text-white">{demoName}</h1>
+              {demoDescription ? <p className="mt-1 max-w-3xl text-sm text-slate-300">{demoDescription}</p> : null}
+            </div>
           </div>
 
-          <div
-            className={`rounded-md border px-3 py-2 text-xs ${
-              workerStatus.tone === 'red'
-                ? 'border-red-500/40 bg-red-500/10 text-red-100'
-                : workerStatus.tone === 'amber'
-                  ? 'border-amber-500/40 bg-amber-500/10 text-amber-100'
-                  : workerStatus.tone === 'emerald'
-                    ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-100'
-                    : 'border-gray-700 bg-gray-900 text-gray-300'
-            }`}
-          >
-            <p className="font-medium">{workerStatus.label}</p>
-            <p className="mt-1 max-w-[240px] text-[11px] leading-snug opacity-90">{workerStatus.detail}</p>
+          <div className="flex items-center gap-3 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2">
+            <div className="min-w-0">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Microphone</p>
+              <p className="mt-1 max-w-[220px] truncate text-xs text-slate-300" title={microphoneStatus}>
+                {microphoneStatus}
+              </p>
+            </div>
+            <AudioInputSelector
+              selectedAudioInputDeviceId={selectedAudioInputDeviceId}
+              onSelectedAudioInputDeviceIdChange={setSelectedAudioInputDeviceId}
+              isAudioInputReady={audioInputReady}
+              onAudioInputReadyChange={setAudioInputReady}
+            />
+          </div>
+        </header>
+
+        <div className="grid items-stretch gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
+          <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-slate-700 bg-slate-950/80 shadow-sm shadow-black/20 xl:col-start-1 xl:row-start-1 xl:self-stretch">
+            <DawToolbarTabs activeTab={toolbarTab} onTabChange={setToolbarTab} />
+            <section className="flex-1 border-t border-slate-800 bg-transparent p-4">
+              {toolbarTab === 'edit' ? (
+                <div className="space-y-4">
+                  <div className="flex items-end justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-white">Tools</p>
+                      <p className="text-xs text-slate-400">Edit and timeline actions live here.</p>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTimelineTool('select');
+                        setSplitHover(null);
+                        setSplitError(null);
+                      }}
+                      className={`rounded-md px-3 py-2 text-sm font-medium ${
+                        timelineTool === 'select'
+                          ? 'bg-indigo-600 text-white'
+                          : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
+                      }`}
+                    >
+                      Select
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTimelineTool('split');
+                        setSplitHover(null);
+                        setSplitError(null);
+                      }}
+                      className={`rounded-md px-3 py-2 text-sm font-medium ${
+                        timelineTool === 'split'
+                          ? 'bg-amber-600 text-white'
+                          : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
+                      }`}
+                    >
+                      Cut
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setTimelineTool('select')}
+                      className="rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-slate-300 hover:bg-slate-800"
+                    >
+                      Move
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleTrimSelectedSegment()}
+                      disabled={!selectedTrack || !selectedSegmentId}
+                      title={!selectedTrack || !selectedSegmentId ? 'Select a clip to trim it' : 'Trim the selected clip to the playhead'}
+                      className="rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-slate-300 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Trim
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleMergeSelectedSegments()}
+                      disabled={!canMergeSelectedSegments}
+                      title={!canMergeSelectedSegments ? 'Select a clip with a neighbor to merge' : 'Merge the selected clip with a neighbor'}
+                      className="rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-slate-300 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Merge
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleCrossfadeSelectedSegments()}
+                      disabled={!canCrossfadeSelectedSegments}
+                      title={!canCrossfadeSelectedSegments ? 'Select a clip with a next segment to crossfade' : 'Apply a simple crossfade to the next segment'}
+                      className="rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-slate-300 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Crossfade
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void undoLatestTimelineEditRef.current()}
+                      className="rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-slate-300 hover:bg-slate-800"
+                    >
+                      Undo
+                    </button>
+                    <button
+                      type="button"
+                      disabled
+                      title="Redo is not implemented in this demo yet"
+                      className="rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-slate-500 opacity-60"
+                    >
+                      Redo
+                    </button>
+                    <label className="ml-auto flex items-center gap-2 text-sm text-slate-300">
+                      <span className="uppercase tracking-[0.18em] text-slate-500">Snap</span>
+                      <select
+                        value={snapResolution}
+                        onChange={(e) => setSnapResolution(e.currentTarget.value as SnapResolution)}
+                        className="rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-sm text-white outline-none ring-indigo-500 focus:ring"
+                      >
+                        <option value="off">Off</option>
+                        <option value="bar">Bar</option>
+                        <option value="beat">Beat</option>
+                        <option value="halfBeat">Half beat</option>
+                        <option value="quarterBeat">Quarter beat</option>
+                      </select>
+                    </label>
+                  </div>
+                  <p className="text-xs text-slate-400">
+                    Select is the main cursor mode. Cut splits clips at the playhead. Trim, merge, and crossfade use the current selection.
+                  </p>
+                </div>
+              ) : null}
+
+              {toolbarTab === 'upload' ? (
+                <form onSubmit={onUploadTrack} className="space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-white">Upload</p>
+                      <p className="text-xs text-slate-400">Uploads and recordings create new assets through the signed ingest flow.</p>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-3 lg:grid-cols-2">
+                    <label className="space-y-1">
+                      <span className="block text-[10px] uppercase tracking-[0.18em] text-slate-400">Track name</span>
+                      <input
+                        type="text"
+                        value={uploadName}
+                        onChange={(e) => setUploadName(e.currentTarget.value)}
+                        className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none ring-indigo-500 focus:ring"
+                        placeholder="Lead Vocal"
+                      />
+                    </label>
+                    <label className="space-y-1">
+                      <span className="block text-[10px] uppercase tracking-[0.18em] text-slate-400">Audio file</span>
+                      <input
+                        type="file"
+                        accept="audio/*"
+                        onChange={(e) => handleUploadFilePicked(e.currentTarget.files?.[0] ?? null)}
+                        className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-200 file:mr-3 file:rounded-md file:border-0 file:bg-indigo-600 file:px-3 file:py-1.5 file:text-sm file:font-semibold file:text-white hover:file:bg-indigo-500"
+                      />
+                    </label>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-3">
+                    <button
+                      type="submit"
+                      disabled={isUploading}
+                      className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {isUploading ? 'Uploading…' : 'Upload audio'}
+                    </button>
+                  </div>
+
+                  {processingJobIds.length > 0 ? (
+                    <div className="rounded-md border border-indigo-500/30 bg-indigo-500/10 px-3 py-2 text-xs text-indigo-100">
+                      <p className="font-medium">
+                        Processing {processingJobIds.length} job{processingJobIds.length === 1 ? '' : 's'}…
+                      </p>
+                      {processingMessage ? <p className="mt-1 text-indigo-200">{processingMessage}</p> : null}
+                      {processingElapsedSeconds !== null ? (
+                        <p className="mt-1 text-indigo-200/80">Started {processingElapsedSeconds}s ago</p>
+                      ) : null}
+                      {activeProcessingJobs.length > 0 ? (
+                        <ul className="mt-1 space-y-0.5 text-indigo-200/90">
+                          {activeProcessingJobs.map((job) => (
+                            <li key={job.id}>
+                              {job.type} · {job.status} · {job.progress}%
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null}
+                    </div>
+                  ) : processingMessage ? (
+                    <p className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100">
+                      {processingMessage}
+                    </p>
+                  ) : null}
+                  {uploadError ? <p className="text-sm text-red-400">{uploadError}</p> : null}
+                </form>
+              ) : null}
+
+              {toolbarTab === 'plugins' ? (
+                <div className="space-y-3">
+                  <div>
+                    <p className="text-sm font-semibold text-white">Plugins</p>
+                    <p className="text-xs text-slate-400">Built-in plugin host support is not wired yet, so this tab stays read-only.</p>
+                  </div>
+                  {pluginDefinitions.length > 0 ? (
+                    <ul className="grid gap-2 md:grid-cols-2">
+                      {pluginDefinitions.map((plugin) => (
+                        <li key={plugin.id} className="rounded-md border border-slate-700 bg-slate-950 px-3 py-2">
+                          <p className="text-sm font-medium text-white">{plugin.name}</p>
+                          <p className="text-xs text-slate-400">
+                            {plugin.manufacturer ?? 'Unknown maker'} · {plugin.version}
+                          </p>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <div className="rounded-md border border-slate-700 bg-slate-950 px-4 py-5 text-sm text-slate-400">
+                      Plugins not available yet.
+                    </div>
+                  )}
+                </div>
+              ) : null}
+
+              {toolbarTab === 'tree' ? (
+                <div>
+                  <VersionHistoryTree
+                    projectId={projectId}
+                    demoId={demoId}
+                    baseOperationSeq={projectSyncState.lastSyncedOperationSeq}
+                    versions={versions}
+                    currentVersionId={currentVersionId}
+                    selectedVersionId={selectedVersionId}
+                    onSelectVersion={(id) => {
+                      setSelectedVersionId(id);
+                      stopTransport();
+                    }}
+                  />
+                </div>
+              ) : null}
+
+              {toolbarTab === 'comments' ? (
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <p className="text-sm font-semibold text-white">Comments</p>
+                    {allComments.length > 0 ? (
+                      <div className="space-y-2">
+                        {allComments.map((comment, index) => {
+                          const track = comment.trackId
+                            ? selectedTracks.find((entry) => entry.trackId === comment.trackId) ?? null
+                            : null;
+                          const timestampLabel =
+                            comment.startTimeMs != null
+                              ? selectedTiming?.tempoBpm
+                                ? formatBarBeatLabel(comment.startTimeMs / 1000, selectedTiming) ??
+                                  formatTimeMs(comment.startTimeMs)
+                                : formatTimeMs(comment.startTimeMs)
+                              : 'Timestamp not set';
+
+                          return (
+                            <button
+                              key={`${comment.id ?? 'comment'}:${comment.createdAt}:${index}`}
+                              type="button"
+                              onClick={() => {
+                                if (track) {
+                                  setSelectedTrackVersionId(track.trackVersionId);
+                                }
+                                if (comment.startTimeMs != null) {
+                                  handleSeek(comment.startTimeMs);
+                                }
+                              }}
+                              className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-left transition-colors hover:border-indigo-500/50 hover:bg-slate-900/70"
+                            >
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <p className="text-xs font-medium text-slate-300">
+                                  {comment.author.name ?? comment.createdBy ?? 'Unknown'}
+                                </p>
+                                <p className="text-[10px] text-slate-500">{timestampLabel}</p>
+                              </div>
+                              <p className="mt-1 break-words text-sm text-slate-100">{comment.body}</p>
+                              <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-slate-400">
+                                <span className="rounded bg-slate-800 px-2 py-0.5">
+                                  {track ? track.trackName : 'Project / all tracks'}
+                                </span>
+                                {comment.resolved ? (
+                                  <span className="rounded bg-emerald-500/20 px-2 py-0.5 text-emerald-200">
+                                    Resolved
+                                  </span>
+                                ) : null}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="rounded-md border border-slate-700 bg-slate-950 px-4 py-5 text-sm text-slate-400">
+                        No comments yet. Use Add Comment near the timeline to add one.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : null}
+
+              {toolbarTab === 'members' ? (
+                <div className="space-y-3">
+                  <div>
+                    <p className="text-sm font-semibold text-white">Members and Presence</p>
+                    <p className="text-xs text-slate-400">Live collaborators appear here when presence is available.</p>
+                  </div>
+                  {presenceRecords.length > 0 ? (
+                    <div className="grid gap-2 md:grid-cols-2">
+                      {presenceRecords.map((presence) => (
+                        <div key={presence.presenceId} className="rounded-md border border-slate-700 bg-slate-950 px-3 py-2">
+                          <p className="text-sm font-medium text-white">{presence.actorUserId}</p>
+                          <p className="text-xs text-slate-400">
+                            {presence.status} · {presence.currentTool} · {presence.recordingState}
+                          </p>
+                          <p className="mt-1 text-xs text-slate-500">
+                            {presence.selectedTrackId ? `Track ${presence.selectedTrackId}` : 'No track selected'}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="rounded-md border border-slate-700 bg-slate-950 px-4 py-5 text-sm text-slate-400">
+                      No collaborators are currently visible.
+                    </div>
+                  )}
+                </div>
+              ) : null}
+            </section>
+          </div>
+          <div className="flex h-full min-h-0 flex-col gap-4 xl:col-start-2 xl:row-start-1 xl:self-stretch">
+            <ProjectTimingControls
+              tempoBpm={timingFormState.tempoBpm}
+              timeSignatureNum={timingFormState.timeSignatureNum}
+              timeSignatureDen={timingFormState.timeSignatureDen}
+              musicalKey={timingFormState.musicalKey}
+              saving={timingFormState.saving}
+              error={timingFormState.error}
+              onTempoChange={(value) => setTimingFormState((prev) => ({ ...prev, tempoBpm: value, error: null }))}
+              onTimeSignatureNumChange={(value) => setTimingFormState((prev) => ({ ...prev, timeSignatureNum: value, error: null }))}
+              onTimeSignatureDenChange={(value) => setTimingFormState((prev) => ({ ...prev, timeSignatureDen: value, error: null }))}
+              onMusicalKeyChange={(value) => setTimingFormState((prev) => ({ ...prev, musicalKey: value, error: null }))}
+              onSave={() => void saveTimingSettings()}
+            />
+            <TransportControls
+              isPlaying={isPlaying}
+              currentTimeMs={currentTimeMs}
+              onPlay={() => playTransport()}
+              onPause={pauseTransport}
+              onStop={stopTransport}
+              leadingSlot={
+                <RecordingControls
+                  ref={recordingControlsRef}
+                  currentTimeMs={currentTimeMs}
+                  isDisabled={temporaryRecordingTrack !== null || !audioInputReady || !selectedAudioInputDeviceId}
+                  recordingTarget={activeRecordingTarget}
+                  selectedAudioInputDeviceId={selectedAudioInputDeviceId}
+                  isAudioInputReady={audioInputReady}
+                  onNeedsAudioInput={() => {}}
+                  onStreamReady={handleRecordingStreamReady}
+                  onDurationUpdate={handleRecordingDurationUpdate}
+                  onStopped={handleRecordingStopped}
+                />
+              }
+              trailingSlot={
+                <button
+                  type="button"
+                  onClick={() => setMetronomeEnabled((prev) => !prev)}
+                  className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                    metronomeEnabled
+                      ? 'bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/40'
+                      : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+                  }`}
+                >
+                  Metronome {metronomeEnabled ? 'On' : 'Off'}
+                </button>
+              }
+            />
           </div>
         </div>
-      </div>
 
-      <form onSubmit={onUploadTrack} className="space-y-3 rounded-md border border-gray-800 bg-gray-900 p-4">
-        <p className="text-sm font-medium text-white">Add Audio Track</p>
-        <p className="text-xs text-gray-400">
-          New uploads and recordings branch from the selected version in the history tree.
-        </p>
-        <div className="flex flex-wrap gap-3">
-          <label className="min-w-[160px] flex-1">
-            <span className="mb-1 block text-xs uppercase tracking-wide text-gray-400">Track Name (optional)</span>
-            <input
-              type="text"
-              value={uploadName}
-              onChange={(e) => setUploadName(e.currentTarget.value)}
-              className="w-full rounded-md border border-gray-700 bg-gray-950 px-3 py-2 text-sm outline-none ring-indigo-500 focus:ring"
-              placeholder="Lead Vocal"
-            />
-          </label>
-          <label className="min-w-[200px] flex-[2]">
-            <span className="mb-1 block text-xs uppercase tracking-wide text-gray-400">Audio File</span>
-            <input
-              type="file"
-              accept="audio/*"
-              onChange={(e) => setUploadFile(e.currentTarget.files?.[0] ?? null)}
-              className="w-full rounded-md border border-gray-700 bg-gray-950 px-3 py-2 text-sm text-gray-200 file:mr-3 file:rounded-md file:border-0 file:bg-indigo-600 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-white hover:file:bg-indigo-500"
-            />
-          </label>
-        </div>
-        {processingJobIds.length > 0 ? (
-          <div className="rounded-md border border-indigo-500/30 bg-indigo-500/10 px-3 py-2 text-xs text-indigo-100">
-            <p className="font-medium">Processing {processingJobIds.length} job{processingJobIds.length === 1 ? '' : 's'}…</p>
-            {processingMessage ? <p className="mt-1 text-indigo-200">{processingMessage}</p> : null}
-            {activeProcessingJobs.length > 0 ? (
-              <ul className="mt-1 space-y-0.5 text-indigo-200/90">
-                {activeProcessingJobs.map((job) => (
-                  <li key={job.id}>
-                    {job.type} · {job.status} · {job.progress}%
-                  </li>
+      {addCommentModalOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
+          <div className="w-full max-w-md rounded-lg border border-slate-700 bg-slate-950 p-5 shadow-2xl shadow-black/40">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-base font-semibold text-white">Add Comment</h3>
+                <p className="mt-1 text-sm text-slate-400">Attach a note to the current playhead or a specific track.</p>
+              </div>
+              <button
+                type="button"
+                onClick={closeAddCommentModal}
+                className="text-sm text-slate-400 hover:text-slate-200"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="mt-4 rounded-md border border-slate-800 bg-slate-900/80 px-3 py-2">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-[10px] uppercase tracking-[0.18em] text-slate-500">Timestamp</p>
+                  <p className="mt-1 text-sm font-medium text-slate-100">
+                    {selectedTiming?.tempoBpm
+                      ? formatBarBeatLabel(addCommentTimestampMs / 1000, selectedTiming) ?? formatTimeMs(addCommentTimestampMs)
+                      : formatTimeMs(addCommentTimestampMs)}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setAddCommentTimestampMs(currentTimeMs)}
+                  className="rounded-md bg-slate-800 px-2.5 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-700"
+                >
+                  Use playhead
+                </button>
+              </div>
+            </div>
+
+            <label className="mt-4 block space-y-1">
+              <span className="block text-[10px] uppercase tracking-[0.18em] text-slate-400">Scope</span>
+              <select
+                value={addCommentTrackId ?? ''}
+                onChange={(e) => setAddCommentTrackId(e.currentTarget.value || null)}
+                className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none ring-indigo-500 focus:ring"
+              >
+                <option value="">Project / all tracks</option>
+                {selectedTracks.map((track) => (
+                  <option key={track.trackId} value={track.trackId}>
+                    {track.trackName}
+                  </option>
                 ))}
-              </ul>
-            ) : null}
+              </select>
+            </label>
+
+            <label className="mt-4 block space-y-1">
+              <span className="block text-[10px] uppercase tracking-[0.18em] text-slate-400">Comment</span>
+              <textarea
+                rows={4}
+                value={addCommentBody}
+                onChange={(e) => setAddCommentBody(e.currentTarget.value)}
+                placeholder="Leave a note for this moment..."
+                className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none ring-indigo-500 focus:ring"
+              />
+            </label>
+
+            {addCommentError ? <p className="mt-2 text-xs text-red-400">{addCommentError}</p> : null}
+
+            <div className="mt-4 flex items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={closeAddCommentModal}
+                className="rounded-md bg-slate-800 px-3 py-2 text-sm font-medium text-slate-200 hover:bg-slate-700"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void submitAddComment()}
+                disabled={addCommentSubmitting}
+                className="rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {addCommentSubmitting ? 'Saving…' : 'Add comment'}
+              </button>
+            </div>
           </div>
-        ) : processingMessage ? (
-          <p className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100">
-            {processingMessage}
-          </p>
-        ) : null}
-        {uploadError ? <p className="text-sm text-red-400">{uploadError}</p> : null}
-        <div className="flex justify-end">
-          <button
-            type="submit"
-            disabled={isUploading}
-            className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
-          >
-            {isUploading ? 'Uploading...' : 'Upload Track'}
-          </button>
         </div>
-      </form>
-
-      <section className="space-y-3 rounded-md border border-gray-800 bg-gray-900 p-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p className="text-sm font-medium text-white">Timing</p>
-            <p className="text-xs text-gray-400">Tempo, meter, key, metronome, and snap grid.</p>
-          </div>
-          <button
-            type="button"
-            onClick={() => void saveTimingSettings()}
-            disabled={timingFormState.saving}
-            className="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
-          >
-            {timingFormState.saving ? 'Saving…' : 'Save Timing'}
-          </button>
-        </div>
-
-        <div className="grid gap-3 md:grid-cols-5">
-          <label className="space-y-1">
-            <span className="block text-[10px] uppercase tracking-wide text-gray-400">Tempo BPM</span>
-            <input
-              type="number"
-              min={40}
-              max={240}
-              step="0.1"
-              value={timingFormState.tempoBpm}
-              onChange={(e) => {
-                const value = e.currentTarget.value;
-                setTimingFormState((prev) => ({ ...prev, tempoBpm: value, error: null }));
-              }}
-              className="w-full rounded-md border border-gray-700 bg-gray-950 px-3 py-2 text-sm text-white outline-none ring-indigo-500 focus:ring"
-              placeholder="120"
-            />
-          </label>
-          <label className="space-y-1">
-            <span className="block text-[10px] uppercase tracking-wide text-gray-400">Time Sig Num</span>
-            <input
-              type="number"
-              min={1}
-              value={timingFormState.timeSignatureNum}
-              onChange={(e) => {
-                const value = e.currentTarget.value;
-                setTimingFormState((prev) => ({ ...prev, timeSignatureNum: value, error: null }));
-              }}
-              className="w-full rounded-md border border-gray-700 bg-gray-950 px-3 py-2 text-sm text-white outline-none ring-indigo-500 focus:ring"
-              placeholder="4"
-            />
-          </label>
-          <label className="space-y-1">
-            <span className="block text-[10px] uppercase tracking-wide text-gray-400">Time Sig Den</span>
-            <input
-              type="number"
-              min={1}
-              value={timingFormState.timeSignatureDen}
-              onChange={(e) => {
-                const value = e.currentTarget.value;
-                setTimingFormState((prev) => ({ ...prev, timeSignatureDen: value, error: null }));
-              }}
-              className="w-full rounded-md border border-gray-700 bg-gray-950 px-3 py-2 text-sm text-white outline-none ring-indigo-500 focus:ring"
-              placeholder="4"
-            />
-          </label>
-          <label className="space-y-1 md:col-span-2">
-            <span className="block text-[10px] uppercase tracking-wide text-gray-400">Musical Key</span>
-            <input
-              type="text"
-              value={timingFormState.musicalKey}
-              onChange={(e) => {
-                const value = e.currentTarget.value;
-                setTimingFormState((prev) => ({ ...prev, musicalKey: value, error: null }));
-              }}
-              className="w-full rounded-md border border-gray-700 bg-gray-950 px-3 py-2 text-sm text-white outline-none ring-indigo-500 focus:ring"
-              placeholder="C major"
-            />
-          </label>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-3">
-          <button
-            type="button"
-            onClick={() => setMetronomeEnabled((prev) => !prev)}
-            className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
-              metronomeEnabled
-                ? 'bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/40'
-                : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
-            }`}
-          >
-            Metronome {metronomeEnabled ? 'On' : 'Off'}
-          </button>
-          <label className="flex items-center gap-2 text-xs text-gray-300">
-            <span className="uppercase tracking-wide text-gray-400">Snap</span>
-            <select
-              value={snapResolution}
-              onChange={(e) => setSnapResolution(e.currentTarget.value as SnapResolution)}
-              className="rounded-md border border-gray-700 bg-gray-950 px-2 py-1 text-xs text-white outline-none ring-indigo-500 focus:ring"
-            >
-              <option value="off">Off</option>
-              <option value="bar">Bar</option>
-              <option value="beat">Beat</option>
-              <option value="halfBeat">Half beat</option>
-              <option value="quarterBeat">Quarter beat</option>
-            </select>
-          </label>
-          {selectedTiming?.tempoBpm ? (
-            <p className="text-xs text-gray-500">
-              Grid: bar/beat labels at {selectedTiming.tempoBpm} BPM
-            </p>
-          ) : (
-            <p className="text-xs text-gray-500">Grid falls back to seconds until tempo is set.</p>
-          )}
-        </div>
-        {timingFormState.error ? <p className="text-xs text-red-400">{timingFormState.error}</p> : null}
-      </section>
+      ) : null}
 
       {uploadModalState.open ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
@@ -1917,84 +2968,24 @@ export function DemoDawClient({
         </div>
       ) : null}
 
-      <TransportControls
-        isPlaying={isPlaying}
-        currentTimeMs={currentTimeMs}
-        onPlay={() => playTransport()}
-        onPause={pauseTransport}
-        onStop={stopTransport}
-        leadingSlot={
-          <RecordingControls
-            currentTimeMs={currentTimeMs}
-            isDisabled={temporaryRecordingTrack !== null || !audioInputReady || !selectedAudioInputDeviceId}
-            selectedAudioInputDeviceId={selectedAudioInputDeviceId}
-            isAudioInputReady={audioInputReady}
-            onNeedsAudioInput={() => {}}
-            onStreamReady={handleRecordingStreamReady}
-            onDurationUpdate={handleRecordingDurationUpdate}
-            onStopped={handleRecordingStopped}
-          />
-        }
-        trailingSlot={
-          <AudioInputSelector
-            selectedAudioInputDeviceId={selectedAudioInputDeviceId}
-            onSelectedAudioInputDeviceIdChange={setSelectedAudioInputDeviceId}
-            isAudioInputReady={audioInputReady}
-            onAudioInputReadyChange={setAudioInputReady}
-          />
-        }
-      />
-
       {dragError ? (
         <p className="text-sm text-red-400">{dragError}</p>
       ) : null}
 
-      <div className={`grid gap-4 ${versionHistoryExpanded ? 'lg:grid-cols-2' : 'lg:grid-cols-[1fr_280px]'}`}>
+      <div className="space-y-4">
         <section className="min-w-0 space-y-3 rounded-lg border border-gray-800 bg-gray-950 p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-400">Timeline</h2>
-            <div className="flex items-center gap-2 text-xs">
-              <button
-                type="button"
-                onClick={() => {
-                  setTimelineTool('select');
-                  setSplitHover(null);
-                  setSplitError(null);
-                }}
-                className={`rounded px-2 py-1 font-medium transition-colors ${
-                  timelineTool === 'select'
-                    ? 'bg-indigo-500/20 text-indigo-200 ring-1 ring-indigo-500/40'
-                    : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
-                }`}
-              >
-                Select
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setTimelineTool('split');
-                  setSplitHover(null);
-                  setSplitError(null);
-                }}
-                className={`rounded px-2 py-1 font-medium transition-colors ${
-                  timelineTool === 'split'
-                    ? 'bg-amber-500/20 text-amber-200 ring-1 ring-amber-500/40'
-                    : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
-                }`}
-                title="Cut tool: click a clip to split it"
-              >
-                Cut
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={openAddCommentModal}
+              className="rounded-md bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-500"
+            >
+              Add Comment
+            </button>
           </div>
-          <div className="flex items-center gap-3 text-xs">
-            {commentsLoading ? <p className="text-gray-500">Loading comments…</p> : null}
-            {commentsError ? <p className="text-red-400">{commentsError}</p> : null}
-            {splitError ? <p className="text-amber-300">{splitError}</p> : null}
-          </div>
-          <p className="text-[11px] text-gray-500">
-            Cut mode keeps the source audio intact and creates new timeline segments from the clip you click.
-          </p>
+          <div className="flex items-center gap-3 text-xs">{splitError ? <p className="text-amber-300">{splitError}</p> : null}</div>
+          <p className="text-[11px] text-gray-500">Comments can be anchored to the playhead or scoped to a specific track.</p>
 
           {hasTimelineContent ? (
             <div ref={tracksScrollContainerRef} className="overflow-x-auto rounded-md border border-gray-800">
@@ -2016,26 +3007,100 @@ export function DemoDawClient({
                 </div>
               </div>
 
+              {projectTimelineComments.length > 0 ? (
+                <div className="relative border-b border-gray-800 bg-gray-950" style={{ minWidth: TRACK_LABEL_WIDTH + totalTimelineWidth, height: 28 }}>
+                  <div className="absolute inset-y-0 left-0" style={{ width: TRACK_LABEL_WIDTH }} />
+                  <div className="absolute inset-y-0 left-0 overflow-visible" style={{ left: TRACK_LABEL_WIDTH, width: totalTimelineWidth }}>
+                    {projectTimelineComments.map((comment, index) => {
+                      const leftPx = Math.max(0, ((comment.startTimeMs ?? 0) / 1000) * PX_PER_SECOND);
+                      const commentKey = `project:${comment.id ?? 'comment'}:${comment.createdAt}:${index}`;
+                      const isOpen = timelineCommentOpenId === commentKey;
+                      return (
+                        <div
+                          key={commentKey}
+                          className="absolute top-0 h-full pointer-events-none"
+                          style={{ left: leftPx }}
+                        >
+                          <div className="absolute left-1/2 top-0 h-full w-px -translate-x-1/2 bg-indigo-400/60" />
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setTimelineCommentOpenId((prev) => (prev === commentKey ? null : commentKey));
+                            }}
+                            className="pointer-events-auto absolute left-1/2 top-0 flex h-4 w-4 -translate-x-1/2 items-center justify-center rounded-full border border-indigo-300 bg-slate-950 text-[8px] text-indigo-200 shadow-sm shadow-black/30 hover:bg-indigo-500 hover:text-white"
+                            title="Show comment"
+                          >
+                            •
+                          </button>
+                          {isOpen ? (
+                            <div className="pointer-events-auto absolute left-3 top-5 z-40 w-72 rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100 shadow-xl shadow-black/40">
+                              <div className="flex items-center justify-between gap-2">
+                                <p className="truncate font-medium text-slate-300">
+                                  {comment.author.name ?? comment.createdBy ?? 'Unknown'}
+                                </p>
+                                {comment.resolved ? (
+                                  <span className="shrink-0 rounded bg-emerald-900/60 px-1 py-0.5 text-[9px] text-emerald-200">
+                                    Resolved
+                                  </span>
+                                ) : null}
+                              </div>
+                              <p className="mt-1 break-words leading-snug text-slate-100">{comment.body}</p>
+                              <div className="mt-2 flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => handleSeek(comment.startTimeMs ?? 0)}
+                                  className="text-[10px] font-medium text-indigo-400 hover:text-indigo-300"
+                                >
+                                  Jump to time
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setTimelineCommentOpenId(null)}
+                                  className="text-[10px] font-medium text-slate-400 hover:text-slate-200"
+                                >
+                                  Close
+                                </button>
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
+
               {selectedTracks.map((track) => {
                 const isMuted = mutedTrackVersionIds.has(track.trackVersionId);
-                const trackSegments = getRenderableTrackSegments(track);
+                const trackLane = visualProjection.trackLanesByTrackVersionId[track.trackVersionId];
+                const trackRecording = trackLane?.recording ?? null;
+                const trackSegments = trackLane?.segments ?? [];
                 const selectedTrackSegment = trackSegments.find((segment) => segment.id === selectedSegmentId) ?? null;
                 const splitHoverTimeMs =
                   timelineTool === 'split' && splitHover?.trackVersionId === track.trackVersionId
                     ? splitHover.timeMs
                     : null;
+                const splitHoverLeftPx =
+                  splitHoverTimeMs !== null
+                    ? visualProjection.splitHoverLeftPxByTrackVersionId[track.trackVersionId] ?? null
+                    : null;
                 const hoveredTrackSegment =
                   timelineTool === 'split' && splitHoverTimeMs !== null
-                    ? findSegmentAtTime(track, splitHoverTimeMs)
+                    ? trackSegments.find(
+                        (segment) =>
+                          splitHoverTimeMs >= segment.timelineStartMs && splitHoverTimeMs <= segment.timelineEndMs,
+                      ) ?? null
                     : null;
-                const isRenaming = renameState?.trackId === track.trackId;
-                const trackComments = commentsByTrackId[track.trackId] ?? [];
-                const composer = getComposerState(track.trackId);
+    const isRenaming = renameState?.trackId === track.trackId;
+    const trackComments = commentsByTrackId[track.trackId] ?? [];
 
                 return (
                   <div
                     key={track.trackVersionId}
-                    className="flex border-b border-gray-800 last:border-b-0"
+                    className={`flex border-b border-gray-800 last:border-b-0 ${
+                      selectedTrack?.trackVersionId === track.trackVersionId ? 'bg-slate-950/40' : ''
+                    }`}
                     style={{ minWidth: TRACK_LABEL_WIDTH + totalTimelineWidth }}
                   >
                     <div
@@ -2050,9 +3115,7 @@ export function DemoDawClient({
                             value={renameState.value}
                             onChange={(e) => {
                               const value = e.currentTarget.value;
-                              setRenameState((prev) =>
-                                prev ? { ...prev, value } : null,
-                              );
+                              setRenameState((prev) => (prev ? { ...prev, value } : null));
                             }}
                             onKeyDown={(e) => {
                               if (e.key === 'Enter') void commitRename();
@@ -2084,150 +3147,91 @@ export function DemoDawClient({
                         </div>
                       ) : (
                         <>
-                          <div className="flex items-center justify-between gap-1">
+                          <div className="flex items-start justify-between gap-2">
                             <p
-                              className={`flex-1 truncate text-sm font-medium ${isMuted ? 'text-gray-500 line-through' : 'text-white'}`}
+                              className={`min-w-0 flex-1 truncate text-sm font-medium ${isMuted ? 'text-gray-500 line-through' : 'text-white'}`}
                               onDoubleClick={() => startRename(track)}
                               title="Double-click to rename"
                             >
                               {track.trackName}
                             </p>
-                            {track.isDerived ? (
-                              <span className="shrink-0 rounded bg-indigo-500/20 px-1.5 py-0.5 text-[10px] font-medium text-indigo-200">
-                                Derived
-                              </span>
-                            ) : null}
-                            <button
-                              type="button"
-                              onClick={() => startRename(track)}
-                              title="Rename track"
-                              className="shrink-0 text-gray-600 hover:text-gray-300"
-                            >
-                              <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" aria-hidden>
-                                <path d="M12.854.146a.5.5 0 0 0-.707 0L10.5 1.793 14.207 5.5l1.647-1.646a.5.5 0 0 0 0-.708zm.646 6.061L9.793 2.5 3.293 9H3.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.207zm-7.468 7.468A.5.5 0 0 1 6 13.5V13h-.5a.5.5 0 0 1-.5-.5V12h-.5a.5.5 0 0 1-.5-.5V11h-.5a.5.5 0 0 1-.5-.5V10h-.5a.499.499 0 0 1-.175-.032l-.179.178a.5.5 0 0 0-.11.168l-2 5a.5.5 0 0 0 .65.65l5-2a.5.5 0 0 0 .168-.11z"/>
-                              </svg>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => toggleMute(track.trackVersionId)}
-                              title={isMuted ? 'Unmute track' : 'Mute track'}
-                              className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] font-bold transition-colors ${
-                                isMuted
-                                  ? 'bg-yellow-500/20 text-yellow-400 ring-1 ring-yellow-500/40'
-                                  : 'text-gray-600 hover:bg-gray-800 hover:text-gray-400'
-                              }`}
-                            >
-                              M
-                            </button>
-                          </div>
-
-                          <div className="space-y-1">
-                            <div className="flex items-center justify-between gap-2">
-                              <p className="text-[10px] uppercase tracking-wide text-gray-500">
-                                Comments {trackComments.length > 0 ? `(${trackComments.length})` : ''}
-                              </p>
-                              <div className="flex items-center gap-2">
+                            <div className="flex shrink-0 flex-col items-end gap-1">
+                              <div className="flex items-center gap-1">
+                                {track.isDerived ? (
+                                  <span className="shrink-0 rounded bg-indigo-500/20 px-1.5 py-0.5 text-[10px] font-medium text-indigo-200">
+                                    Derived
+                                  </span>
+                                ) : null}
                                 <button
                                   type="button"
-                                  onClick={() => void requestTempoAnalysis(track)}
-                                  className="text-[10px] font-medium text-amber-400 hover:text-amber-300"
+                                  onClick={() => startRename(track)}
+                                  title="Rename track"
+                                  className="shrink-0 text-gray-600 hover:text-gray-300"
                                 >
-                                  Analyze tempo
+                                  <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" aria-hidden>
+                                    <path d="M12.854.146a.5.5 0 0 0-.707 0L10.5 1.793 14.207 5.5l1.647-1.646a.5.5 0 0 0 0-.708zm.646 6.061L9.793 2.5 3.293 9H3.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.207zm-7.468 7.468A.5.5 0 0 1 6 13.5V13h-.5a.5.5 0 0 1-.5-.5V12h-.5a.5.5 0 0 1-.5-.5V11h-.5a.5.5 0 0 1-.5-.5V10h-.5a.499.499 0 0 1-.175-.032l-.179.178a.5.5 0 0 0-.11.168l-2 5a.5.5 0 0 0 .65.65l5-2a.5.5 0 0 0 .168-.11z" />
+                                  </svg>
+                                </button>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => toggleRecordArm(track.trackVersionId)}
+                                title={
+                                  recordArmedTrackVersionId === track.trackVersionId
+                                    ? 'Disarm track for recording'
+                                    : 'Arm track for recording'
+                                }
+                                aria-pressed={recordArmedTrackVersionId === track.trackVersionId}
+                                className={`flex h-5 min-w-5 items-center justify-center rounded px-1 text-[11px] font-bold transition-colors ${
+                                  recordArmedTrackVersionId === track.trackVersionId
+                                    ? 'bg-red-500/20 text-red-300 ring-1 ring-red-500/40'
+                                    : 'text-gray-600 hover:bg-gray-800 hover:text-gray-400'
+                                }`}
+                              >
+                                R
+                              </button>
+                              <div className="flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => toggleMute(track.trackVersionId)}
+                                  title={isMuted ? 'Unmute track' : 'Mute track'}
+                                  className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] font-bold transition-colors ${
+                                    isMuted
+                                      ? 'bg-yellow-500/20 text-yellow-400 ring-1 ring-yellow-500/40'
+                                      : 'text-gray-600 hover:bg-gray-800 hover:text-gray-400'
+                                  }`}
+                                >
+                                  M
                                 </button>
                                 <button
                                   type="button"
-                                  onClick={() =>
-                                    composer.open ? closeCommentComposer(track.trackId) : openCommentComposer(track.trackId)
-                                  }
-                                  className="text-[10px] font-medium text-indigo-400 hover:text-indigo-300"
+                                  onClick={() => toggleSolo(track.trackVersionId)}
+                                  title={soloTrackVersionIds.has(track.trackVersionId) ? 'Unsolo track' : 'Solo track'}
+                                  className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] font-bold transition-colors ${
+                                    soloTrackVersionIds.has(track.trackVersionId)
+                                      ? 'bg-cyan-500/20 text-cyan-300 ring-1 ring-cyan-500/40'
+                                      : 'text-gray-600 hover:bg-gray-800 hover:text-gray-400'
+                                  }`}
                                 >
-                                  {composer.open ? 'Cancel' : 'Add comment'}
+                                  S
                                 </button>
                               </div>
                             </div>
+                          </div>
 
-                            {trackComments.length > 0 ? (
-                              <div className="max-h-28 space-y-1 overflow-y-auto pr-1">
-                                {trackComments.map((comment) => (
-                                  <div
-                                    key={comment.id}
-                                    className="rounded border border-gray-800 bg-gray-950/80 px-2 py-1"
-                                  >
-                                    <div className="flex items-center justify-between gap-2">
-                                      <p className="truncate text-[10px] font-medium text-gray-300">
-                                        {comment.author.name ?? 'Unknown'}
-                                      </p>
-                                      {comment.isResolved ? (
-                                        <span className="shrink-0 rounded bg-emerald-900/60 px-1 py-0.5 text-[9px] text-emerald-200">
-                                          Resolved
-                                        </span>
-                                      ) : null}
-                                    </div>
-                                    <p className="mt-0.5 break-words text-[11px] leading-snug text-gray-200">
-                                      {comment.body}
-                                    </p>
-                                    {comment.timestampMs != null ? (
-                                      <button
-                                        type="button"
-                                        onClick={() => handleSeek(comment.timestampMs ?? 0)}
-                                        className="mt-1 text-[10px] font-medium text-indigo-400 hover:text-indigo-300"
-                                      >
-                                        At{' '}
-                                        {selectedTiming?.tempoBpm
-                                          ? `${formatBarBeatLabel(comment.timestampMs / 1000, selectedTiming) ?? formatTimeMs(comment.timestampMs)}`
-                                          : formatTimeMs(comment.timestampMs)}
-                                      </button>
-                                    ) : null}
-                                  </div>
-                                ))}
-                              </div>
-                            ) : (
-                              <p className="text-[11px] text-gray-500">No notes yet.</p>
-                            )}
-
-                            {composer.open ? (
-                              <div className="space-y-1">
-                                <textarea
-                                  rows={2}
-                                  value={composer.value}
-                                  onChange={(e) => {
-                                    const value = e.currentTarget.value;
-                                    updateComposerState(track.trackId, {
-                                      value,
-                                      error: null,
-                                    });
-                                  }}
-                                  placeholder="Leave a note"
-                                  className="w-full rounded border border-gray-700 bg-gray-950 px-2 py-1 text-[11px] text-white outline-none ring-indigo-500 focus:ring"
-                                />
-                                <p className="text-[10px] text-gray-500">
-                                  Anchored at{' '}
-                                  {selectedTiming?.tempoBpm
-                                    ? formatBarBeatLabel(currentTimeMs / 1000, selectedTiming) ?? formatTimeMs(currentTimeMs)
-                                    : formatTimeMs(currentTimeMs)}
-                                </p>
-                                {composer.error ? (
-                                  <p className="text-[10px] text-red-400">{composer.error}</p>
-                                ) : null}
-                                <div className="flex items-center gap-2">
-                                  <button
-                                    type="button"
-                                    onClick={() => void submitComment(track)}
-                                    disabled={composer.submitting}
-                                    className="rounded bg-indigo-600 px-2 py-1 text-[10px] font-medium text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
-                                  >
-                                    {composer.submitting ? 'Saving…' : 'Submit'}
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => closeCommentComposer(track.trackId)}
-                                    className="text-[10px] text-gray-500 hover:text-gray-300"
-                                  >
-                                    Close
-                                  </button>
-                                </div>
-                              </div>
-                            ) : null}
+                          <div className="space-y-1">
+                            <label className="flex items-center gap-2 text-[10px] text-slate-400">
+                              <span className="w-10 uppercase tracking-wide">Vol</span>
+                              <input
+                                type="range"
+                                min={0}
+                                max={2}
+                                step={0.01}
+                                value={gainByTrackVersionId[track.trackVersionId] ?? 1}
+                                onChange={(e) => setTrackGain(track.trackVersionId, Number(e.currentTarget.value))}
+                                className="h-1 w-full accent-indigo-500"
+                              />
+                            </label>
                           </div>
                         </>
                       )}
@@ -2260,13 +3264,86 @@ export function DemoDawClient({
                     >
                       <div
                         className="pointer-events-none absolute top-0 z-20 h-full w-px bg-yellow-400/80"
-                        style={{ left: (currentTimeMs / 1000) * PX_PER_SECOND }}
+                        style={{ left: visualProjection.currentTimeLeftPx }}
                       />
+
+                      {trackRecording ? (
+                        <RecordingTrackLane
+                          recording={trackRecording}
+                          stream={recordingStream}
+                          currentTimeMs={currentTimeMs}
+                          scrollContainerRef={tracksScrollContainerRef}
+                          onNameChange={handleRecordingNameChange}
+                          onSave={() => void handleSaveRecording()}
+                          onDiscard={handleDiscardRecording}
+                        />
+                      ) : null}
+
+                      {trackComments.length > 0 ? (
+                        <div className="pointer-events-none absolute inset-x-0 top-0 z-30 h-10 overflow-visible">
+                          {trackComments.map((comment, index) => {
+                            const leftPx = Math.max(0, ((comment.startTimeMs ?? 0) / 1000) * PX_PER_SECOND);
+                            const commentKey = `track:${track.trackVersionId}:${comment.id ?? 'comment'}:${comment.createdAt}:${index}`;
+                            const isOpen = timelineCommentOpenId === commentKey;
+                            return (
+                              <div
+                                key={commentKey}
+                                className="absolute top-0 h-full pointer-events-none"
+                                style={{ left: leftPx }}
+                              >
+                                <div className="absolute left-1/2 top-0 h-full w-px -translate-x-1/2 bg-indigo-400/60" />
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setTimelineCommentOpenId((prev) => (prev === commentKey ? null : commentKey));
+                                  }}
+                                  className="pointer-events-auto absolute left-1/2 top-0 flex h-4 w-4 -translate-x-1/2 items-center justify-center rounded-full border border-indigo-300 bg-slate-950 text-[8px] text-indigo-200 shadow-sm shadow-black/30 hover:bg-indigo-500 hover:text-white"
+                                  title="Show comment"
+                                >
+                                  •
+                                </button>
+                                {isOpen ? (
+                                  <div className="pointer-events-auto absolute left-3 top-5 z-40 w-72 rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100 shadow-xl shadow-black/40">
+                                    <div className="flex items-center justify-between gap-2">
+                                      <p className="truncate font-medium text-slate-300">
+                                        {comment.author.name ?? comment.createdBy ?? 'Unknown'}
+                                      </p>
+                                      {comment.resolved ? (
+                                        <span className="shrink-0 rounded bg-emerald-900/60 px-1 py-0.5 text-[9px] text-emerald-200">
+                                          Resolved
+                                        </span>
+                                      ) : null}
+                                    </div>
+                                    <p className="mt-1 break-words leading-snug text-slate-100">{comment.body}</p>
+                                    <div className="mt-2 flex items-center gap-2">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleSeek(comment.startTimeMs ?? 0)}
+                                        className="text-[10px] font-medium text-indigo-400 hover:text-indigo-300"
+                                      >
+                                        Jump to time
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => setTimelineCommentOpenId(null)}
+                                        className="text-[10px] font-medium text-slate-400 hover:text-slate-200"
+                                      >
+                                        Close
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : null}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : null}
 
                       {timelineTool === 'split' && splitHoverTimeMs !== null && hoveredTrackSegment ? (
                         <div
                           className="pointer-events-none absolute top-0 z-30 h-full w-px bg-amber-300/90"
-                          style={{ left: (splitHoverTimeMs / 1000) * PX_PER_SECOND }}
+                          style={{ left: splitHoverLeftPx ?? 0 }}
                         >
                           <div className="absolute -top-2 left-1/2 -translate-x-1/2 rounded bg-amber-300 px-1 py-0.5 text-[9px] font-semibold text-gray-950 shadow">
                             cut
@@ -2280,12 +3357,10 @@ export function DemoDawClient({
                           dragRef.current?.kind === 'segment' && dragRef.current.segmentId === segment.id;
                         const isDraggingImplicitTrack =
                           dragRef.current?.kind === 'track' && dragRef.current.trackVersionId === track.trackVersionId;
+
                         return (
                           <TrackSegmentClip
                             key={segment.id}
-                            ref={(el) => {
-                              segmentRefs.current[`${track.trackVersionId}:${segment.id}`] = el;
-                            }}
                             trackVersionId={track.trackVersionId}
                             segment={segment}
                             storageKey={track.storageKey}
@@ -2324,40 +3399,21 @@ export function DemoDawClient({
                 );
               })}
 
-              {temporaryRecordingTrack && (
-                <RecordingTrackLane
-                  track={temporaryRecordingTrack}
-                  stream={recordingStream}
-                  currentTimeMs={currentTimeMs}
-                  totalTimelineWidth={totalTimelineWidth}
-                  currentRecordingTrackId={currentRecordingTrackId}
-                  scrollContainerRef={tracksScrollContainerRef}
-                  onNameChange={handleRecordingNameChange}
-                  onSave={() => void handleSaveRecording()}
-                  onDiscard={handleDiscardRecording}
-                />
-              )}
+              <div className="flex justify-start px-2 py-4">
+                <AddTrackButton onClick={() => void handleAddTrack()} disabled={isUploading} />
+              </div>
             </div>
           ) : (
             <div className="rounded-md border border-gray-800 bg-gray-900 px-4 py-8 text-sm text-gray-400">
-              This version has no tracks yet. Upload or record a track to get started.
+              This version has no tracks yet. Upload, record, or add an empty track to get started.
+              <div className="mt-4">
+                <AddTrackButton onClick={() => void handleAddTrack()} disabled={isUploading} />
+              </div>
             </div>
           )}
         </section>
-
-        <VersionHistoryTree
-          demoId={demoId}
-          versions={versions}
-          currentVersionId={currentVersionId}
-          selectedVersionId={selectedVersionId}
-          onSelectVersion={(id) => {
-            setSelectedVersionId(id);
-            stopTransport();
-          }}
-          expanded={versionHistoryExpanded}
-          onExpandToggle={() => setVersionHistoryExpanded((prev) => !prev)}
-        />
       </div>
-    </div>
+      </div>
+      </div>
   );
 }

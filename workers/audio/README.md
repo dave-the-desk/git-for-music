@@ -9,6 +9,8 @@ Local and production runs should define:
 - `DATABASE_URL`
 - `POLL_INTERVAL_SECONDS`
 - `WEB_PUBLIC_DIR` for local file-backed development
+- `DAW_WEB_APP_URL` for worker callback requests back into the app
+- `DAW_WORKER_CALLBACK_SECRET` for authenticating those callback requests
 
 Future AWS/SQS runs should also define:
 
@@ -50,9 +52,10 @@ Until that migration is wired up, the worker may continue to poll PostgreSQL dir
 ## S3 Input/Output Behavior
 
 - The worker must treat the input audio object as immutable.
-- Derived artifacts should be written under a separate job-specific prefix.
 - Inputs should be read from the original audio key stored on the track version row.
-- Outputs should be stored under `derived/{jobId}/...` so they never overwrite the source file.
+- Track-version artifacts should use distinct prefixes for `originals/`, `derived/`, `peaks/`, `transcripts/`, and `stems/`.
+- Demo-level analysis artifacts should be stored under `analysis/{jobId}.json`.
+- Derived audio should be written as `derived/{jobId}.wav` so it never overwrites the source file.
 
 ## Processing Job Lifecycle
 

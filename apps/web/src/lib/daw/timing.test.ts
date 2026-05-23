@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { formatBarBeatLabel, snapMsToGrid } from './timing';
+import { formatBarBeatLabel, snapMsToGrid } from '@/features/daw/utils/timing';
 
 test('formatBarBeatLabel converts seconds into bar.beat labels', () => {
   const timing = {

@@ -43,9 +43,15 @@ audio worker:
 docker compose up --build
 ```
 
+Run that from the repository root. It will start the database, Redis, the web
+app, and the audio worker together.
+
 The first container startup also runs a one-shot `db-init` job so the Prisma
 schema is pushed into the local Postgres volume automatically. The web service
-uses `postgres` and `redis` as service names inside the Compose network.
+uses `postgres` and `redis` as service names inside the Compose network, and
+the worker is pointed at the web service directly so status callbacks work in
+Docker. The Compose file also sets matching dev-only upload and callback
+secrets so the stack works without extra local env setup.
 
 ## Workspace layout
 
