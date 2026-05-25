@@ -16,6 +16,7 @@ type AssetUploadIntent = AudioStorageContext & {
   name?: string | null;
   sourceVersionId?: string | null;
   timingChoice?: 'keepProjectTempo' | 'updateProjectTempoFromUpload' | 'uploadUnchanged' | null;
+  attachMode?: 'track-version' | 'clip';
   createTrack?: boolean;
   fileName: string;
   contentType: string;

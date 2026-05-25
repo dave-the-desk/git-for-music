@@ -1,4 +1,4 @@
-import { buildRenderableTrackSegments } from '@/features/daw/utils/segments';
+import { EMPTY_TRACK_MIME_TYPE, buildRenderableTrackSegments } from '@/features/daw/utils/segments';
 import { DEFAULT_DEMO_TEMPO_BPM, normalizeTempoBpm } from '@/features/daw/utils/timing';
 import type { DawTrack, TrackTimelineSegment } from '@/features/daw/state/local-project-state';
 
@@ -15,6 +15,7 @@ type PlaybackProjectTrack = Pick<
   | 'trackName'
   | 'trackVersionId'
   | 'storageKey'
+  | 'mimeType'
   | 'startOffsetMs'
   | 'durationMs'
   | 'segments'
@@ -364,20 +365,18 @@ export class AudioPlaybackEngine {
     this.playStartWallTimeMs = timeMs;
     this.playStartAudioTime = audioContext.currentTime;
 
-    const tracksWithSegments = this.project.tracks.map((track) => ({
-      track,
-      segments: buildRenderableTrackSegments({
-        trackVersionId: track.trackVersionId,
-        trackStartOffsetMs: track.startOffsetMs,
-        segments: track.segments,
-        fallbackDurationMs: Math.max(0, track.durationMs ?? 0),
-      }),
-    }));
-
     await Promise.all(
-      tracksWithSegments.map(async ({ track, segments }) => {
+      this.project.tracks.map(async (track) => {
         const buffer = await this.loadBuffer(track.storageKey).catch(() => null);
         if (!buffer) return;
+
+        const segments = buildRenderableTrackSegments({
+          trackVersionId: track.trackVersionId,
+          trackStartOffsetMs: track.startOffsetMs,
+          segments: track.segments,
+          fallbackDurationMs: Math.max(0, Math.max(track.durationMs ?? 0, Math.round(buffer.duration * 1000))),
+          allowImplicitSegment: track.mimeType !== EMPTY_TRACK_MIME_TYPE,
+        });
 
         const bus = this.ensureTrackBus(track.trackVersionId);
         const mix = this.trackMixByTrackVersionId.get(track.trackVersionId) ?? {

@@ -1,4 +1,5 @@
-export const MIN_SPLIT_DISTANCE_MS = 50;
+// Keep a tiny gap so we never generate an exact zero-length split.
+export const MIN_SPLIT_DISTANCE_MS = 1;
 
 export type SegmentLike = {
   startMs: number;
@@ -31,6 +32,8 @@ export type SplitSegmentResult = {
   leftSegment: SegmentLike;
   rightSegment: SegmentLike;
 };
+
+export const EMPTY_TRACK_MIME_TYPE = 'application/x-git-for-music-empty-track';
 
 function assertFiniteNumber(name: string, value: unknown): asserts value is number {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
@@ -102,11 +105,13 @@ export function buildRenderableTrackSegments({
   trackStartOffsetMs,
   segments,
   fallbackDurationMs,
+  allowImplicitSegment = true,
 }: {
   trackVersionId: string;
   trackStartOffsetMs: number;
   segments: Array<{ id: string } & SegmentLike>;
   fallbackDurationMs: number;
+  allowImplicitSegment?: boolean;
 }): TrackTimelineSegment[] {
   if (segments.length > 0) {
     return [...segments]
@@ -123,6 +128,10 @@ export function buildRenderableTrackSegments({
         trackVersionId,
         isImplicit: false,
       }));
+  }
+
+  if (!allowImplicitSegment) {
+    return [];
   }
 
   const durationMs = Math.max(0, fallbackDurationMs);

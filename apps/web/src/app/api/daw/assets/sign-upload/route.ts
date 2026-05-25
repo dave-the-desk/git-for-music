@@ -83,6 +83,7 @@ export async function POST(req: NextRequest) {
     name: body.name ?? null,
     sourceVersionId: body.sourceVersionId ?? null,
     timingChoice: body.timingChoice ?? null,
+    attachMode: body.attachMode ?? 'track-version',
     createTrack,
     fileName: body.fileName,
     contentType: body.contentType,

@@ -16,7 +16,11 @@ import {
   type LocalOperationQueueState,
   type LocalProjectSyncOperationStatus,
 } from '@/features/daw/state/local-operation-queue';
-import type { LocalProjectState, TempoMetadataEntry } from '@/features/daw/state/local-project-state';
+import type {
+  LocalProjectState,
+  TempoMetadataEntry,
+  TrackRecordingTake,
+} from '@/features/daw/state/local-project-state';
 
 type SyncableOperationType = Exclude<DawOperationType, 'ASSET_ADDED'>;
 
@@ -172,6 +176,61 @@ export class ProjectSyncEngine {
       },
     });
 
+    await this.persistProjectState();
+  }
+
+  async upsertTrackRecordingTake(
+    trackId: string,
+    take: LocalProjectState['recordingTakesByTrackId'][string][number],
+  ) {
+    if (!this.state.projectState) return;
+
+    const currentTakesByTrackId = this.state.projectState.recordingTakesByTrackId ?? {};
+    const currentTakes = currentTakesByTrackId[trackId] ?? [];
+    const nextTakes = [...currentTakes.filter((entry) => entry.id !== take.id), take];
+    this.setState({
+      projectState: {
+        ...this.state.projectState,
+        recordingTakesByTrackId: {
+          ...currentTakesByTrackId,
+          [trackId]: nextTakes,
+        },
+      },
+    });
+    await this.persistProjectState();
+  }
+
+  async setTrackRecordingTakes(trackId: string, takes: TrackRecordingTake[]) {
+    if (!this.state.projectState) return;
+
+    const currentTakesByTrackId = this.state.projectState.recordingTakesByTrackId ?? {};
+    this.setState({
+      projectState: {
+        ...this.state.projectState,
+        recordingTakesByTrackId: {
+          ...currentTakesByTrackId,
+          [trackId]: takes,
+        },
+      },
+    });
+    await this.persistProjectState();
+  }
+
+  async removeTrackRecordingTake(trackId: string, takeId: string) {
+    if (!this.state.projectState) return;
+
+    const currentTakesByTrackId = this.state.projectState.recordingTakesByTrackId ?? {};
+    const currentTakes = currentTakesByTrackId[trackId] ?? [];
+    const nextTakes = currentTakes.filter((entry) => entry.id !== takeId);
+    this.setState({
+      projectState: {
+        ...this.state.projectState,
+        recordingTakesByTrackId: {
+          ...currentTakesByTrackId,
+          [trackId]: nextTakes,
+        },
+      },
+    });
     await this.persistProjectState();
   }
 
@@ -359,6 +418,10 @@ export class ProjectSyncEngine {
           bootstrappedState.tempoMetadataByTrackVersionId = {
             ...(cachedProject?.projectState?.tempoMetadataByTrackVersionId ?? {}),
             ...bootstrappedState.tempoMetadataByTrackVersionId,
+          };
+          bootstrappedState.recordingTakesByTrackId = {
+            ...(cachedProject?.projectState?.recordingTakesByTrackId ?? {}),
+            ...bootstrappedState.recordingTakesByTrackId,
           };
         }
         this.setState({

@@ -38,6 +38,33 @@ export type DawTrack = {
   segments: TrackTimelineSegment[];
 };
 
+export type TrackRecordingTake = {
+  id: string;
+  trackId: string;
+  trackVersionId: string | null;
+  name: string;
+  startOffsetMs: number;
+  durationMs: number;
+  sourceStartMs: number;
+  sourceEndMs: number;
+  timelineStartMs: number;
+  timelineEndMs: number;
+  gainDb: number;
+  fadeInMs: number;
+  fadeOutMs: number;
+  isMuted: boolean;
+  position: number;
+  storageKey: string;
+  assetId: string | null;
+  previewUrl: string | null;
+  recordedTempoBpm: number | null;
+  sourceTempoBpm: number | null;
+  status: 'preview' | 'uploading' | 'complete' | 'error';
+  syncStatus: 'idle' | 'uploading' | 'complete' | 'error';
+  error?: string;
+  createdAt: string;
+};
+
 export type DawVersion = {
   id: string;
   label: string;
@@ -65,4 +92,5 @@ export type LocalProjectState = {
   comments: DemoComment[];
   annotations: DemoAnnotation[];
   tempoMetadataByTrackVersionId: Record<string, TempoMetadataEntry>;
+  recordingTakesByTrackId: Record<string, TrackRecordingTake[]>;
 };

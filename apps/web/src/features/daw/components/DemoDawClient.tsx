@@ -34,9 +34,10 @@ import { AudioPlaybackEngine } from '@/features/daw/engine/playback-engine';
 import {
   buildDawVisualProjection,
   PX_PER_SECOND,
+  type TrackLaneRecordingTakeProjection,
   type WaveformCache,
 } from '@/features/daw/rendering/visual-renderer';
-import { isValidSplitTime } from '@/features/daw/utils/segments';
+import { EMPTY_TRACK_MIME_TYPE, isValidSplitTime } from '@/features/daw/utils/segments';
 import {
   formatBarBeatLabel,
   isValidTempoBpm,
@@ -56,13 +57,19 @@ import {
   type UploadModalState,
   formatTimeMs,
 } from '@/features/daw/state/ui-state';
-import type { DawTrack, DawVersion, TrackTimelineSegment } from '@/features/daw/state/local-project-state';
+import type {
+  DawTrack,
+  DawVersion,
+  TrackRecordingTake,
+  TrackTimelineSegment,
+} from '@/features/daw/state/local-project-state';
 import type { TimelineHistoryEntry } from '@/features/daw/state/operation-reducer';
 import {
   getDisplayedTrackSegments as selectDisplayedTrackSegments,
   getRenderableTrackSegments as selectRenderableTrackSegments,
   getTrackDurationMs as selectTrackDurationMs,
   getTrackStartOffsetMs as selectTrackStartOffsetMs,
+  isTrackAudioOccupied,
   groupCommentsByTrackId,
   selectTracks,
   selectVersionById,
@@ -70,6 +77,75 @@ import {
 } from '@/features/daw/state/selectors';
 
 const DEMO_PAGE_TRACK_HEIGHT = TRACK_HEIGHT;
+
+function createBlankTrackBytes(sampleRate = 44100, durationMs = 1, channels = 1) {
+  const bitsPerSample = 16;
+  const bytesPerSample = bitsPerSample / 8;
+  const sampleCount = Math.max(1, Math.round((sampleRate * durationMs) / 1000));
+  const blockAlign = channels * bytesPerSample;
+  const byteRate = sampleRate * blockAlign;
+  const dataSize = sampleCount * blockAlign;
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+  let offset = 0;
+
+  function writeString(value: string) {
+    for (let index = 0; index < value.length; index += 1) {
+      view.setUint8(offset + index, value.charCodeAt(index));
+    }
+    offset += value.length;
+  }
+
+  writeString('RIFF');
+  view.setUint32(offset, 36 + dataSize, true);
+  offset += 4;
+  writeString('WAVE');
+  writeString('fmt ');
+  view.setUint32(offset, 16, true);
+  offset += 4;
+  view.setUint16(offset, 1, true);
+  offset += 2;
+  view.setUint16(offset, channels, true);
+  offset += 2;
+  view.setUint32(offset, sampleRate, true);
+  offset += 4;
+  view.setUint32(offset, byteRate, true);
+  offset += 4;
+  view.setUint16(offset, blockAlign, true);
+  offset += 2;
+  view.setUint16(offset, bitsPerSample, true);
+  offset += 2;
+  writeString('data');
+  view.setUint32(offset, dataSize, true);
+  offset += 4;
+
+  return new Uint8Array(buffer);
+}
+
+function createBlankTrackFile() {
+  return new File([createBlankTrackBytes()], `empty-track-${Date.now()}.wav`, {
+    type: EMPTY_TRACK_MIME_TYPE,
+  });
+}
+
+function hasLocalBlankTrackOverride(
+  trackVersionId: string,
+  segmentLayoutOverrides: Record<string, TrackTimelineSegment[]>,
+) {
+  return (
+    Object.prototype.hasOwnProperty.call(segmentLayoutOverrides, trackVersionId) &&
+    (segmentLayoutOverrides[trackVersionId]?.length ?? 0) === 0
+  );
+}
+
+function getEffectiveTrackMimeType(
+  track: DawTrack,
+  segmentLayoutOverrides: Record<string, TrackTimelineSegment[]>,
+) {
+  return hasLocalBlankTrackOverride(track.trackVersionId, segmentLayoutOverrides)
+    ? EMPTY_TRACK_MIME_TYPE
+    : track.mimeType;
+}
 
 type TimelineDragState =
   | {
@@ -83,6 +159,15 @@ type TimelineDragState =
       trackVersionId: string;
       segmentId: string;
       originalTimelineStartMs: number;
+      startX: number;
+    }
+  | {
+      kind: 'recording-take';
+      trackId: string;
+      trackVersionId: string;
+      takeId: string;
+      originalTakes: TrackRecordingTake[];
+      originalTake: TrackRecordingTake;
       startX: number;
     };
 
@@ -136,39 +221,6 @@ function resolveArmedRecordingTarget(
     trackVersionId: armedTrack.trackVersionId,
     trackName: armedTrack.trackName,
   };
-}
-
-function createSilentWavBlob(durationMs = 500, sampleRate = 44100) {
-  const sampleCount = Math.max(1, Math.round((durationMs / 1000) * sampleRate));
-  const channels = 1;
-  const bitsPerSample = 16;
-  const blockAlign = (channels * bitsPerSample) / 8;
-  const byteRate = sampleRate * blockAlign;
-  const dataSize = sampleCount * blockAlign;
-  const buffer = new ArrayBuffer(44 + dataSize);
-  const view = new DataView(buffer);
-
-  const writeString = (offset: number, value: string) => {
-    for (let index = 0; index < value.length; index += 1) {
-      view.setUint8(offset + index, value.charCodeAt(index));
-    }
-  };
-
-  writeString(0, 'RIFF');
-  view.setUint32(4, 36 + dataSize, true);
-  writeString(8, 'WAVE');
-  writeString(12, 'fmt ');
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
-  view.setUint16(22, channels, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, byteRate, true);
-  view.setUint16(32, blockAlign, true);
-  view.setUint16(34, bitsPerSample, true);
-  writeString(36, 'data');
-  view.setUint32(40, dataSize, true);
-
-  return new Blob([buffer], { type: 'audio/wav' });
 }
 
 export function DemoDawClient({
@@ -365,6 +417,10 @@ export function DemoDawClient({
   const playbackEngine = useMemo(() => new AudioPlaybackEngine(), []);
   const projectSyncEngine = useMemo(() => new ProjectSyncEngine(), []);
   const [projectSyncState, setProjectSyncState] = useState(() => projectSyncEngine.getState());
+  const recordingTakesByTrackId = useMemo(
+    () => projectSyncState.projectState?.recordingTakesByTrackId ?? {},
+    [projectSyncState.projectState?.recordingTakesByTrackId],
+  );
 
   useEffect(() => {
     return projectSyncEngine.subscribe((state) => {
@@ -547,6 +603,7 @@ export function DemoDawClient({
     () =>
       selectedTracks.map((track) => ({
         ...track,
+        mimeType: getEffectiveTrackMimeType(track, segmentLayoutOverrides),
         startOffsetMs: selectTrackStartOffsetMs(track, offsetOverrides),
         durationMs: durationByTrackVersionId[track.trackVersionId] ?? track.durationMs,
         isMuted: mutedTrackVersionIds.has(track.trackVersionId),
@@ -571,6 +628,170 @@ export function DemoDawClient({
     ],
   );
 
+  const playbackEngineProjection = useMemo(() => {
+    const tracks = playbackTracks.map((track) => ({
+      trackId: track.trackId,
+      trackName: track.trackName,
+      trackVersionId: track.trackVersionId,
+      storageKey: track.storageKey,
+      mimeType: track.mimeType ?? null,
+      startOffsetMs: track.startOffsetMs,
+      durationMs: track.durationMs,
+      segments: track.segments,
+      recordedTempoBpm: track.recordedTempoBpm,
+      sourceTempoBpm: track.sourceTempoBpm,
+      isMuted: track.isMuted,
+    }));
+    const projectedMutedTrackVersionIds = new Set(mutedTrackVersionIds);
+    const projectedSoloTrackVersionIds = new Set(soloTrackVersionIds);
+    const projectedGainByTrackVersionId = { ...gainByTrackVersionId };
+
+    const previewTrackHost = temporaryRecordingTrack
+      ? selectedTracks.find((track) => track.trackId === temporaryRecordingTrack.targetTrackId) ??
+        selectedTracks.find((track) => track.trackVersionId === temporaryRecordingTrack.serverTrackVersionId) ??
+        selectedTracks.find((track) => track.trackVersionId === temporaryRecordingTrack.targetTrackVersionId) ??
+        null
+      : null;
+    const previewTrackMaterialized =
+      temporaryRecordingTrack?.serverTrackVersionId
+        ? selectedTracks.some((track) => track.trackVersionId === temporaryRecordingTrack.serverTrackVersionId)
+        : false;
+
+    if (
+      temporaryRecordingTrack?.blob &&
+      temporaryRecordingTrack.previewUrl &&
+      temporaryRecordingTrack.status !== 'recording' &&
+      (!temporaryRecordingTrack.serverTrackVersionId || !previewTrackMaterialized) &&
+      previewTrackHost
+    ) {
+      const previewTrackVersionId = `temporary-recording:${temporaryRecordingTrack.id}`;
+      const previewMuted = mutedTrackVersionIds.has(previewTrackHost.trackVersionId);
+      const previewSolo = soloTrackVersionIds.has(previewTrackHost.trackVersionId);
+      const previewGain = gainByTrackVersionId[previewTrackHost.trackVersionId] ?? 1;
+      tracks.push({
+        trackId: `temporary-recording:${temporaryRecordingTrack.id}`,
+        trackName: temporaryRecordingTrack.name,
+        trackVersionId: previewTrackVersionId,
+        storageKey: temporaryRecordingTrack.previewUrl,
+        mimeType: null,
+        startOffsetMs: temporaryRecordingTrack.startOffsetMs,
+        durationMs: temporaryRecordingTrack.durationMs,
+        isMuted: previewMuted,
+        segments: [
+          {
+            id: `temporary-recording-segment:${temporaryRecordingTrack.id}`,
+            trackVersionId: previewTrackVersionId,
+            sourceStartMs: 0,
+            sourceEndMs: temporaryRecordingTrack.durationMs,
+            timelineStartMs: temporaryRecordingTrack.startOffsetMs,
+            timelineEndMs: temporaryRecordingTrack.startOffsetMs + temporaryRecordingTrack.durationMs,
+            durationMs: temporaryRecordingTrack.durationMs,
+            startMs: 0,
+            endMs: temporaryRecordingTrack.durationMs,
+            gainDb: 0,
+            fadeInMs: 0,
+            fadeOutMs: 0,
+            isMuted: false,
+            position: 0,
+            isImplicit: false,
+          },
+        ],
+        recordedTempoBpm:
+          temporaryRecordingTrack.recordedTempoBpm ??
+          previewTrackHost.recordedTempoBpm ??
+          sharedDemoTempoBpm,
+        sourceTempoBpm:
+          temporaryRecordingTrack.sourceTempoBpm ?? previewTrackHost.sourceTempoBpm ?? sharedDemoTempoBpm,
+      });
+      if (previewMuted) {
+        projectedMutedTrackVersionIds.add(previewTrackVersionId);
+      }
+      if (previewSolo) {
+        projectedSoloTrackVersionIds.add(previewTrackVersionId);
+      }
+      projectedGainByTrackVersionId[previewTrackVersionId] = previewGain;
+    }
+
+    for (const [trackId, takes] of Object.entries(recordingTakesByTrackId)) {
+      const hostTrack = selectedTracks.find((track) => track.trackId === trackId);
+      if (!hostTrack) continue;
+
+      const hostMuted = mutedTrackVersionIds.has(hostTrack.trackVersionId);
+      const hostSolo = soloTrackVersionIds.has(hostTrack.trackVersionId);
+      const hostGain = gainByTrackVersionId[hostTrack.trackVersionId] ?? 1;
+
+      for (const take of takes) {
+        if (take.status !== 'complete' || !take.storageKey) continue;
+
+        const syntheticTrackVersionId = `recording:${take.id}`;
+        const sourceStartMs = Math.max(0, take.sourceStartMs ?? 0);
+        const sourceEndMs = Math.max(sourceStartMs, take.sourceEndMs ?? sourceStartMs + Math.max(0, take.durationMs));
+        const timelineStartMs = Math.max(0, take.timelineStartMs ?? take.startOffsetMs);
+        const timelineEndMs = Math.max(
+          timelineStartMs,
+          take.timelineEndMs ?? timelineStartMs + Math.max(0, take.durationMs),
+        );
+        const durationMs = Math.max(0, timelineEndMs - timelineStartMs);
+        tracks.push({
+          trackId: `recording:${take.id}`,
+          trackName: take.name || hostTrack.trackName,
+          trackVersionId: syntheticTrackVersionId,
+          storageKey: take.storageKey,
+          mimeType: null,
+          startOffsetMs: timelineStartMs,
+          durationMs,
+          isMuted: hostMuted,
+          segments: [
+            {
+              id: `recording-segment:${take.id}`,
+              trackVersionId: syntheticTrackVersionId,
+              sourceStartMs,
+              sourceEndMs,
+              timelineStartMs,
+              timelineEndMs,
+              durationMs,
+              startMs: sourceStartMs,
+              endMs: sourceEndMs,
+              gainDb: take.gainDb ?? 0,
+              fadeInMs: take.fadeInMs ?? 0,
+              fadeOutMs: take.fadeOutMs ?? 0,
+              isMuted: take.isMuted ?? false,
+              position: take.position,
+              isImplicit: false,
+            },
+          ],
+          recordedTempoBpm:
+            take.recordedTempoBpm ?? hostTrack.recordedTempoBpm ?? sharedDemoTempoBpm,
+          sourceTempoBpm: take.sourceTempoBpm ?? hostTrack.sourceTempoBpm ?? sharedDemoTempoBpm,
+        });
+
+        if (hostMuted) {
+          projectedMutedTrackVersionIds.add(syntheticTrackVersionId);
+        }
+        if (hostSolo) {
+          projectedSoloTrackVersionIds.add(syntheticTrackVersionId);
+        }
+        projectedGainByTrackVersionId[syntheticTrackVersionId] = hostGain;
+      }
+    }
+
+    return {
+      tracks,
+      mutedTrackVersionIds: projectedMutedTrackVersionIds,
+      soloTrackVersionIds: projectedSoloTrackVersionIds,
+      gainByTrackVersionId: projectedGainByTrackVersionId,
+    };
+  }, [
+    gainByTrackVersionId,
+    mutedTrackVersionIds,
+    playbackTracks,
+    recordingTakesByTrackId,
+    temporaryRecordingTrack,
+    selectedTracks,
+    sharedDemoTempoBpm,
+    soloTrackVersionIds,
+  ]);
+
   const visualProjection = useMemo(
     () =>
       buildDawVisualProjection({
@@ -581,6 +802,7 @@ export function DemoDawClient({
         offsetOverrides,
         segmentLayoutOverrides,
         temporaryRecordingTrack,
+        recordingTakesByTrackId,
         waveformCache,
         minimumWidthPx: 400,
       }),
@@ -591,21 +813,34 @@ export function DemoDawClient({
       playbackTracks,
       segmentLayoutOverrides,
       splitHover,
+      recordingTakesByTrackId,
       temporaryRecordingTrack,
       waveformCache,
     ],
   );
 
   const totalDurationMs = useMemo(
-    () =>
-      selectTotalDurationMs({
-        tracks: selectedTracks,
-        durationByTrackVersionId,
-        offsetOverrides,
-        segmentLayoutOverrides,
-        temporaryRecordingTrack,
-      }),
-    [selectedTracks, durationByTrackVersionId, offsetOverrides, segmentLayoutOverrides, temporaryRecordingTrack],
+    () => {
+      const recordingTakeEndsMs = Object.values(recordingTakesByTrackId).flatMap((takes) =>
+        takes.map((take) => take.startOffsetMs + take.durationMs),
+      );
+
+      if (temporaryRecordingTrack) {
+        recordingTakeEndsMs.push(temporaryRecordingTrack.startOffsetMs + temporaryRecordingTrack.durationMs);
+      }
+
+      return Math.max(
+        selectTotalDurationMs({
+          tracks: selectedTracks,
+          durationByTrackVersionId,
+          offsetOverrides,
+          segmentLayoutOverrides,
+          temporaryRecordingTrack,
+        }),
+        ...recordingTakeEndsMs,
+      );
+    },
+    [durationByTrackVersionId, offsetOverrides, recordingTakesByTrackId, segmentLayoutOverrides, selectedTracks, temporaryRecordingTrack],
   );
 
   const totalTimelineWidth = visualProjection.totalTimelineWidthPx;
@@ -616,9 +851,7 @@ export function DemoDawClient({
     if (!temporaryRecordingTrack.serverTrackVersionId) return;
 
     const recordingHasBeenMaterialized = selectedTracks.some(
-      (track) =>
-        track.trackId === temporaryRecordingTrack.targetTrackId &&
-        track.trackVersionId === temporaryRecordingTrack.serverTrackVersionId,
+      (track) => track.trackVersionId === temporaryRecordingTrack.serverTrackVersionId,
     );
     if (!recordingHasBeenMaterialized) return;
 
@@ -644,21 +877,18 @@ export function DemoDawClient({
 
   useEffect(() => {
     playbackEngine.setProject({
-      tracks: playbackTracks,
-      mutedTrackVersionIds,
-      soloTrackVersionIds,
-      gainByTrackVersionId,
+      tracks: playbackEngineProjection.tracks,
+      mutedTrackVersionIds: playbackEngineProjection.mutedTrackVersionIds,
+      soloTrackVersionIds: playbackEngineProjection.soloTrackVersionIds,
+      gainByTrackVersionId: playbackEngineProjection.gainByTrackVersionId,
       localTempoBpm: resolvedLocalTempoBpm,
       sharedDemoTempoBpm,
     });
   }, [
-    gainByTrackVersionId,
-    mutedTrackVersionIds,
     playbackEngine,
-    playbackTracks,
+    playbackEngineProjection,
     resolvedLocalTempoBpm,
     sharedDemoTempoBpm,
-    soloTrackVersionIds,
   ]);
 
   useEffect(() => {
@@ -685,6 +915,7 @@ export function DemoDawClient({
         comments: [],
         annotations: [],
         tempoMetadataByTrackVersionId: {},
+        recordingTakesByTrackId: {},
       },
     });
   }, [demoId, currentVersionId, projectId, projectSyncEngine, versions]);
@@ -699,8 +930,8 @@ export function DemoDawClient({
   }, [projectSyncEngine]);
 
   useEffect(() => {
-    void playbackEngine.preloadTracks(playbackTracks);
-  }, [playbackEngine, playbackTracks]);
+    void playbackEngine.preloadTracks(playbackEngineProjection.tracks);
+  }, [playbackEngine, playbackEngineProjection.tracks]);
 
   useEffect(() => {
     return () => {
@@ -962,7 +1193,10 @@ export function DemoDawClient({
 
   function getRenderableTrackSegments(track: DawTrack) {
     return selectRenderableTrackSegments({
-      track,
+      track: {
+        ...track,
+        mimeType: getEffectiveTrackMimeType(track, segmentLayoutOverrides),
+      },
       offsetOverrides,
       segmentLayoutOverrides,
       durationByTrackVersionId,
@@ -974,6 +1208,27 @@ export function DemoDawClient({
       ...prev,
       [trackVersionId]: segments,
     }));
+  }
+
+  function getTrackRecordingTakes(trackId: string) {
+    return [...(recordingTakesByTrackId[trackId] ?? [])].sort(
+      (a, b) => (a.position ?? 0) - (b.position ?? 0),
+    );
+  }
+
+  function getTrackRecordingTake(trackId: string, takeId: string) {
+    return recordingTakesByTrackId[trackId]?.find((take) => take.id === takeId) ?? null;
+  }
+
+  function normalizeRecordingTakeOrder(takes: TrackRecordingTake[]) {
+    return takes.map((take, index) => ({
+      ...take,
+      position: index,
+    }));
+  }
+
+  async function replaceTrackRecordingTakes(trackId: string, takes: TrackRecordingTake[]) {
+    await projectSyncEngine.setTrackRecordingTakes(trackId, normalizeRecordingTakeOrder(takes));
   }
 
   function pushTimelineHistory(entry: TimelineHistoryEntry) {
@@ -1022,11 +1277,23 @@ export function DemoDawClient({
       } catch (error) {
         setDragError(error instanceof Error ? error.message : 'Could not undo segment move');
       }
+    } else if (lastEntry.kind === 'move-segment-track') {
+      setTrackSegmentLayout(lastEntry.sourceTrackVersionId, lastEntry.previousSourceSegments);
+      setTrackSegmentLayout(lastEntry.targetTrackVersionId, lastEntry.previousTargetSegments);
+      setSelectedTrackVersionId(lastEntry.previousSelectedTrackVersionId);
+      setSelectedSegmentId(lastEntry.previousSelectedSegmentId);
     } else if (lastEntry.kind === 'cut') {
       setTrackSegmentLayout(lastEntry.trackVersionId, lastEntry.previousSegments);
       setSelectedSegmentId(lastEntry.previousSelectedSegmentId);
     } else if (lastEntry.kind === 'delete-segment') {
       setTrackSegmentLayout(lastEntry.trackVersionId, lastEntry.previousSegments);
+      setSelectedSegmentId(lastEntry.previousSelectedSegmentId);
+    } else if (lastEntry.kind === 'recording-takes') {
+      await replaceTrackRecordingTakes(lastEntry.trackId, lastEntry.previousTakes);
+      if (lastEntry.targetTrackId && lastEntry.targetPreviousTakes) {
+        await replaceTrackRecordingTakes(lastEntry.targetTrackId, lastEntry.targetPreviousTakes);
+      }
+      setSelectedTrackVersionId(lastEntry.previousSelectedTrackVersionId);
       setSelectedSegmentId(lastEntry.previousSelectedSegmentId);
     }
 
@@ -1038,13 +1305,46 @@ export function DemoDawClient({
     if (!selectedSegmentId) return false;
 
     const selectedTrack = selectedTracks.find((track) =>
-      getRenderableTrackSegments(track).some((segment) => segment.id === selectedSegmentId),
+      getRenderableTrackSegments(track).some((segment) => segment.id === selectedSegmentId) ||
+      getTrackRecordingTakes(track.trackId).some((take) => take.id === selectedSegmentId),
     );
     if (!selectedTrack) return false;
 
+    const renderedSegments = getRenderableTrackSegments(selectedTrack);
     const currentSegments = getDisplayedTrackSegments(selectedTrack);
-    const selectedSegment = currentSegments.find((segment) => segment.id === selectedSegmentId);
-    if (!selectedSegment || selectedSegment.isImplicit) return false;
+    const currentRecordingTakes = getTrackRecordingTakes(selectedTrack.trackId);
+    const selectedSegment =
+      currentSegments.find((segment) => segment.id === selectedSegmentId) ??
+      renderedSegments.find((segment) => segment.id === selectedSegmentId);
+    const selectedRecordingTake = currentRecordingTakes.find((take) => take.id === selectedSegmentId);
+    if (!selectedSegment && !selectedRecordingTake) return false;
+
+    if (selectedRecordingTake) {
+      const selectedRecordingTakeIndex = currentRecordingTakes.findIndex((take) => take.id === selectedRecordingTake.id);
+      const nextRecordingTakes = currentRecordingTakes
+        .filter((take) => take.id !== selectedRecordingTake.id)
+        .map((take, index) => ({ ...take, position: index }));
+      await replaceTrackRecordingTakes(selectedTrack.trackId, nextRecordingTakes);
+      setSelectedSegmentId(
+        nextRecordingTakes[selectedRecordingTakeIndex]?.id ??
+          nextRecordingTakes[selectedRecordingTakeIndex - 1]?.id ??
+          nextRecordingTakes[0]?.id ??
+          null,
+      );
+      setSplitError(null);
+      setDragError(null);
+      pushTimelineHistory({
+        kind: 'recording-takes',
+        trackId: selectedTrack.trackId,
+        previousTakes: currentRecordingTakes,
+        nextTakes: nextRecordingTakes,
+        previousSelectedTrackVersionId: selectedTrackVersionId,
+        previousSelectedSegmentId: selectedSegmentId,
+      });
+      return true;
+    }
+
+    if (!selectedSegment) return false;
 
     const nextSegments = currentSegments
       .filter((segment) => segment.id !== selectedSegment.id)
@@ -1052,22 +1352,25 @@ export function DemoDawClient({
         ...segment,
         position: index,
       }));
+    const previousSegmentsForHistory = selectedSegment.isImplicit ? renderedSegments : currentSegments;
 
-    try {
-      await commitEditingOperation(audioEditingEngine.deleteSegment(selectedTrack.trackVersionId, selectedSegment.id));
-    } catch (error) {
-      setDragError(error instanceof Error ? error.message : 'Could not delete clip');
-      return false;
+    if (!selectedSegment.isImplicit) {
+      try {
+        await commitEditingOperation(audioEditingEngine.deleteSegment(selectedTrack.trackVersionId, selectedSegment.id));
+      } catch (error) {
+        setDragError(error instanceof Error ? error.message : 'Could not delete clip');
+        return false;
+      }
     }
 
-    setTrackSegmentLayout(selectedTrack.trackVersionId, nextSegments);
+    setTrackSegmentLayout(selectedTrack.trackVersionId, nextSegments.length > 0 ? nextSegments : []);
     setSelectedSegmentId(nextSegments.find((segment) => segment.position === selectedSegment.position)?.id ?? null);
     setSplitError(null);
     setDragError(null);
     pushTimelineHistory({
       kind: 'delete-segment',
       trackVersionId: selectedTrack.trackVersionId,
-      previousSegments: currentSegments,
+      previousSegments: previousSegmentsForHistory,
       nextSegments,
       previousSelectedSegmentId: selectedSegmentId,
     });
@@ -1173,7 +1476,7 @@ export function DemoDawClient({
   }
 
   function handleTransportStop() {
-    if (currentRecordingState === 'recording') {
+    if (isLiveRecordingRef.current || currentRecordingState === 'recording') {
       recordingControlsRef.current?.stopRecording();
       return;
     }
@@ -1536,6 +1839,104 @@ export function DemoDawClient({
     });
   }
 
+  async function moveRecordingTakeWithinTrack(track: DawTrack, take: TrackRecordingTake, nextTimelineStartMs: number) {
+    const currentTakes = getTrackRecordingTakes(track.trackId);
+    const nextTakes = currentTakes.map((entry) =>
+      entry.id === take.id
+        ? {
+            ...entry,
+            startOffsetMs: nextTimelineStartMs,
+            timelineStartMs: nextTimelineStartMs,
+            timelineEndMs: nextTimelineStartMs + entry.durationMs,
+          }
+        : entry,
+    );
+
+    await replaceTrackRecordingTakes(track.trackId, nextTakes);
+  }
+
+  async function moveRecordingTakeAcrossTracks(
+    sourceTrack: DawTrack,
+    targetTrack: DawTrack,
+    take: TrackRecordingTake,
+    nextTimelineStartMs: number,
+  ) {
+    const sourceTakes = getTrackRecordingTakes(sourceTrack.trackId).filter((entry) => entry.id !== take.id);
+    const targetTakes = getTrackRecordingTakes(targetTrack.trackId).filter((entry) => entry.id !== take.id);
+    const movedTake: TrackRecordingTake = {
+      ...take,
+      trackId: targetTrack.trackId,
+      startOffsetMs: nextTimelineStartMs,
+      timelineStartMs: nextTimelineStartMs,
+      timelineEndMs: nextTimelineStartMs + take.durationMs,
+    };
+
+    await replaceTrackRecordingTakes(sourceTrack.trackId, sourceTakes);
+    await replaceTrackRecordingTakes(targetTrack.trackId, [...targetTakes, movedTake]);
+  }
+
+  async function splitRecordingTakeOnTrack(
+    track: DawTrack,
+    take: TrackRecordingTake,
+    splitTimeWithinSegmentMs: number,
+  ) {
+    const sourceStartMs = Math.max(0, take.sourceStartMs);
+    const sourceEndMs = Math.max(sourceStartMs, take.sourceEndMs);
+    if (!isValidSplitTime({ startMs: sourceStartMs, endMs: sourceEndMs }, splitTimeWithinSegmentMs)) {
+      setSplitError('Split point is too close to the clip boundary');
+      return;
+    }
+
+    const currentTakes = getTrackRecordingTakes(track.trackId);
+    const currentIndex = currentTakes.findIndex((entry) => entry.id === take.id);
+    if (currentIndex < 0) return;
+
+    const leftDurationMs = splitTimeWithinSegmentMs - sourceStartMs;
+    const rightDurationMs = sourceEndMs - splitTimeWithinSegmentMs;
+    const baseTimelineStartMs = take.timelineStartMs;
+
+    const leftTake: TrackRecordingTake = {
+      ...take,
+      durationMs: leftDurationMs,
+      sourceStartMs,
+      sourceEndMs: splitTimeWithinSegmentMs,
+      startOffsetMs: baseTimelineStartMs,
+      timelineStartMs: baseTimelineStartMs,
+      timelineEndMs: baseTimelineStartMs + leftDurationMs,
+    };
+    const rightTake: TrackRecordingTake = {
+      ...take,
+      id: crypto.randomUUID(),
+      durationMs: rightDurationMs,
+      sourceStartMs: splitTimeWithinSegmentMs,
+      sourceEndMs,
+      startOffsetMs: baseTimelineStartMs + leftDurationMs,
+      timelineStartMs: baseTimelineStartMs + leftDurationMs,
+      timelineEndMs: baseTimelineStartMs + leftDurationMs + rightDurationMs,
+      position: take.position + 1,
+    };
+
+    const nextTakes = currentTakes
+      .filter((entry) => entry.id !== take.id)
+      .flatMap((entry) => (entry.position > take.position ? [{ ...entry, position: entry.position + 1 }] : [entry]))
+      .concat([leftTake, rightTake])
+      .sort((a, b) => a.position - b.position)
+      .map((entry, index) => ({ ...entry, position: index }));
+
+    await replaceTrackRecordingTakes(track.trackId, nextTakes);
+    setSelectedSegmentId(leftTake.id);
+    setSplitError(null);
+    setDragError(null);
+    pushTimelineHistory({
+      kind: 'recording-takes',
+      trackId: track.trackId,
+      previousTakes: currentTakes,
+      nextTakes,
+      previousSelectedTrackVersionId: selectedTrackVersionId,
+      previousSelectedSegmentId: selectedSegmentId,
+    });
+  }
+
   function toggleMute(trackVersionId: string) {
     const willMute = !mutedTrackVersionIds.has(trackVersionId);
     playbackEngine.setTrackMuted(trackVersionId, willMute);
@@ -1606,6 +2007,60 @@ export function DemoDawClient({
         : segment,
     );
     setTrackSegmentLayout(trackVersionId, nextSegments);
+  }
+
+  function moveSegmentAcrossTracksLocally(
+    sourceTrack: DawTrack,
+    targetTrack: DawTrack,
+    segment: TrackTimelineSegment,
+    timelineStartMs: number,
+  ) {
+    const sourceSegments = getDisplayedTrackSegments(sourceTrack);
+    const targetSegments = getDisplayedTrackSegments(targetTrack);
+    const nextSourceSegments = sourceSegments
+      .filter((current) => current.id !== segment.id)
+      .map((current, index) => ({
+        ...current,
+        position: index,
+      }));
+    const nextTargetSegments = [
+      ...targetSegments.filter((current) => current.id !== segment.id),
+      {
+        ...segment,
+        trackVersionId: targetTrack.trackVersionId,
+        timelineStartMs,
+        timelineEndMs: timelineStartMs + segment.durationMs,
+        position: targetSegments.length,
+      },
+    ].map((current, index) => ({
+      ...current,
+      position: index,
+    }));
+
+    setTrackSegmentLayout(sourceTrack.trackVersionId, nextSourceSegments.length > 0 ? nextSourceSegments : []);
+    setTrackSegmentLayout(targetTrack.trackVersionId, nextTargetSegments);
+    setSelectedTrackVersionId(targetTrack.trackVersionId);
+    setSelectedSegmentId(segment.id);
+    setDragError(null);
+    setSplitError(null);
+    pushTimelineHistory({
+      kind: 'move-segment-track',
+      sourceTrackVersionId: sourceTrack.trackVersionId,
+      targetTrackVersionId: targetTrack.trackVersionId,
+      segmentId: segment.id,
+      previousSourceSegments: sourceSegments,
+      previousTargetSegments: targetSegments,
+      nextSourceSegments,
+      nextTargetSegments,
+      previousSelectedTrackVersionId: selectedTrackVersionId,
+      previousSelectedSegmentId: selectedSegmentId,
+    });
+  }
+
+  function getTrackVersionIdFromPoint(clientX: number, clientY: number) {
+    const element = document.elementFromPoint(clientX, clientY);
+    const trackRow = element?.closest<HTMLElement>('[data-track-version-id]');
+    return trackRow?.dataset.trackVersionId ?? null;
   }
 
   async function commitTrackDrag(track: DawTrack) {
@@ -1682,6 +2137,8 @@ export function DemoDawClient({
 
     if (drag.kind === 'track') {
       updateTrackDrag(drag.trackVersionId, drag.originalStartOffsetMs);
+    } else if (drag.kind === 'recording-take') {
+      void replaceTrackRecordingTakes(drag.trackId, drag.originalTakes);
     } else {
       updateSegmentDrag(drag.trackVersionId, drag.segmentId, drag.originalTimelineStartMs);
     }
@@ -1781,6 +2238,7 @@ export function DemoDawClient({
       return;
     }
 
+    if (drag.kind !== 'segment') return;
     if (drag.segmentId !== segment.id) return;
     const rawMs = drag.originalTimelineStartMs + deltaMs;
     const snapped = Math.max(0, snapMsToGrid(rawMs, getActiveTiming(), snapResolution));
@@ -1802,7 +2260,23 @@ export function DemoDawClient({
       return;
     }
 
+    if (drag.kind !== 'segment') return;
     if (drag.segmentId !== segment.id) return;
+
+    const currentSegments = getDisplayedTrackSegments(track);
+    const currentSegment = currentSegments.find((current) => current.id === drag.segmentId) ?? segment;
+    const finalTimelineStartMs = currentSegment?.timelineStartMs ?? drag.originalTimelineStartMs;
+    const dropTrackVersionId = getTrackVersionIdFromPoint(e.clientX, e.clientY) ?? track.trackVersionId;
+
+    if (dropTrackVersionId !== track.trackVersionId) {
+      const targetTrack = selectedTracks.find((candidate) => candidate.trackVersionId === dropTrackVersionId);
+      if (targetTrack) {
+        moveSegmentAcrossTracksLocally(track, targetTrack, currentSegment, finalTimelineStartMs);
+      }
+      dragRef.current = null;
+      return;
+    }
+
     await commitSegmentDrag(track);
   }
 
@@ -1811,6 +2285,129 @@ export function DemoDawClient({
     if (!drag || drag.trackVersionId !== track.trackVersionId) return;
     if (drag.kind === 'segment' && drag.segmentId !== segment.id) return;
     cancelTimelineDrag();
+  }
+
+  function handleRecordingTakePointerDown(
+    e: React.PointerEvent<HTMLButtonElement>,
+    track: DawTrack,
+    take: TrackLaneRecordingTakeProjection,
+  ) {
+    setSelectedTrackVersionId(track.trackVersionId);
+    if (timelineTool !== 'select') return;
+
+    const rawTake = getTrackRecordingTake(track.trackId, take.id);
+    if (!rawTake) return;
+
+    e.stopPropagation();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    setSelectedSegmentId(take.id);
+    setSplitError(null);
+    setDragError(null);
+    dragRef.current = {
+      kind: 'recording-take',
+      trackId: track.trackId,
+      trackVersionId: track.trackVersionId,
+      takeId: take.id,
+      originalTakes: getTrackRecordingTakes(track.trackId),
+      originalTake: rawTake,
+      startX: e.clientX,
+    };
+  }
+
+  function handleRecordingTakePointerMove(
+    e: React.PointerEvent<HTMLButtonElement>,
+    track: DawTrack,
+    take: TrackLaneRecordingTakeProjection,
+  ) {
+    if (timelineTool !== 'select') return;
+    const drag = dragRef.current;
+    if (!drag || drag.kind !== 'recording-take' || drag.takeId !== take.id) return;
+
+    const deltaX = e.clientX - drag.startX;
+    const deltaMs = (deltaX / PX_PER_SECOND) * 1000;
+    const rawMs = drag.originalTake.startOffsetMs + deltaMs;
+    const snapped = Math.max(0, snapMsToGrid(rawMs, getActiveTiming(), snapResolution));
+    void moveRecordingTakeWithinTrack(track, drag.originalTake, snapped);
+  }
+
+  async function handleRecordingTakePointerUp(
+    e: React.PointerEvent<HTMLButtonElement>,
+    track: DawTrack,
+    take: TrackLaneRecordingTakeProjection,
+  ) {
+    if (timelineTool !== 'select') return;
+    const drag = dragRef.current;
+    if (!drag || drag.kind !== 'recording-take' || drag.takeId !== take.id) return;
+
+    e.currentTarget.releasePointerCapture?.(e.pointerId);
+    dragRef.current = null;
+
+    const currentTakes = getTrackRecordingTakes(track.trackId);
+    const currentTake = currentTakes.find((entry) => entry.id === take.id) ?? drag.originalTake;
+    const dropTrackVersionId = getTrackVersionIdFromPoint(e.clientX, e.clientY) ?? track.trackVersionId;
+    const targetTrack = selectedTracks.find((candidate) => candidate.trackVersionId === dropTrackVersionId);
+    const finalTimelineStartMs = currentTake.timelineStartMs ?? currentTake.startOffsetMs;
+
+    if (targetTrack && targetTrack.trackId !== track.trackId) {
+      const targetPreviousTakes = getTrackRecordingTakes(targetTrack.trackId);
+      await moveRecordingTakeAcrossTracks(track, targetTrack, currentTake, finalTimelineStartMs);
+      pushTimelineHistory({
+        kind: 'recording-takes',
+        trackId: track.trackId,
+        previousTakes: drag.originalTakes,
+        nextTakes: currentTakes.filter((entry) => entry.id !== take.id),
+        previousSelectedTrackVersionId: selectedTrackVersionId,
+        previousSelectedSegmentId: selectedSegmentId,
+        targetTrackId: targetTrack.trackId,
+        targetPreviousTakes,
+        targetNextTakes: getTrackRecordingTakes(targetTrack.trackId),
+      });
+      setSelectedTrackVersionId(targetTrack.trackVersionId);
+      setSelectedSegmentId(currentTake.id);
+      return;
+    }
+
+    const normalizedTakes = normalizeRecordingTakeOrder(currentTakes);
+    await replaceTrackRecordingTakes(track.trackId, normalizedTakes);
+    if (finalTimelineStartMs !== drag.originalTake.startOffsetMs) {
+      pushTimelineHistory({
+        kind: 'recording-takes',
+        trackId: track.trackId,
+        previousTakes: drag.originalTakes,
+        nextTakes: normalizedTakes,
+        previousSelectedTrackVersionId: selectedTrackVersionId,
+        previousSelectedSegmentId: selectedSegmentId,
+      });
+    }
+  }
+
+  function handleRecordingTakePointerCancel(track: DawTrack, take: TrackLaneRecordingTakeProjection) {
+    const drag = dragRef.current;
+    if (!drag || drag.kind !== 'recording-take' || drag.takeId !== take.id) return;
+    void replaceTrackRecordingTakes(track.trackId, drag.originalTakes);
+    dragRef.current = null;
+  }
+
+  async function handleRecordingTakeClick(
+    e: React.MouseEvent<HTMLButtonElement>,
+    track: DawTrack,
+    take: TrackLaneRecordingTakeProjection,
+  ) {
+    if (timelineTool === 'split') {
+      e.stopPropagation();
+      const rawTake = getTrackRecordingTake(track.trackId, take.id);
+      if (!rawTake) return;
+      const clickedTimelineMs = getTimelineTimeFromPointer(e.currentTarget, e.clientX, take.segment.timelineStartMs);
+      const splitTimeWithinSegmentMs =
+        take.segment.sourceStartMs + Math.max(0, clickedTimelineMs - take.segment.timelineStartMs);
+
+      await splitRecordingTakeOnTrack(track, rawTake, splitTimeWithinSegmentMs);
+      return;
+    }
+
+    e.stopPropagation();
+    setSelectedSegmentId(take.id);
+    setSplitError(null);
   }
 
   function handleSplitHoverMove(
@@ -2076,9 +2673,7 @@ export function DemoDawClient({
   }
 
   async function handleAddTrack() {
-    const silentBlob = createSilentWavBlob();
-    const silentFile = new File([silentBlob], `empty-track-${Date.now()}.wav`, { type: 'audio/wav' });
-    await performUpload(silentFile, 'Empty Track', 'uploadUnchanged');
+    await performUpload(createBlankTrackFile(), 'Empty Track', 'uploadUnchanged');
   }
 
   function handleRecordingStreamReady(
@@ -2128,22 +2723,32 @@ export function DemoDawClient({
       left: Math.max(0, (recordingStartMs / 1000) * PX_PER_SECOND - 48),
       behavior: 'auto',
     });
-    setTemporaryRecordingTrack((prev) =>
-      prev
-          ? {
-              ...prev,
-              status: 'preview',
-              syncStatus: 'idle',
-              blob,
-              previewUrl,
-              durationMs,
-              recordedTempoBpm: prev.recordedTempoBpm,
-              sourceTempoBpm: prev.sourceTempoBpm,
-              peaks: [],
-            }
-        : prev,
-    );
+    const previewRecording = {
+      ...(temporaryRecordingTrack ?? {
+        id: `rec-${Date.now()}`,
+        name: activeRecordingTarget?.trackName ?? 'Recording',
+        targetTrackId: activeRecordingTarget?.trackId ?? '',
+        targetTrackVersionId: activeRecordingTarget?.trackVersionId ?? '',
+        targetTrackName: activeRecordingTarget?.trackName ?? '',
+        startOffsetMs: recordingStartMs,
+        startedAtPlayheadMs: recordingStartMs,
+        durationMs,
+        recordedTempoBpm: resolvedLocalTempoBpm,
+        sourceTempoBpm: resolvedLocalTempoBpm,
+        status: 'preview' as const,
+        syncStatus: 'idle' as const,
+      }),
+      status: 'preview' as const,
+      syncStatus: 'idle' as const,
+      blob,
+      previewUrl,
+      durationMs,
+      peaks: [],
+    };
+    setTemporaryRecordingTrack(previewRecording);
     void publishPresence('online');
+
+    void handleSaveRecording(previewRecording);
 
     try {
       const peaks = await ingestEngine.generateLocalPeaks(blob);
@@ -2165,19 +2770,8 @@ export function DemoDawClient({
     }
   }, [timelineTool]);
 
-  function handleDiscardRecording() {
-    if (recordingPreviewUrlRef.current) {
-      ingestEngine.revokeObjectUrl(recordingPreviewUrlRef.current);
-      recordingPreviewUrlRef.current = null;
-    }
-    isLiveRecordingRef.current = false;
-    setTemporaryRecordingTrack(null);
-    setRecordingStream(null);
-    void publishPresence('online');
-  }
-
-  async function handleSaveRecording() {
-    const track = temporaryRecordingTrack;
+  async function handleSaveRecording(recording: TemporaryRecordingTrack | null = temporaryRecordingTrack) {
+    const track = recording ?? temporaryRecordingTrack;
     if (!track?.blob || !track.targetTrackId) {
       setTemporaryRecordingTrack((prev) =>
         prev ? { ...prev, status: 'error', syncStatus: 'error', error: 'Arm a track before saving.' } : prev,
@@ -2192,12 +2786,64 @@ export function DemoDawClient({
     void publishPresence('online');
 
     try {
+      const armedTrack = selectedTracks.find((candidate) => candidate.trackVersionId === track.targetTrackVersionId);
+      const shouldCreateNewTrack = !isTrackAudioOccupied(armedTrack);
+
+      if (!shouldCreateNewTrack) {
+        const data = await ingestEngine.uploadRecordedClipBlob({
+          demoId,
+          projectId,
+          name: track.name,
+          sourceVersionId: selectedVersionId,
+          trackId: track.targetTrackId,
+          startOffsetMs: track.startOffsetMs,
+          recordedTempoBpm: track.recordedTempoBpm,
+          sourceTempoBpm: track.sourceTempoBpm,
+          timingChoice: 'uploadUnchanged',
+          blob: track.blob,
+        });
+
+        await projectSyncEngine.upsertTrackRecordingTake(track.targetTrackId, {
+          id: track.id,
+          trackId: track.targetTrackId,
+          trackVersionId: null,
+          name: track.name,
+          startOffsetMs: track.startOffsetMs,
+          durationMs: track.durationMs,
+          sourceStartMs: 0,
+          sourceEndMs: track.durationMs,
+          timelineStartMs: track.startOffsetMs,
+          timelineEndMs: track.startOffsetMs + track.durationMs,
+          gainDb: 0,
+          fadeInMs: 0,
+          fadeOutMs: 0,
+          isMuted: false,
+          position: getTrackRecordingTakes(track.targetTrackId).length,
+          storageKey: `/${data.objectKey}`,
+          assetId: data.assetId,
+          previewUrl: null,
+          recordedTempoBpm: track.recordedTempoBpm,
+          sourceTempoBpm: track.sourceTempoBpm,
+          status: 'complete',
+          syncStatus: 'complete',
+          createdAt: new Date().toISOString(),
+        });
+
+        if (recordingPreviewUrlRef.current) {
+          ingestEngine.revokeObjectUrl(recordingPreviewUrlRef.current);
+          recordingPreviewUrlRef.current = null;
+        }
+
+        setTemporaryRecordingTrack(null);
+        return;
+      }
+
       const data = await ingestEngine.uploadRecordedBlob({
         demoId,
         projectId,
         name: track.name,
         sourceVersionId: selectedVersionId,
-        trackId: track.targetTrackId,
+        trackId: shouldCreateNewTrack ? undefined : track.targetTrackId,
         startOffsetMs: track.startOffsetMs,
         recordedTempoBpm: track.recordedTempoBpm,
         sourceTempoBpm: track.sourceTempoBpm,
@@ -2256,7 +2902,7 @@ export function DemoDawClient({
     setProcessingMessage(null);
     const uploadTempoBpm = resolvedLocalTempoBpm;
     try {
-      const data = await ingestEngine.uploadAudioFile({
+      const data = (await ingestEngine.uploadAudioFile({
         demoId,
         projectId,
         name,
@@ -2265,7 +2911,7 @@ export function DemoDawClient({
         sourceTempoBpm: uploadTempoBpm,
         timingChoice,
         file,
-      });
+      })) as Awaited<ReturnType<typeof ingestEngine.uploadRecordedBlob>>;
       await projectSyncEngine.setTrackTempoMetadata(data.trackVersionId, {
         recordedTempoBpm: uploadTempoBpm,
         sourceTempoBpm: uploadTempoBpm,
@@ -3085,6 +3731,7 @@ export function DemoDawClient({
                     className={`flex border-b border-gray-800 last:border-b-0 ${
                       selectedTrack?.trackVersionId === track.trackVersionId ? 'bg-slate-950/40' : ''
                     }`}
+                    data-track-version-id={track.trackVersionId}
                     style={{ minWidth: TRACK_LABEL_WIDTH + totalTimelineWidth }}
                   >
                     <div
@@ -3258,10 +3905,33 @@ export function DemoDawClient({
                           currentTimeMs={currentTimeMs}
                           scrollContainerRef={tracksScrollContainerRef}
                           onNameChange={handleRecordingNameChange}
-                          onSave={() => void handleSaveRecording()}
-                          onDiscard={handleDiscardRecording}
                         />
                       ) : null}
+
+                      {trackLane?.recordingTakes?.map((take) => {
+                        const isSelected = selectedSegmentId === take.id;
+                        const isDraggingRecordingTake =
+                          dragRef.current?.kind === 'recording-take' && dragRef.current.takeId === take.id;
+
+                        return (
+                          <TrackSegmentClip
+                            key={take.id}
+                            trackVersionId={track.trackVersionId}
+                            segment={take.segment}
+                            storageKey={take.storageKey}
+                            isSelected={isSelected}
+                            isMuted={isMuted}
+                            isDragging={isDraggingRecordingTake}
+                            timelineTool={timelineTool}
+                            currentTimeMs={currentTimeMs}
+                            onPointerDown={(event) => handleRecordingTakePointerDown(event, track, take)}
+                            onPointerMove={(event) => handleRecordingTakePointerMove(event, track, take)}
+                            onPointerUp={(event) => void handleRecordingTakePointerUp(event, track, take)}
+                            onPointerCancel={() => handleRecordingTakePointerCancel(track, take)}
+                            onClick={(event) => void handleRecordingTakeClick(event, track, take)}
+                          />
+                        );
+                      })}
 
                       {trackComments.length > 0 ? (
                         <div className="pointer-events-none absolute inset-x-0 top-0 z-30 h-10 overflow-visible">

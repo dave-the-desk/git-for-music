@@ -15,8 +15,6 @@ type Props = {
   currentTimeMs: number;
   scrollContainerRef: RefObject<HTMLDivElement | null>;
   onNameChange: (name: string) => void;
-  onSave: () => void;
-  onDiscard: () => void;
 };
 
 export function RecordingTrackLane({
@@ -25,8 +23,6 @@ export function RecordingTrackLane({
   currentTimeMs,
   scrollContainerRef,
   onNameChange,
-  onSave,
-  onDiscard,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const waveformContainerRef = useRef<HTMLDivElement | null>(null);
@@ -278,16 +274,12 @@ export function RecordingTrackLane({
               placeholder={recording.targetTrackName}
               className="w-24 rounded border border-gray-700 bg-gray-950 px-1 py-0.5 text-[10px] text-white outline-none"
             />
-            <button type="button" onClick={onSave} className="text-[10px] text-indigo-400 hover:text-indigo-300">
-              {recording.syncStatus === 'complete' ? 'Saved' : recording.syncStatus === 'uploading' ? 'Saving…' : 'Save'}
-            </button>
-            <button type="button" onClick={onDiscard} className="text-[10px] text-gray-500 hover:text-gray-300">
-              Discard
-            </button>
             <span className="rounded bg-red-500/10 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-red-200">
               {recording.status === 'recording'
                 ? 'Rec'
-                : recording.syncStatus === 'error'
+                : recording.syncStatus === 'uploading'
+                  ? 'Saving…'
+                  : recording.syncStatus === 'error'
                   ? 'Err'
                   : recording.syncStatus === 'complete'
                     ? 'Saved'

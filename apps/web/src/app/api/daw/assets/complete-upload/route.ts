@@ -39,6 +39,7 @@ export async function POST(req: NextRequest) {
       bitDepth: body.bitDepth,
       channelCount: body.channelCount,
       sizeBytes: body.sizeBytes,
+      attachMode: body.attachMode ?? 'track-version',
     },
   });
 }

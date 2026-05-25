@@ -3,6 +3,7 @@ import type {
   DawTrack,
   DawVersion,
   LocalProjectState,
+  TrackRecordingTake,
   TrackTimelineSegment,
 } from './local-project-state';
 import type { DawProjectOperationRecord, DawProjectBootstrapResponse, DawSegmentSnapshot } from '@/features/daw/protocol';
@@ -22,6 +23,18 @@ export type TimelineHistoryEntry =
       nextTimelineStartMs: number;
     }
   | {
+      kind: 'move-segment-track';
+      sourceTrackVersionId: string;
+      targetTrackVersionId: string;
+      segmentId: string;
+      previousSourceSegments: TrackTimelineSegment[];
+      previousTargetSegments: TrackTimelineSegment[];
+      nextSourceSegments: TrackTimelineSegment[];
+      nextTargetSegments: TrackTimelineSegment[];
+      previousSelectedTrackVersionId: string | null;
+      previousSelectedSegmentId: string | null;
+    }
+  | {
       kind: 'cut';
       trackVersionId: string;
       previousSegments: TrackTimelineSegment[];
@@ -34,6 +47,17 @@ export type TimelineHistoryEntry =
       previousSegments: TrackTimelineSegment[];
       nextSegments: TrackTimelineSegment[];
       previousSelectedSegmentId: string | null;
+    }
+  | {
+      kind: 'recording-takes';
+      trackId: string;
+      previousTakes: TrackRecordingTake[];
+      nextTakes: TrackRecordingTake[];
+      previousSelectedTrackVersionId: string | null;
+      previousSelectedSegmentId: string | null;
+      targetTrackId?: string;
+      targetPreviousTakes?: TrackRecordingTake[];
+      targetNextTakes?: TrackRecordingTake[];
     };
 
 type CommentLike = {
@@ -403,6 +427,7 @@ export function createLocalProjectStateFromBootstrap(
     comments: normalizeComments(snapshot.comments),
     annotations: normalizeAnnotations(snapshot.annotations),
     tempoMetadataByTrackVersionId,
+    recordingTakesByTrackId: {},
   };
 }
 

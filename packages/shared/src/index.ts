@@ -216,6 +216,12 @@ export interface UploadTrackResponse {
   processingJobIds: string[];
 }
 
+export interface UploadRecordedClipResponse {
+  assetId: string;
+  objectKey: string;
+  status: 'ready';
+}
+
 export interface DawAssetUploadRequest {
   demoId: string;
   projectId: string;
@@ -224,6 +230,7 @@ export interface DawAssetUploadRequest {
   name?: string;
   sourceVersionId?: string;
   timingChoice?: UploadTimingChoice;
+  attachMode?: 'track-version' | 'clip';
   fileName: string;
   contentType: string;
   sizeBytes: number;
@@ -248,6 +255,7 @@ export interface DawAssetCompleteUploadRequest {
   bitDepth: number;
   channelCount: number;
   sizeBytes: number;
+  attachMode?: 'track-version' | 'clip';
 }
 
 export interface DawAssetSignedDownloadResponse {
