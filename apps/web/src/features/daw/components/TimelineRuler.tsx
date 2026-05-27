@@ -11,15 +11,41 @@ type TimelineRulerProps = {
   timing: DemoTimingMetadata | null;
 };
 
-export function TimelineRuler({ totalDurationMs, currentTimeMs, onSeek, timing }: TimelineRulerProps) {
+export type TimelineTick = {
+  leftPx: number;
+  label: string;
+  isMajor: boolean;
+};
+
+export function getTimelineWidthPx(totalDurationMs: number) {
+  return Math.max(totalDurationMs / 1000, 10) * PX_PER_SECOND;
+}
+
+export function getTimelineTicks(totalDurationMs: number, timing: DemoTimingMetadata | null) {
   const totalSeconds = Math.max(totalDurationMs / 1000, 10);
-  const totalWidth = totalSeconds * PX_PER_SECOND;
   const useMusicalGrid = !!timing && isValidTempoBpm(timing.tempoBpm);
   const secondsPerBeat = useMusicalGrid && timing ? 60 / (timing.tempoBpm ?? 120) : null;
   const tickIntervalSeconds = totalSeconds > 60 ? 5 : 1;
-  const ticks = useMusicalGrid
+  const tickTimes = useMusicalGrid
     ? getBeatTimes(totalSeconds, timing)
     : Array.from({ length: Math.floor(totalSeconds / tickIntervalSeconds) + 1 }, (_, index) => index * tickIntervalSeconds);
+
+  return tickTimes.map<TimelineTick>((s) => {
+    const isMajor = useMusicalGrid && timing && secondsPerBeat
+      ? Math.floor(s / secondsPerBeat) % timing.timeSignature.num === 0
+      : s % 5 === 0;
+
+    return {
+      leftPx: Math.round(s * PX_PER_SECOND),
+      label: useMusicalGrid ? formatBarBeatLabel(s, timing) ?? '' : formatSeconds(s),
+      isMajor,
+    };
+  });
+}
+
+export function TimelineRuler({ totalDurationMs, currentTimeMs, onSeek, timing }: TimelineRulerProps) {
+  const totalWidth = getTimelineWidthPx(totalDurationMs);
+  const ticks = getTimelineTicks(totalDurationMs, timing);
 
   function handleClick(event: React.MouseEvent<HTMLDivElement>) {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -34,27 +60,21 @@ export function TimelineRuler({ totalDurationMs, currentTimeMs, onSeek, timing }
     <div className="relative select-none" style={{ width: totalWidth, height: 28 }} onClick={handleClick}>
       <div className="absolute inset-0 bg-gray-900" />
 
-      {ticks.map((s) => {
-        const left = s * PX_PER_SECOND;
-        const isMajor = useMusicalGrid && timing && secondsPerBeat
-          ? Math.floor(s / secondsPerBeat) % timing.timeSignature.num === 0
-          : s % 5 === 0;
-        const label = useMusicalGrid ? formatBarBeatLabel(s, timing) : formatSeconds(s);
-        return (
-          <div key={s} className="absolute bottom-0 flex flex-col items-center" style={{ left }}>
-            <span className="mb-0.5 text-[10px] leading-none text-gray-400">
-              {useMusicalGrid || isMajor ? label : ''}
-            </span>
-            <div
-              className="w-px"
-              style={{
-                height: isMajor ? 8 : 4,
-                backgroundColor: isMajor ? '#6b7280' : '#374151',
-              }}
-            />
-          </div>
-        );
-      })}
+      {ticks.map((tick) => (
+        <div
+          key={tick.leftPx}
+          className="absolute bottom-0 flex flex-col items-center"
+          style={{ left: tick.leftPx }}
+        >
+          <div
+            className="w-px"
+            style={{
+              height: 12,
+              backgroundColor: '#475569',
+            }}
+          />
+        </div>
+      ))}
 
       <div
         className="absolute top-0 z-10 h-full w-px bg-yellow-400"

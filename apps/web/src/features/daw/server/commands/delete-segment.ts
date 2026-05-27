@@ -2,6 +2,8 @@ import { prisma } from '@git-for-music/db';
 import { NextResponse } from 'next/server';
 import type { ApiError } from '@git-for-music/shared';
 import { recordDemoDawOperation } from '@/features/daw/server/snapshot-builder';
+import type { DawProjectOperationRecord } from '@/features/daw/protocol';
+import { emitAcceptedDawOperation } from '@/features/daw/server/realtime-gateway';
 
 export async function deleteSegmentCommand(input: {
   userId: string;
@@ -53,7 +55,7 @@ export async function deleteSegmentCommand(input: {
     return NextResponse.json<ApiError>({ error: 'Segment not found' }, { status: 404 });
   }
 
-  await prisma.$transaction(async (tx) => {
+  const operation = await prisma.$transaction(async (tx) => {
     await tx.segment.delete({
       where: { id: segment.id },
     });
@@ -72,7 +74,7 @@ export async function deleteSegmentCommand(input: {
       },
     });
 
-    await recordDemoDawOperation(
+    return recordDemoDawOperation(
       tx,
       {
         projectId: segment.trackVersion.track.demo.project.id,
@@ -89,6 +91,23 @@ export async function deleteSegmentCommand(input: {
       },
     );
   });
+
+  if (operation.created) {
+    emitAcceptedDawOperation({
+      projectId: segment.trackVersion.track.demo.project.id,
+      demoId: segment.trackVersion.track.demoId,
+      operationId: operation.id,
+      operationSeq: operation.operationSeq,
+      actorUserId: input.userId,
+      operationType: operation.operationType ?? 'SEGMENT_DELETED',
+      payload: operation.payload as DawProjectOperationRecord['payload'],
+      createdAt: operation.createdAt ?? new Date().toISOString(),
+      idempotencyKey: operation.idempotencyKey ?? null,
+      clientOperationId: operation.clientOperationId ?? null,
+      baseSnapshotId: operation.baseSnapshotId ?? null,
+      baseOperationSeq: operation.baseOperationSeq ?? 0,
+    });
+  }
 
   return new NextResponse(null, { status: 204 });
 }

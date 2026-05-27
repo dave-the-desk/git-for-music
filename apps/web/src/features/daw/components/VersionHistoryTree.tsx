@@ -1,37 +1,14 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
-import type { DawVersion } from '@/features/daw/state/local-project-state';
+import type { DawVersion, ProjectOperationHistoryEntry } from '@/features/daw/state/local-project-state';
+import { buildTree, type TreeNode } from '@/features/daw/components/version-tree-layout';
 import {
   buildVersionsById,
+  getHistoryOperationBadgeLabel,
   getVersionDisplayLabel,
   getVersionOperationSummary,
 } from '@/features/daw/utils/version-labels';
-
-type TreeNode = {
-  version: DawVersion;
-  children: TreeNode[];
-};
-
-function buildTree(versions: DawVersion[]): TreeNode[] {
-  const childrenOf = new Map<string | null, DawVersion[]>();
-  for (const v of versions) {
-    const key = v.parentId ?? null;
-    if (!childrenOf.has(key)) childrenOf.set(key, []);
-    childrenOf.get(key)!.push(v);
-  }
-  for (const siblings of childrenOf.values()) {
-    siblings.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-  }
-  function build(parentId: string | null): TreeNode[] {
-    return (childrenOf.get(parentId) ?? []).map((v) => ({
-      version: v,
-      children: build(v.id),
-    }));
-  }
-  return build(null);
-}
 
 function shortId(id: string) {
   return id.slice(0, 7);
@@ -223,6 +200,7 @@ export type VersionHistoryTreeProps = {
   demoId: string;
   baseOperationSeq: number;
   versions: DawVersion[];
+  operationHistory: ProjectOperationHistoryEntry[];
   currentVersionId: string;
   selectedVersionId: string;
   onSelectVersion: (id: string) => void;
@@ -233,11 +211,11 @@ export function VersionHistoryTree({
   demoId,
   baseOperationSeq,
   versions,
+  operationHistory,
   currentVersionId,
   selectedVersionId,
   onSelectVersion,
 }: VersionHistoryTreeProps) {
-  const router = useRouter();
   const [renameState, setRenameState] = useState<RenameState | null>(null);
   const [isExpanded, setIsExpanded] = useState(false);
 
@@ -253,6 +231,16 @@ export function VersionHistoryTree({
   const currentVersionSummary = currentVersion
     ? getVersionOperationSummary(currentVersion, versionsById)
     : 'No version selected';
+  const selectedHistoryVersionId = selectedVersionId || currentVersionId;
+  const selectedHistoryVersion = versionsById.get(selectedHistoryVersionId) ?? currentVersion ?? null;
+  const selectedHistoryEntries = useMemo(
+    () =>
+      operationHistory
+        .filter((entry) => entry.versionId === selectedHistoryVersionId || entry.currentVersionId === selectedHistoryVersionId)
+        .slice(-8)
+        .reverse(),
+    [operationHistory, selectedHistoryVersionId],
+  );
 
   async function commitRename() {
     if (!renameState) return;
@@ -269,7 +257,7 @@ export function VersionHistoryTree({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           demoId,
-          operationType: 'VERSION_TIMING_UPDATED',
+          operationType: 'VERSION_RENAMED',
           payload: {
             versionId: renameState.versionId,
             label: trimmed,
@@ -291,7 +279,6 @@ export function VersionHistoryTree({
         return;
       }
       setRenameState(null);
-      router.refresh();
     } catch {
       setRenameState((prev) =>
         prev ? { ...prev, saving: false, error: 'Something went wrong' } : null,
@@ -325,6 +312,45 @@ export function VersionHistoryTree({
           <p className="mt-1 max-w-2xl text-xs text-slate-400">
             Versions run left to right, branches drop to lower rows, and the canvas scrolls when it gets wide.
           </p>
+        </div>
+      </div>
+
+      <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-4 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+              Recent activity
+            </p>
+            <p className="mt-1 text-sm font-semibold text-white">
+              {selectedHistoryVersion ? getVersionDisplayLabel(selectedHistoryVersion, versionsById) : 'Selected version'}
+            </p>
+          </div>
+          <p className="text-xs text-slate-500">
+            {selectedHistoryEntries.length} item{selectedHistoryEntries.length === 1 ? '' : 's'}
+          </p>
+        </div>
+
+        <div className="mt-3 space-y-2">
+          {selectedHistoryEntries.length > 0 ? (
+            selectedHistoryEntries.map((entry) => (
+              <div key={entry.operationId} className="rounded-md border border-slate-800 bg-slate-900/80 px-3 py-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="rounded-full border border-slate-700 bg-slate-950 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-300">
+                    {getHistoryOperationBadgeLabel(entry.operationType)}
+                  </span>
+                  <span className="text-[11px] text-slate-500">{formatDate(entry.createdAt)}</span>
+                </div>
+                <p className="mt-1 text-sm text-slate-100">{entry.summary}</p>
+                <p className="mt-1 text-[11px] text-slate-500">
+                  by {shortId(entry.actorUserId)} · {shortId(entry.operationId)}
+                </p>
+              </div>
+            ))
+          ) : (
+            <div className="rounded-md border border-dashed border-slate-800 bg-slate-950 px-3 py-4 text-sm text-slate-500">
+              No recent activity for this version yet.
+            </div>
+          )}
         </div>
       </div>
 

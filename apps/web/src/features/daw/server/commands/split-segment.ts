@@ -1,8 +1,10 @@
 import { prisma } from '@git-for-music/db';
 import { NextResponse } from 'next/server';
 import type { ApiError, SplitSegmentRequest, SplitSegmentResponse } from '@git-for-music/shared';
+import type { DawProjectOperationRecord } from '@/features/daw/protocol';
 import { MIN_SPLIT_DISTANCE_MS, splitSegment } from '@/features/daw/utils/segments';
 import { recordDemoDawOperation } from '@/features/daw/server/snapshot-builder';
+import { emitAcceptedDawOperation } from '@/features/daw/server/realtime-gateway';
 
 const POSITION_EPSILON_MS = 0.001;
 
@@ -170,7 +172,7 @@ export async function splitSegmentCommand(input: {
   try {
     const { leftSegment, rightSegment } = splitSegment(baseSegment, splitTimeMs, MIN_SPLIT_DISTANCE_MS);
 
-    const ids = await prisma.$transaction(async (tx) => {
+  const ids = await prisma.$transaction(async (tx) => {
       if (existingSegment) {
         await tx.segment.updateMany({
           where: {
@@ -219,7 +221,7 @@ export async function splitSegmentCommand(input: {
           },
         });
 
-        await recordDemoDawOperation(
+        const operation = await recordDemoDawOperation(
           tx,
           {
             projectId: trackVersion.track.demo.project.id,
@@ -275,6 +277,7 @@ export async function splitSegmentCommand(input: {
             isMuted: rightSegment.isMuted,
             position: rightSegment.position,
           }),
+          operation,
         };
       }
 
@@ -312,7 +315,7 @@ export async function splitSegmentCommand(input: {
         },
       });
 
-      await recordDemoDawOperation(
+      const operation = await recordDemoDawOperation(
         tx,
         {
           projectId: trackVersion.track.demo.project.id,
@@ -378,8 +381,26 @@ export async function splitSegmentCommand(input: {
           isMuted: rightSegment.isMuted,
           position: rightSegment.position,
         }),
+        operation,
       };
     });
+
+    if (ids.operation.created) {
+      emitAcceptedDawOperation({
+        projectId: trackVersion.track.demo.project.id,
+        demoId: trackVersion.track.demoId,
+        operationId: ids.operation.id,
+        operationSeq: ids.operation.operationSeq,
+        actorUserId: input.userId,
+        operationType: ids.operation.operationType ?? 'SEGMENT_SPLIT',
+        payload: ids.operation.payload as DawProjectOperationRecord['payload'],
+        createdAt: ids.operation.createdAt ?? new Date().toISOString(),
+        idempotencyKey: ids.operation.idempotencyKey ?? null,
+        clientOperationId: ids.operation.clientOperationId ?? null,
+        baseSnapshotId: ids.operation.baseSnapshotId ?? null,
+        baseOperationSeq: ids.operation.baseOperationSeq ?? 0,
+      });
+    }
 
     const splitResponse: SplitSegmentResponse = {
       trackVersionId: trackVersion.id,

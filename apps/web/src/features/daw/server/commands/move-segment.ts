@@ -2,6 +2,8 @@ import { prisma } from '@git-for-music/db';
 import { NextResponse } from 'next/server';
 import type { ApiError, MoveSegmentResponse } from '@git-for-music/shared';
 import { recordDemoDawOperation } from '@/features/daw/server/snapshot-builder';
+import type { DawProjectOperationRecord } from '@/features/daw/protocol';
+import { emitAcceptedDawOperation } from '@/features/daw/server/realtime-gateway';
 
 function parseFiniteNumber(value: unknown) {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
@@ -92,7 +94,7 @@ export async function moveSegmentCommand(input: {
       },
     });
 
-    await recordDemoDawOperation(
+    const operation = await recordDemoDawOperation(
       tx,
       {
         projectId: segment.trackVersion.track.demo.project.id,
@@ -110,26 +112,43 @@ export async function moveSegmentCommand(input: {
       },
     );
 
-    return next;
+    return { next, operation };
   });
 
+  if (updated.operation.created) {
+    emitAcceptedDawOperation({
+      projectId: segment.trackVersion.track.demo.project.id,
+      demoId: segment.trackVersion.track.demoId,
+      operationId: updated.operation.id,
+      operationSeq: updated.operation.operationSeq,
+      actorUserId: input.userId,
+      operationType: updated.operation.operationType ?? 'SEGMENT_MOVED',
+      payload: updated.operation.payload as DawProjectOperationRecord['payload'],
+      createdAt: updated.operation.createdAt ?? new Date().toISOString(),
+      idempotencyKey: updated.operation.idempotencyKey ?? null,
+      clientOperationId: updated.operation.clientOperationId ?? null,
+      baseSnapshotId: updated.operation.baseSnapshotId ?? null,
+      baseOperationSeq: updated.operation.baseOperationSeq ?? 0,
+    });
+  }
+
   const response: MoveSegmentResponse = {
-    trackVersionId: updated.trackVersionId,
+    trackVersionId: updated.next.trackVersionId,
     segment: {
-      id: updated.id,
-      trackVersionId: updated.trackVersionId,
-      startMs: updated.startMs,
-      endMs: updated.endMs,
-      sourceStartMs: updated.startMs,
-      sourceEndMs: updated.endMs,
-      timelineStartMs: updated.timelineStartMs ?? updated.startMs,
-      timelineEndMs: (updated.timelineStartMs ?? updated.startMs) + (updated.endMs - updated.startMs),
-      durationMs: updated.endMs - updated.startMs,
-      gainDb: updated.gainDb,
-      fadeInMs: updated.fadeInMs,
-      fadeOutMs: updated.fadeOutMs,
-      isMuted: updated.isMuted,
-      position: updated.position,
+      id: updated.next.id,
+      trackVersionId: updated.next.trackVersionId,
+      startMs: updated.next.startMs,
+      endMs: updated.next.endMs,
+      sourceStartMs: updated.next.startMs,
+      sourceEndMs: updated.next.endMs,
+      timelineStartMs: updated.next.timelineStartMs ?? updated.next.startMs,
+      timelineEndMs: (updated.next.timelineStartMs ?? updated.next.startMs) + (updated.next.endMs - updated.next.startMs),
+      durationMs: updated.next.endMs - updated.next.startMs,
+      gainDb: updated.next.gainDb,
+      fadeInMs: updated.next.fadeInMs,
+      fadeOutMs: updated.next.fadeOutMs,
+      isMuted: updated.next.isMuted,
+      position: updated.next.position,
     },
   };
 

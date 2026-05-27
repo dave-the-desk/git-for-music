@@ -66,6 +66,42 @@ export interface DemoDawSnapshotData {
   versions: DemoDawSnapshotVersion[];
   comments: DemoDawSnapshotComment[];
   annotations: DemoDawSnapshotAnnotation[];
+  operationHistory: DemoDawSnapshotOperationHistoryItem[];
+  recordingTakesByTrackId: Record<string, Array<{
+    id: string;
+    trackId: string;
+    trackVersionId: string | null;
+    name: string;
+    startOffsetMs: number;
+    durationMs: number;
+    sourceStartMs: number;
+    sourceEndMs: number;
+    timelineStartMs: number;
+    timelineEndMs: number;
+    gainDb: number;
+    fadeInMs: number;
+    fadeOutMs: number;
+    isMuted: boolean;
+    position: number;
+    storageKey: string;
+    assetId: string | null;
+    recordedTempoBpm: number | null;
+    sourceTempoBpm: number | null;
+    createdAt: string;
+  }>>;
+}
+
+export interface DemoDawSnapshotOperationHistoryItem {
+  operationId: string;
+  operationType: DemoDawOperationType;
+  versionId: string | null;
+  currentVersionId: string | null;
+  trackId: string | null;
+  takeId: string | null;
+  segmentId: string | null;
+  summary: string;
+  actorUserId: string;
+  createdAt: string;
 }
 
 export interface DemoDawSnapshotComment {
@@ -115,8 +151,21 @@ export type DemoDawOperationType =
   | 'SEGMENT_TRIMMED'
   | 'SEGMENT_MERGED'
   | 'CROSSFADE_SET'
+  | 'VERSION_CREATED'
+  | 'VERSION_RENAMED'
+  | 'VERSION_SELECTED'
+  | 'VERSION_BRANCH_CREATED'
+  | 'VERSION_REVERTED_FROM'
+  | 'CURRENT_VERSION_CHANGED'
+  | 'TRACK_VERSION_CREATED'
+  | 'VERSION_PARENT_SET'
+  | 'VERSION_OPERATION_SUMMARY_SET'
+  | 'VERSION_NODE_ADDED'
   | 'VERSION_TIMING_UPDATED'
   | 'ASSET_ADDED'
+  | 'TAKE_ADDED'
+  | 'TAKE_DELETED'
+  | 'TAKE_RESTORED'
   | 'COMMENT_ADDED'
   | 'COMMENT_UPDATED'
   | 'COMMENT_DELETED'
@@ -172,6 +221,109 @@ export type DemoDawOperationPayload =
       crossfadeInMs: number;
       crossfadeOutMs: number;
       curve: string | null;
+    }
+  | {
+      trackId: string;
+      takeId: string;
+      assetId: string;
+      storageKey: string;
+      name: string;
+      trackVersionId: string | null;
+      startOffsetMs: number;
+      durationMs: number;
+      sourceStartMs: number;
+      sourceEndMs: number;
+      timelineStartMs: number;
+      timelineEndMs: number;
+      gainDb: number;
+      fadeInMs: number;
+      fadeOutMs: number;
+      isMuted: boolean;
+      position: number;
+      recordedTempoBpm: number | null;
+      sourceTempoBpm: number | null;
+      createdAt: string;
+    }
+  | {
+      trackId: string;
+      takeId: string;
+      assetId: string;
+      storageKey: string;
+      name: string;
+      trackVersionId: string | null;
+      startOffsetMs: number;
+      durationMs: number;
+      sourceStartMs: number;
+      sourceEndMs: number;
+      timelineStartMs: number;
+      timelineEndMs: number;
+      gainDb: number;
+      fadeInMs: number;
+      fadeOutMs: number;
+      isMuted: boolean;
+      position: number;
+      recordedTempoBpm: number | null;
+      sourceTempoBpm: number | null;
+      createdAt: string;
+      restoredAt: string;
+      restoredBy: string;
+      operationSummary: string;
+    }
+  | {
+      trackId: string;
+      takeId: string;
+      deletedAt: string;
+      deletedBy: string;
+      operationSummary: string;
+    }
+  | {
+      versionId?: string;
+      parentVersionId?: string | null;
+      branchName?: string | null;
+      label?: string | null;
+      createdAt?: string;
+      createdBy?: string;
+      operationSummary?: string | null;
+      version: DemoDawSnapshotVersion;
+    }
+  | {
+      versionId: string;
+      label: string;
+    }
+  | {
+      currentVersionId: string;
+      previousVersionId: string | null;
+    }
+  | {
+      version: DemoDawSnapshotVersion;
+      sourceVersionId: string;
+    }
+  | {
+      versionId: string;
+      revertedFromVersionId: string;
+      currentVersionId: string;
+    }
+  | {
+      previousVersionId: string | null;
+      currentVersionId: string;
+    }
+  | {
+      versionId?: string | null;
+      trackId?: string;
+      trackVersionId?: string;
+      operationSummary?: string | null;
+      track: DemoDawSnapshotTrack;
+    }
+  | {
+      versionId: string;
+      parentId: string | null;
+    }
+  | {
+      versionId: string;
+      description: string | null;
+    }
+  | {
+      version: DemoDawSnapshotVersion;
     }
   | {
       versionId: string;
@@ -236,6 +388,16 @@ export interface DemoDawOperationInsertResult {
   id: string;
   operationSeq: number;
   created: boolean;
+  createdAt?: string;
+  projectId?: string;
+  demoId?: string;
+  actorUserId?: string;
+  operationType?: DemoDawOperationType;
+  payload?: DemoDawOperationPayload;
+  baseSnapshotId?: string | null;
+  baseOperationSeq?: number;
+  idempotencyKey?: string;
+  clientOperationId?: string;
 }
 
 interface DemoScope {
@@ -441,11 +603,36 @@ function serializeDemoSourceData(demo: DemoSourceData): DemoDawSnapshotData {
     versions: demo.versions.map((version) => serializeVersion(version)),
     comments: demo.comments,
     annotations: demo.annotations,
+    operationHistory: [],
+    recordingTakesByTrackId: {},
   };
 }
 
 function cloneSnapshot<T>(snapshot: T): T {
   return structuredClone(snapshot);
+}
+
+function ensureRecordingTakesByTrackId(snapshot: DemoDawSnapshotData) {
+  snapshot.recordingTakesByTrackId ??= {};
+  return snapshot.recordingTakesByTrackId;
+}
+
+function ensureOperationHistory(snapshot: DemoDawSnapshotData) {
+  snapshot.operationHistory ??= [];
+  return snapshot.operationHistory;
+}
+
+function upsertOperationHistory(
+  snapshot: DemoDawSnapshotData,
+  item: DemoDawSnapshotOperationHistoryItem,
+) {
+  const history = ensureOperationHistory(snapshot);
+  const existingIndex = history.findIndex((entry) => entry.operationId === item.operationId);
+  const nextHistory =
+    existingIndex === -1
+      ? [...history, item]
+      : history.map((entry) => (entry.operationId === item.operationId ? { ...entry, ...item } : entry));
+  snapshot.operationHistory = nextHistory.slice(-100);
 }
 
 function hydrateSnapshotProjectMetadata(snapshot: DemoDawSnapshotData, source: DemoSourceData) {
@@ -492,13 +679,57 @@ function updateVersionTiming(
   const version = snapshot.versions.find((candidate) => candidate.id === payload.versionId);
   if (!version) return;
 
-  version.label = payload.label;
-  version.tempoBpm = payload.tempoBpm;
-  version.timeSignatureNum = payload.timeSignatureNum;
-  version.timeSignatureDen = payload.timeSignatureDen;
-  version.musicalKey = payload.musicalKey;
-  version.tempoSource = payload.tempoSource;
-  version.keySource = payload.keySource;
+  if ('label' in payload && payload.label !== undefined) version.label = payload.label;
+  if ('tempoBpm' in payload) version.tempoBpm = payload.tempoBpm ?? null;
+  if ('timeSignatureNum' in payload) version.timeSignatureNum = payload.timeSignatureNum ?? version.timeSignatureNum;
+  if ('timeSignatureDen' in payload) version.timeSignatureDen = payload.timeSignatureDen ?? version.timeSignatureDen;
+  if ('musicalKey' in payload) version.musicalKey = payload.musicalKey ?? null;
+  if ('tempoSource' in payload && payload.tempoSource) version.tempoSource = payload.tempoSource;
+  if ('keySource' in payload && payload.keySource) version.keySource = payload.keySource;
+}
+
+function upsertVersion(snapshot: DemoDawSnapshotData, version: DemoDawSnapshotVersion) {
+  const existingIndex = snapshot.versions.findIndex((candidate) => candidate.id === version.id);
+  if (existingIndex === -1) {
+    snapshot.versions = [...snapshot.versions, cloneSnapshot(version)];
+    return;
+  }
+
+  const existing = snapshot.versions[existingIndex]!;
+  const tracks =
+    version.tracks && version.tracks.length > 0 ? cloneSnapshot(version.tracks) : existing.tracks;
+  snapshot.versions = snapshot.versions.map((candidate) =>
+    candidate.id === version.id
+      ? {
+          ...existing,
+          ...cloneSnapshot(version),
+          tracks: cloneSnapshot(tracks),
+        }
+      : candidate,
+  );
+}
+
+function upsertVersionTrack(snapshot: DemoDawSnapshotData, versionId: string, track: DemoDawSnapshotTrack) {
+  const version = snapshot.versions.find((candidate) => candidate.id === versionId);
+  if (!version) return;
+
+  const existingIndex = version.tracks.findIndex((candidate) => candidate.trackVersionId === track.trackVersionId);
+  if (existingIndex === -1) {
+    version.tracks = [...version.tracks, cloneSnapshot(track)];
+    return;
+  }
+
+  version.tracks = version.tracks.map((candidate) =>
+    candidate.trackVersionId === track.trackVersionId ? { ...candidate, ...cloneSnapshot(track) } : candidate,
+  );
+}
+
+function setCurrentVersion(snapshot: DemoDawSnapshotData, currentVersionId: string) {
+  snapshot.currentVersionId = currentVersionId;
+  snapshot.versions = snapshot.versions.map((version) => ({
+    ...version,
+    isCurrent: version.id === currentVersionId,
+  }));
 }
 
 function moveSegment(
@@ -615,6 +846,104 @@ function setCrossfade(
     });
     return;
   }
+}
+
+function normalizeRecordingTakeSnapshot(
+  take: {
+    id?: string;
+    takeId?: string;
+    trackId?: string;
+    trackVersionId?: string | null;
+    name?: string;
+    startOffsetMs?: number;
+    durationMs?: number;
+    sourceStartMs?: number;
+    sourceEndMs?: number;
+    timelineStartMs?: number;
+    timelineEndMs?: number;
+    gainDb?: number;
+    fadeInMs?: number;
+    fadeOutMs?: number;
+    isMuted?: boolean;
+    position?: number;
+    storageKey?: string;
+    assetId?: string | null;
+    recordedTempoBpm?: number | null;
+    sourceTempoBpm?: number | null;
+    createdAt?: string;
+  },
+  defaults: Partial<DemoDawSnapshotData['recordingTakesByTrackId'][string][number]> & { trackId: string },
+) {
+  const id = take.id ?? take.takeId ?? '';
+  const startOffsetMs = take.startOffsetMs ?? 0;
+  const durationMs = take.durationMs ?? 0;
+  const sourceStartMs = take.sourceStartMs ?? 0;
+  const sourceEndMs = take.sourceEndMs ?? sourceStartMs + durationMs;
+  const timelineStartMs = take.timelineStartMs ?? startOffsetMs;
+  const timelineEndMs = take.timelineEndMs ?? timelineStartMs + durationMs;
+  return {
+    id,
+    trackId: take.trackId ?? defaults.trackId,
+    trackVersionId: take.trackVersionId ?? null,
+    name: take.name ?? '',
+    startOffsetMs,
+    durationMs,
+    sourceStartMs,
+    sourceEndMs,
+    timelineStartMs,
+    timelineEndMs,
+    gainDb: take.gainDb ?? 0,
+    fadeInMs: take.fadeInMs ?? 0,
+    fadeOutMs: take.fadeOutMs ?? 0,
+    isMuted: take.isMuted ?? false,
+    position: take.position ?? 0,
+    storageKey: take.storageKey ?? '',
+    assetId: take.assetId ?? null,
+    recordedTempoBpm: take.recordedTempoBpm ?? null,
+    sourceTempoBpm: take.sourceTempoBpm ?? null,
+    createdAt: take.createdAt ?? new Date().toISOString(),
+  };
+}
+
+function upsertRecordingTake(
+  snapshot: DemoDawSnapshotData,
+  take: {
+    id?: string;
+    takeId?: string;
+    trackId?: string;
+    trackVersionId?: string | null;
+    name?: string;
+    startOffsetMs?: number;
+    durationMs?: number;
+    sourceStartMs?: number;
+    sourceEndMs?: number;
+    timelineStartMs?: number;
+    timelineEndMs?: number;
+    gainDb?: number;
+    fadeInMs?: number;
+    fadeOutMs?: number;
+    isMuted?: boolean;
+    position?: number;
+    storageKey?: string;
+    assetId?: string | null;
+    recordedTempoBpm?: number | null;
+    sourceTempoBpm?: number | null;
+    createdAt?: string;
+  },
+  trackId: string,
+) {
+  ensureRecordingTakesByTrackId(snapshot);
+  const currentTakes = snapshot.recordingTakesByTrackId[trackId] ?? [];
+  const nextTake = normalizeRecordingTakeSnapshot(take, { trackId });
+  const existingIndex = currentTakes.findIndex((entry) => entry.id === nextTake.id);
+  if (existingIndex === -1) {
+    snapshot.recordingTakesByTrackId[trackId] = [...currentTakes, nextTake];
+    return;
+  }
+
+  snapshot.recordingTakesByTrackId[trackId] = currentTakes.map((entry) =>
+    entry.id === nextTake.id ? { ...entry, ...nextTake } : entry,
+  );
 }
 
 function upsertComment(
@@ -742,6 +1071,10 @@ function applyDemoOperation(snapshot: DemoDawSnapshotData, operation: DemoDawSna
       {
         const payload = operation.payload as Extract<DemoDawOperationPayload, { trackId: string; trackName: string }>;
         updateTrackName(snapshot, payload.trackId, payload.trackName);
+        const historyItem = buildOperationHistoryItem(snapshot, operation);
+        if (historyItem) {
+          upsertOperationHistory(snapshot, historyItem);
+        }
       }
       return snapshot;
     case 'TRACK_OFFSET_UPDATED':
@@ -754,13 +1087,19 @@ function applyDemoOperation(snapshot: DemoDawSnapshotData, operation: DemoDawSna
       }
       return snapshot;
     case 'SEGMENT_SPLIT':
-      upsertSplitSegments(
-        snapshot,
-        operation.payload as Extract<
-          DemoDawOperationPayload,
-          { sourceSegmentId: string | null; leftSegment: DemoDawSnapshotSegment; rightSegment: DemoDawSnapshotSegment }
-        >,
-      );
+      {
+        upsertSplitSegments(
+          snapshot,
+          operation.payload as Extract<
+            DemoDawOperationPayload,
+            { sourceSegmentId: string | null; leftSegment: DemoDawSnapshotSegment; rightSegment: DemoDawSnapshotSegment }
+          >,
+        );
+        const historyItem = buildOperationHistoryItem(snapshot, operation);
+        if (historyItem) {
+          upsertOperationHistory(snapshot, historyItem);
+        }
+      }
       return snapshot;
     case 'SEGMENT_MOVED':
       {
@@ -769,6 +1108,10 @@ function applyDemoOperation(snapshot: DemoDawSnapshotData, operation: DemoDawSna
           { trackVersionId: string; segmentId: string; timelineStartMs: number }
         >;
         moveSegment(snapshot, payload.trackVersionId, payload.segmentId, payload.timelineStartMs);
+        const historyItem = buildOperationHistoryItem(snapshot, operation);
+        if (historyItem) {
+          upsertOperationHistory(snapshot, historyItem);
+        }
       }
       return snapshot;
     case 'SEGMENT_DELETED':
@@ -778,6 +1121,10 @@ function applyDemoOperation(snapshot: DemoDawSnapshotData, operation: DemoDawSna
           { trackVersionId: string; segmentId: string }
         >;
         removeSegment(snapshot, payload.trackVersionId, payload.segmentId);
+        const historyItem = buildOperationHistoryItem(snapshot, operation);
+        if (historyItem) {
+          upsertOperationHistory(snapshot, historyItem);
+        }
       }
       return snapshot;
     case 'SEGMENT_TRIMMED':
@@ -787,6 +1134,10 @@ function applyDemoOperation(snapshot: DemoDawSnapshotData, operation: DemoDawSna
           { trackVersionId: string; segmentId: string; to: { startMs: number; endMs: number } }
         >;
         trimSegment(snapshot, payload.trackVersionId, payload.segmentId, payload.to);
+        const historyItem = buildOperationHistoryItem(snapshot, operation);
+        if (historyItem) {
+          upsertOperationHistory(snapshot, historyItem);
+        }
       }
       return snapshot;
     case 'SEGMENT_MERGED':
@@ -796,6 +1147,10 @@ function applyDemoOperation(snapshot: DemoDawSnapshotData, operation: DemoDawSna
           { trackVersionId: string; segmentIds: string[]; mergedSegment: DemoDawSnapshotSegment }
         >;
         mergeSegments(snapshot, payload.trackVersionId, payload.segmentIds, payload.mergedSegment);
+        const historyItem = buildOperationHistoryItem(snapshot, operation);
+        if (historyItem) {
+          upsertOperationHistory(snapshot, historyItem);
+        }
       }
       return snapshot;
     case 'CROSSFADE_SET':
@@ -820,6 +1175,191 @@ function applyDemoOperation(snapshot: DemoDawSnapshotData, operation: DemoDawSna
           payload.crossfadeOutMs,
           payload.curve,
         );
+        const historyItem = buildOperationHistoryItem(snapshot, operation);
+        if (historyItem) {
+          upsertOperationHistory(snapshot, historyItem);
+        }
+      }
+      return snapshot;
+    case 'TAKE_ADDED':
+      {
+        const payload = operation.payload as Extract<
+          DemoDawOperationPayload,
+          {
+            trackId: string;
+            takeId: string;
+            assetId: string;
+            storageKey: string;
+            name: string;
+            trackVersionId: string | null;
+            startOffsetMs: number;
+            durationMs: number;
+            sourceStartMs: number;
+            sourceEndMs: number;
+            timelineStartMs: number;
+            timelineEndMs: number;
+            gainDb: number;
+            fadeInMs: number;
+            fadeOutMs: number;
+            isMuted: boolean;
+            position: number;
+            recordedTempoBpm: number | null;
+            sourceTempoBpm: number | null;
+            createdAt: string;
+          }
+        >;
+        upsertRecordingTake(snapshot, {
+          ...payload,
+          id: payload.takeId,
+        }, payload.trackId);
+        const historyItem = buildOperationHistoryItem(snapshot, operation);
+        if (historyItem) {
+          upsertOperationHistory(snapshot, historyItem);
+        }
+      }
+      return snapshot;
+    case 'TAKE_RESTORED':
+      {
+        const payload = operation.payload as Extract<
+          DemoDawOperationPayload,
+          {
+            trackId: string;
+            takeId: string;
+            assetId: string;
+            storageKey: string;
+            name: string;
+            trackVersionId: string | null;
+            startOffsetMs: number;
+            durationMs: number;
+            sourceStartMs: number;
+            sourceEndMs: number;
+            timelineStartMs: number;
+            timelineEndMs: number;
+            gainDb: number;
+            fadeInMs: number;
+            fadeOutMs: number;
+            isMuted: boolean;
+            position: number;
+            recordedTempoBpm: number | null;
+            sourceTempoBpm: number | null;
+            createdAt: string;
+            restoredAt: string;
+            restoredBy: string;
+            operationSummary: string;
+          }
+        >;
+        upsertRecordingTake(
+          snapshot,
+          {
+            ...payload,
+            id: payload.takeId,
+          },
+          payload.trackId,
+        );
+        const historyItem = buildOperationHistoryItem(snapshot, operation);
+        if (historyItem) {
+          upsertOperationHistory(snapshot, historyItem);
+        }
+      }
+      return snapshot;
+    case 'TAKE_DELETED':
+      {
+        const payload = operation.payload as Extract<
+          DemoDawOperationPayload,
+          {
+            trackId: string;
+            takeId: string;
+            deletedAt: string;
+            deletedBy: string;
+            operationSummary?: string | null;
+          }
+        >;
+        const currentTakes = snapshot.recordingTakesByTrackId[payload.trackId] ?? [];
+        const nextTakes = currentTakes.filter((entry) => entry.id !== payload.takeId);
+        if (nextTakes.length !== currentTakes.length) {
+          snapshot.recordingTakesByTrackId[payload.trackId] = nextTakes;
+        }
+        const historyItem = buildOperationHistoryItem(snapshot, operation);
+        if (historyItem) {
+          upsertOperationHistory(snapshot, historyItem);
+        }
+      }
+      return snapshot;
+    case 'VERSION_CREATED':
+    case 'VERSION_NODE_ADDED':
+      upsertVersion(
+        snapshot,
+        (operation.payload as Extract<DemoDawOperationPayload, { version: DemoDawSnapshotVersion }>).version,
+      );
+      return snapshot;
+    case 'VERSION_BRANCH_CREATED':
+      {
+        const payload = operation.payload as Extract<
+          DemoDawOperationPayload,
+          { version: DemoDawSnapshotVersion; sourceVersionId: string }
+        >;
+        upsertVersion(snapshot, payload.version);
+      }
+      return snapshot;
+    case 'VERSION_RENAMED':
+      {
+        const payload = operation.payload as Extract<DemoDawOperationPayload, { versionId: string; label: string }>;
+        const version = snapshot.versions.find((candidate) => candidate.id === payload.versionId);
+        if (version) {
+          version.label = payload.label;
+        }
+      }
+      return snapshot;
+    case 'VERSION_SELECTED':
+    case 'CURRENT_VERSION_CHANGED':
+      {
+        const payload = operation.payload as Extract<
+          DemoDawOperationPayload,
+          { currentVersionId: string; previousVersionId?: string | null }
+        >;
+        setCurrentVersion(snapshot, payload.currentVersionId);
+      }
+      return snapshot;
+    case 'VERSION_REVERTED_FROM':
+      {
+        const payload = operation.payload as Extract<
+          DemoDawOperationPayload,
+          { versionId: string; revertedFromVersionId: string; currentVersionId: string }
+        >;
+        setCurrentVersion(snapshot, payload.currentVersionId);
+      }
+      return snapshot;
+    case 'TRACK_VERSION_CREATED':
+      {
+        const payload = operation.payload as {
+          versionId?: string | null;
+          track: DemoDawSnapshotTrack;
+        };
+        if (payload.versionId) {
+          upsertVersionTrack(snapshot, payload.versionId, payload.track);
+        }
+        const historyItem = buildOperationHistoryItem(snapshot, operation);
+        if (historyItem) {
+          upsertOperationHistory(snapshot, historyItem);
+        }
+      }
+      return snapshot;
+    case 'VERSION_PARENT_SET':
+      {
+        const payload = operation.payload as Extract<DemoDawOperationPayload, { versionId: string; parentId: string | null }>;
+        const version = snapshot.versions.find((candidate) => candidate.id === payload.versionId);
+        if (version) {
+          version.parentId = payload.parentId;
+        }
+      }
+      return snapshot;
+    case 'VERSION_OPERATION_SUMMARY_SET':
+      {
+        const payload = operation.payload as Extract<DemoDawOperationPayload, { versionId: string; description: string | null }>;
+        const version = snapshot.versions.find((candidate) => candidate.id === payload.versionId);
+        if (version) {
+          version.description = payload.description;
+        }
       }
       return snapshot;
     case 'VERSION_TIMING_UPDATED':
@@ -1038,6 +1578,175 @@ export async function loadLatestDemoSnapshot(
   });
 }
 
+function findTrackById(snapshot: DemoDawSnapshotData, trackId: string) {
+  for (const version of snapshot.versions) {
+    const track = version.tracks.find((candidate) => candidate.trackId === trackId);
+    if (track) return track;
+  }
+  return null;
+}
+
+function findTrackByVersionId(snapshot: DemoDawSnapshotData, trackVersionId: string) {
+  for (const version of snapshot.versions) {
+    const track = version.tracks.find((candidate) => candidate.trackVersionId === trackVersionId);
+    if (track) return track;
+  }
+  return null;
+}
+
+function buildOperationHistoryItem(
+  snapshot: DemoDawSnapshotData,
+  operation: DemoDawSnapshotOperationRow,
+): DemoDawSnapshotOperationHistoryItem | null {
+  const currentVersionId = snapshot.currentVersionId ?? null;
+  const baseItem = {
+    operationId: operation.id,
+    operationType: operation.type,
+    versionId: currentVersionId,
+    currentVersionId,
+    trackId: null,
+    takeId: null,
+    segmentId: null,
+    actorUserId: operation.actorUserId,
+    createdAt: operation.createdAt,
+  } satisfies Omit<DemoDawSnapshotOperationHistoryItem, 'summary'>;
+
+  switch (operation.type) {
+    case 'TRACK_RENAMED': {
+      const payload = operation.payload as Extract<DemoDawOperationPayload, { trackId: string; trackName: string }>;
+      const track = findTrackById(snapshot, payload.trackId);
+      return {
+        ...baseItem,
+        trackId: payload.trackId,
+        summary: track ? `Renamed track to ${payload.trackName.trim()}` : 'Renamed track',
+      };
+    }
+    case 'TRACK_VERSION_CREATED': {
+      const payload = operation.payload as Extract<
+        DemoDawOperationPayload,
+        { trackId?: string; trackVersionId?: string; track: DemoDawSnapshotTrack }
+      >;
+      return {
+        ...baseItem,
+        trackId: payload.trackId ?? payload.track?.trackId ?? null,
+        summary: `Created track version${payload.track?.trackName ? ` for ${payload.track.trackName}` : ''}`,
+      };
+    }
+    case 'SEGMENT_SPLIT': {
+      const payload = operation.payload as Extract<
+        DemoDawOperationPayload,
+        { trackVersionId: string; segmentId?: string; leftSegment: DemoDawSnapshotSegment; rightSegment: DemoDawSnapshotSegment }
+      >;
+      const track = findTrackByVersionId(snapshot, payload.trackVersionId);
+      return {
+        ...baseItem,
+        trackId: track?.trackId ?? null,
+        segmentId: payload.segmentId ?? null,
+        summary: track ? `Split clip on ${track.trackName}` : 'Split clip',
+      };
+    }
+    case 'SEGMENT_MOVED': {
+      const payload = operation.payload as Extract<
+        DemoDawOperationPayload,
+        { trackVersionId: string; segmentId: string; timelineStartMs: number }
+      >;
+      const track = findTrackByVersionId(snapshot, payload.trackVersionId);
+      return {
+        ...baseItem,
+        trackId: track?.trackId ?? null,
+        segmentId: payload.segmentId,
+        summary: track ? `Moved clip on ${track.trackName}` : 'Moved clip',
+      };
+    }
+    case 'SEGMENT_TRIMMED': {
+      const payload = operation.payload as Extract<
+        DemoDawOperationPayload,
+        { trackVersionId: string; segmentId: string; to: { startMs: number; endMs: number } }
+      >;
+      const track = findTrackByVersionId(snapshot, payload.trackVersionId);
+      return {
+        ...baseItem,
+        trackId: track?.trackId ?? null,
+        segmentId: payload.segmentId,
+        summary: track ? `Trimmed clip on ${track.trackName}` : 'Trimmed clip',
+      };
+    }
+    case 'CROSSFADE_SET': {
+      const payload = operation.payload as Extract<
+        DemoDawOperationPayload,
+        {
+          trackVersionId: string;
+          leftSegmentId: string;
+          rightSegmentId: string;
+          crossfadeInMs: number;
+          crossfadeOutMs: number;
+          curve: string | null;
+        }
+      >;
+      const track = findTrackByVersionId(snapshot, payload.trackVersionId);
+      return {
+        ...baseItem,
+        trackId: track?.trackId ?? null,
+        segmentId: payload.leftSegmentId,
+        summary: track ? `Adjusted crossfade on ${track.trackName}` : 'Adjusted crossfade',
+      };
+    }
+    case 'TAKE_ADDED': {
+      const payload = operation.payload as Extract<
+        DemoDawOperationPayload,
+        {
+          trackId: string;
+          takeId: string;
+          name: string;
+        }
+      >;
+      const track = findTrackById(snapshot, payload.trackId);
+      return {
+        ...baseItem,
+        trackId: payload.trackId,
+        takeId: payload.takeId,
+        summary: track ? `Added recording to ${track.trackName}` : `Added take: ${payload.name}`,
+      };
+    }
+    case 'TAKE_RESTORED': {
+      const payload = operation.payload as Extract<
+        DemoDawOperationPayload,
+        {
+          trackId: string;
+          takeId: string;
+          operationSummary?: string;
+        }
+      >;
+      const track = findTrackById(snapshot, payload.trackId);
+      return {
+        ...baseItem,
+        trackId: payload.trackId,
+        takeId: payload.takeId,
+        summary: track ? `Restored recording on ${track.trackName}` : payload.operationSummary ?? 'Restored recording',
+      };
+    }
+    case 'TAKE_DELETED': {
+      const payload = operation.payload as Extract<
+        DemoDawOperationPayload,
+        {
+          trackId: string;
+          takeId: string;
+          operationSummary?: string | null;
+        }
+      >;
+      const track = findTrackById(snapshot, payload.trackId);
+      return {
+        ...baseItem,
+        trackId: payload.trackId,
+        takeId: payload.takeId,
+        summary: track ? `Deleted recording from ${track.trackName}` : payload.operationSummary ?? 'Deleted recording',
+      };
+    }
+    default:
+      return null;
+  }
+}
+
 export async function loadDemoOperationTail(
   client: DemoDawDatabaseClient,
   scope: DemoScope,
@@ -1172,12 +1881,24 @@ export async function appendDemoDawOperation(
     select: {
       id: true,
       operationSeq: true,
+      createdAt: true,
     },
   });
 
   return {
-    ...created,
+    id: created.id,
+    operationSeq: created.operationSeq,
+    createdAt: created.createdAt.toISOString(),
     created: true,
+    projectId: input.projectId,
+    demoId: input.demoId,
+    actorUserId: input.actorUserId,
+    operationType: input.operationType,
+    payload: input.payload,
+    baseSnapshotId: latestSnapshot?.id ?? null,
+    baseOperationSeq: latestSnapshot?.operationSeq ?? 0,
+    idempotencyKey: input.idempotencyKey ?? randomUUID(),
+    clientOperationId: input.clientOperationId ?? randomUUID(),
   };
 }
 
@@ -1340,6 +2061,8 @@ export async function loadSnapshotStateForDemo(
   if (!result.project?.id || !result.project.group?.id) {
     hydrateSnapshotProjectMetadata(result, await loadDemoSourceData(client, scope));
   }
+  ensureOperationHistory(result);
+  ensureRecordingTakesByTrackId(result);
   const tailOperations = await loadDemoOperationTail(client, scope, latestSnapshot.operationSeq);
 
   for (const operation of tailOperations) {

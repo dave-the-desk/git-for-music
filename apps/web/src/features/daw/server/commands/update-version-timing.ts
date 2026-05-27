@@ -6,10 +6,9 @@ import type {
   UpdateDemoVersionTimingRequest,
 } from '@git-for-music/shared';
 import { isValidTempoBpm, normalizeTimeSignature } from '@/features/daw/utils/timing';
-import {
-  appendDemoDawOperation,
-  checkpointDemoDawSnapshot,
-} from '@/features/daw/server/snapshot-builder';
+import type { DawProjectOperationRecord } from '@/features/daw/protocol';
+import { recordDemoDawOperation } from '@/features/daw/server/snapshot-builder';
+import { emitAcceptedDawOperation } from '@/features/daw/server/realtime-gateway';
 
 const MAX_LABEL_LENGTH = 120;
 const VALID_DENOMINATORS = new Set([1, 2, 4, 8, 16, 32]);
@@ -154,7 +153,7 @@ export async function updateDemoVersionTimingCommand(input: {
       },
     });
 
-    await appendDemoDawOperation(tx, {
+    const operation = await recordDemoDawOperation(tx, {
       projectId: version.demo.project.id,
       demoId: version.demoId,
       actorUserId: input.userId,
@@ -171,14 +170,25 @@ export async function updateDemoVersionTimingCommand(input: {
       },
     });
 
-    await checkpointDemoDawSnapshot(tx, {
-      projectId: version.demo.project.id,
-      demoId: version.demoId,
-      createdById: input.userId,
-    });
-
-    return next;
+    return { next, operation };
   });
 
-  return NextResponse.json(serializeTiming(updated));
+  if (updated.operation.created) {
+    emitAcceptedDawOperation({
+      projectId: version.demo.project.id,
+      demoId: version.demoId,
+      operationId: updated.operation.id,
+      operationSeq: updated.operation.operationSeq,
+      actorUserId: updated.operation.actorUserId ?? input.userId,
+      operationType: updated.operation.operationType ?? 'VERSION_TIMING_UPDATED',
+      payload: updated.operation.payload as DawProjectOperationRecord['payload'],
+      createdAt: updated.operation.createdAt ?? new Date().toISOString(),
+      idempotencyKey: updated.operation.idempotencyKey ?? null,
+      clientOperationId: updated.operation.clientOperationId ?? null,
+      baseSnapshotId: updated.operation.baseSnapshotId ?? null,
+      baseOperationSeq: updated.operation.baseOperationSeq ?? 0,
+    });
+  }
+
+  return NextResponse.json(serializeTiming(updated.next));
 }

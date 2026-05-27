@@ -121,8 +121,8 @@ export default async function DemoPage({
       currentUserId={user.id}
       demoName={demo.name}
       demoDescription={demo.description}
-      currentVersionId={demo.currentVersionId}
-      versions={resolvedVersions}
+      initialCurrentVersionId={demo.currentVersionId}
+      initialVersions={resolvedVersions}
     />
   );
 }

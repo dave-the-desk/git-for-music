@@ -20,7 +20,7 @@ import { AddTrackButton } from '@/features/daw/components/AddTrackButton';
 import { DawToolbarTabs, type DawToolbarTab } from '@/features/daw/components/DawToolbarTabs';
 import { ProjectTimingControls } from '@/features/daw/components/ProjectTimingControls';
 import { TransportControls } from '@/features/daw/components/TransportControls';
-import { TimelineRuler } from '@/features/daw/components/TimelineRuler';
+import { TimelineRuler, getTimelineTicks, getTimelineWidthPx } from '@/features/daw/components/TimelineRuler';
 import { RecordingControls } from '@/features/daw/components/RecordingControls';
 import type { RecordingControlsHandle } from '@/features/daw/components/RecordingControls';
 import { RecordingTrackLane } from '@/features/daw/components/RecordingTrackLane';
@@ -57,6 +57,7 @@ import {
   type UploadModalState,
   formatTimeMs,
 } from '@/features/daw/state/ui-state';
+import { buildRecordedTakeBounds, type RecordingTakeBounds } from '@/features/daw/utils/recording-bounds';
 import type {
   DawTrack,
   DawVersion,
@@ -128,6 +129,18 @@ function createBlankTrackFile() {
   });
 }
 
+function getNextEmptyTrackName(tracks: DawTrack[]) {
+  const highestTrackNumber = tracks.reduce((maxTrackNumber, track) => {
+    const match = /^Track (\d+)$/.exec(track.trackName.trim());
+    if (!match) return maxTrackNumber;
+
+    const trackNumber = Number(match[1]);
+    return Number.isFinite(trackNumber) ? Math.max(maxTrackNumber, trackNumber) : maxTrackNumber;
+  }, 0);
+
+  return `Track ${highestTrackNumber + 1}`;
+}
+
 function hasLocalBlankTrackOverride(
   trackVersionId: string,
   segmentLayoutOverrides: Record<string, TrackTimelineSegment[]>,
@@ -184,8 +197,8 @@ type DemoDawClientProps = {
   currentUserId: string;
   demoName: string;
   demoDescription: string | null;
-  currentVersionId: string;
-  versions: DawVersion[];
+  initialCurrentVersionId: string;
+  initialVersions: DawVersion[];
 };
 
 type ProjectPresenceRecord = {
@@ -194,7 +207,7 @@ type ProjectPresenceRecord = {
   demoId: string;
   actorUserId: string;
   presenceSeed: string;
-  status: 'online' | 'idle' | 'away';
+  status: 'online' | 'idle' | 'away' | 'offline';
   cursorTimeMs: number | null;
   selectedTrackId: string | null;
   currentTool: 'select' | 'split';
@@ -207,6 +220,17 @@ type ResolvedRecordingTarget = {
   trackId: string;
   trackVersionId: string;
   trackName: string;
+};
+
+type RecordingSession = {
+  id: string;
+  targetTrackId: string;
+  targetTrackVersionId: string;
+  targetTrackName: string;
+  timelineStartMs: number;
+  startedAtPlayheadMs: number;
+  recordedTempoBpm: number;
+  sourceTempoBpm: number;
 };
 
 function resolveArmedRecordingTarget(
@@ -231,12 +255,12 @@ export function DemoDawClient({
   currentUserId,
   demoName,
   demoDescription,
-  currentVersionId,
-  versions,
+  initialCurrentVersionId,
+  initialVersions,
 }: DemoDawClientProps) {
   const router = useRouter();
 
-  const [selectedVersionId, setSelectedVersionId] = useState(currentVersionId);
+  const [selectedVersionId, setSelectedVersionId] = useState(initialCurrentVersionId);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTimeMs, setCurrentTimeMs] = useState(0);
   const [durationByTrackVersionId, setDurationByTrackVersionId] = useState<Record<string, number>>({});
@@ -294,6 +318,7 @@ export function DemoDawClient({
   const [timelineCommentOpenId, setTimelineCommentOpenId] = useState<string | null>(null);
   const recordingPreviewUrlRef = useRef<string | null>(null);
   const isLiveRecordingRef = useRef(false);
+  const recordingSessionRef = useRef<RecordingSession | null>(null);
   const recordingControlsRef = useRef<RecordingControlsHandle | null>(null);
 
   const [offsetOverrides, setOffsetOverrides] = useState<Record<string, number>>({});
@@ -316,6 +341,7 @@ export function DemoDawClient({
   const metronomeTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const metronomeScheduledBeatRef = useRef<number | null>(null);
   const undoLatestTimelineEditRef = useRef<() => Promise<boolean>>(async () => false);
+  const undoTimelineEditInFlightRef = useRef(false);
   const deleteSelectedClipRef = useRef<() => Promise<boolean>>(async () => false);
   const cancelTimelineDragRef = useRef<() => void>(() => {});
   const timelineToolRef = useRef<'select' | 'split'>('select');
@@ -373,9 +399,22 @@ export function DemoDawClient({
     }
   }, [demoId, projectId]);
 
+  const audioEditingEngine = useMemo(() => new AudioEditingEngine({ demoId }), [demoId]);
+  const ingestEngine = useMemo(() => new AudioIngestEngine(), []);
+  const playbackEngine = useMemo(() => new AudioPlaybackEngine(), []);
+  const projectSyncEngine = useMemo(() => new ProjectSyncEngine(), []);
+  const [projectSyncState, setProjectSyncState] = useState(() => projectSyncEngine.getState());
+  const recordingTakesByTrackId = useMemo(
+    () => projectSyncState.projectState?.recordingTakesByTrackId ?? {},
+    [projectSyncState.projectState?.recordingTakesByTrackId],
+  );
+  const liveProjectState = projectSyncState.projectState;
+  const liveVersions = liveProjectState?.versions ?? initialVersions;
+  const liveCurrentVersionId = liveProjectState?.currentVersionId ?? initialCurrentVersionId;
+
   const selectedVersion = useMemo(
-    () => selectVersionById(versions, selectedVersionId),
-    [selectedVersionId, versions],
+    () => selectVersionById(liveVersions, selectedVersionId),
+    [liveVersions, selectedVersionId],
   );
   const sharedDemoTempoBpm = useMemo(
     () => normalizeTempoBpm(selectedVersion?.tempoBpm, DEFAULT_DEMO_TEMPO_BPM),
@@ -411,15 +450,6 @@ export function DemoDawClient({
   const activeRecordingTarget = useMemo(
     () => resolveArmedRecordingTarget(recordArmedTrackVersionId, selectedTracks),
     [recordArmedTrackVersionId, selectedTracks],
-  );
-  const audioEditingEngine = useMemo(() => new AudioEditingEngine({ demoId }), [demoId]);
-  const ingestEngine = useMemo(() => new AudioIngestEngine(), []);
-  const playbackEngine = useMemo(() => new AudioPlaybackEngine(), []);
-  const projectSyncEngine = useMemo(() => new ProjectSyncEngine(), []);
-  const [projectSyncState, setProjectSyncState] = useState(() => projectSyncEngine.getState());
-  const recordingTakesByTrackId = useMemo(
-    () => projectSyncState.projectState?.recordingTakesByTrackId ?? {},
-    [projectSyncState.projectState?.recordingTakesByTrackId],
   );
 
   useEffect(() => {
@@ -481,6 +511,36 @@ export function DemoDawClient({
     void loadBootstrapData();
     return () => controller.abort();
   }, [demoId, projectId]);
+
+  useEffect(() => {
+    return projectSyncEngine.subscribePresence((presence) => {
+      setPresenceRecords((previous) => {
+        const nextRecord = {
+          presenceId: presence.presenceId,
+          projectId: presence.projectId,
+          demoId: presence.demoId,
+          actorUserId: presence.actorUserId,
+          presenceSeed: presence.presenceSeed,
+          status: presence.status,
+          cursorTimeMs: presence.cursorTimeMs,
+          selectedTrackId: presence.selectedTrackId,
+          currentTool: presence.currentTool,
+          recordingState: presence.recordingState,
+          playbackFollowState: presence.playbackFollowState,
+          updatedAt: presence.createdAt,
+        } satisfies ProjectPresenceRecord;
+
+        const existingIndex = previous.findIndex((record) => record.presenceId === nextRecord.presenceId);
+        if (existingIndex === -1) {
+          return [...previous, nextRecord];
+        }
+
+        return previous.map((record) =>
+          record.presenceId === nextRecord.presenceId ? { ...record, ...nextRecord } : record,
+        );
+      });
+    });
+  }, [projectSyncEngine]);
 
   useEffect(() => {
     let cancelled = false;
@@ -792,6 +852,20 @@ export function DemoDawClient({
     soloTrackVersionIds,
   ]);
 
+  const visualTemporaryRecordingTrack = useMemo(() => {
+    if (!temporaryRecordingTrack) return null;
+
+    if (
+      temporaryRecordingTrack.syncStatus === 'complete' &&
+      temporaryRecordingTrack.serverTrackVersionId &&
+      temporaryRecordingTrack.serverDemoVersionId
+    ) {
+      return null;
+    }
+
+    return temporaryRecordingTrack;
+  }, [temporaryRecordingTrack]);
+
   const visualProjection = useMemo(
     () =>
       buildDawVisualProjection({
@@ -801,7 +875,7 @@ export function DemoDawClient({
         durationByTrackVersionId,
         offsetOverrides,
         segmentLayoutOverrides,
-        temporaryRecordingTrack,
+        temporaryRecordingTrack: visualTemporaryRecordingTrack,
         recordingTakesByTrackId,
         waveformCache,
         minimumWidthPx: 400,
@@ -814,7 +888,7 @@ export function DemoDawClient({
       segmentLayoutOverrides,
       splitHover,
       recordingTakesByTrackId,
-      temporaryRecordingTrack,
+      visualTemporaryRecordingTrack,
       waveformCache,
     ],
   );
@@ -835,14 +909,23 @@ export function DemoDawClient({
           durationByTrackVersionId,
           offsetOverrides,
           segmentLayoutOverrides,
-          temporaryRecordingTrack,
+          temporaryRecordingTrack: visualTemporaryRecordingTrack,
         }),
         ...recordingTakeEndsMs,
       );
     },
-    [durationByTrackVersionId, offsetOverrides, recordingTakesByTrackId, segmentLayoutOverrides, selectedTracks, temporaryRecordingTrack],
+    [
+      durationByTrackVersionId,
+      offsetOverrides,
+      recordingTakesByTrackId,
+      segmentLayoutOverrides,
+      selectedTracks,
+      temporaryRecordingTrack,
+      visualTemporaryRecordingTrack,
+    ],
   );
 
+  const timelineRulerWidthPx = getTimelineWidthPx(totalDurationMs);
   const totalTimelineWidth = visualProjection.totalTimelineWidthPx;
 
   useEffect(() => {
@@ -850,18 +933,14 @@ export function DemoDawClient({
     if (temporaryRecordingTrack.syncStatus !== 'complete') return;
     if (!temporaryRecordingTrack.serverTrackVersionId) return;
 
-    const recordingHasBeenMaterialized = selectedTracks.some(
-      (track) => track.trackVersionId === temporaryRecordingTrack.serverTrackVersionId,
-    );
-    if (!recordingHasBeenMaterialized) return;
-
     if (recordingPreviewUrlRef.current) {
       ingestEngine.revokeObjectUrl(recordingPreviewUrlRef.current);
       recordingPreviewUrlRef.current = null;
     }
 
+    recordingSessionRef.current = null;
     setTemporaryRecordingTrack(null);
-  }, [ingestEngine, selectedTracks, temporaryRecordingTrack]);
+  }, [ingestEngine, temporaryRecordingTrack]);
 
   useEffect(() => {
     setOffsetOverrides({});
@@ -910,15 +989,17 @@ export function DemoDawClient({
       projectId,
       demoId,
       initialProjectState: {
-        versions,
-        currentVersionId,
+        versions: initialVersions,
+        currentVersionId: initialCurrentVersionId,
+        versionTreeUpdatedAt: null,
+        lastVersionOperationSeq: 0,
         comments: [],
         annotations: [],
         tempoMetadataByTrackVersionId: {},
         recordingTakesByTrackId: {},
       },
     });
-  }, [demoId, currentVersionId, projectId, projectSyncEngine, versions]);
+  }, [demoId, initialCurrentVersionId, initialVersions, projectId, projectSyncEngine]);
 
   useEffect(() => {
     function handleOnline() {
@@ -1107,6 +1188,9 @@ export function DemoDawClient({
 
   useEffect(() => {
     const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        void projectSyncEngine.handleReconnect();
+      }
       void publishPresence();
     };
 
@@ -1231,42 +1315,81 @@ export function DemoDawClient({
     await projectSyncEngine.setTrackRecordingTakes(trackId, normalizeRecordingTakeOrder(takes));
   }
 
+  function buildTakeRestorePayload(take: TrackRecordingTake) {
+    if (!take.assetId) {
+      throw new Error('Cannot restore a take without an assetId');
+    }
+
+    return {
+      trackId: take.trackId,
+      takeId: take.id,
+      assetId: take.assetId,
+      storageKey: take.storageKey,
+      name: take.name,
+      trackVersionId: take.trackVersionId,
+      startOffsetMs: take.startOffsetMs,
+      durationMs: take.durationMs,
+      sourceStartMs: take.sourceStartMs,
+      sourceEndMs: take.sourceEndMs,
+      timelineStartMs: take.timelineStartMs,
+      timelineEndMs: take.timelineEndMs,
+      gainDb: take.gainDb,
+      fadeInMs: take.fadeInMs,
+      fadeOutMs: take.fadeOutMs,
+      isMuted: take.isMuted,
+      position: take.position,
+      recordedTempoBpm: take.recordedTempoBpm,
+      sourceTempoBpm: take.sourceTempoBpm,
+      createdAt: take.createdAt,
+      restoredAt: new Date().toISOString(),
+      restoredBy: currentUserId,
+      operationSummary: 'Restored recording',
+    } satisfies Extract<
+      DawCommandPayload,
+      {
+        trackId: string;
+        takeId: string;
+        restoredAt: string;
+        restoredBy: string;
+        operationSummary: string;
+      }
+    >;
+  }
+
   function pushTimelineHistory(entry: TimelineHistoryEntry) {
     setTimelineHistory((prev) => [...prev, entry]);
   }
 
   async function undoLatestTimelineEdit() {
+    if (undoTimelineEditInFlightRef.current) return false;
     const lastEntry = timelineHistory[timelineHistory.length - 1];
     if (!lastEntry) return false;
+    undoTimelineEditInFlightRef.current = true;
 
-    if (lastEntry.kind === 'move-track') {
-      setOffsetOverrides((prev) => ({
-        ...prev,
-        [lastEntry.trackVersionId]: lastEntry.previousStartOffsetMs,
-      }));
-      try {
+    try {
+      if (lastEntry.kind === 'move-track') {
+        setOffsetOverrides((prev) => ({
+          ...prev,
+          [lastEntry.trackVersionId]: lastEntry.previousStartOffsetMs,
+        }));
         await commitEditingOperation(
           audioEditingEngine.moveTrack(lastEntry.trackVersionId, lastEntry.previousStartOffsetMs),
         );
-      } catch (error) {
-        setDragError(error instanceof Error ? error.message : 'Could not undo track move');
-      }
-    } else if (lastEntry.kind === 'move-segment') {
-      const currentTrack = selectedTracks.find((track) => track.trackVersionId === lastEntry.trackVersionId);
-      const currentSegments = currentTrack
-        ? getDisplayedTrackSegments(currentTrack)
-        : segmentLayoutOverrides[lastEntry.trackVersionId] ?? [];
-      const nextSegments = currentSegments.map((segment) =>
-        segment.id === lastEntry.segmentId
-          ? {
-              ...segment,
-              timelineStartMs: lastEntry.previousTimelineStartMs,
-              timelineEndMs: lastEntry.previousTimelineStartMs + segment.durationMs,
-            }
-          : segment,
-      );
-      setTrackSegmentLayout(lastEntry.trackVersionId, nextSegments);
-      try {
+      } else if (lastEntry.kind === 'move-segment') {
+        const currentTrack = selectedTracks.find((track) => track.trackVersionId === lastEntry.trackVersionId);
+        const currentSegments = currentTrack
+          ? getDisplayedTrackSegments(currentTrack)
+          : segmentLayoutOverrides[lastEntry.trackVersionId] ?? [];
+        const nextSegments = currentSegments.map((segment) =>
+          segment.id === lastEntry.segmentId
+            ? {
+                ...segment,
+                timelineStartMs: lastEntry.previousTimelineStartMs,
+                timelineEndMs: lastEntry.previousTimelineStartMs + segment.durationMs,
+              }
+            : segment,
+        );
+        setTrackSegmentLayout(lastEntry.trackVersionId, nextSegments);
         await commitEditingOperation(
           audioEditingEngine.moveSegment(
             lastEntry.trackVersionId,
@@ -1274,31 +1397,47 @@ export function DemoDawClient({
             lastEntry.previousTimelineStartMs,
           ),
         );
-      } catch (error) {
-        setDragError(error instanceof Error ? error.message : 'Could not undo segment move');
+      } else if (lastEntry.kind === 'move-segment-track') {
+        setTrackSegmentLayout(lastEntry.sourceTrackVersionId, lastEntry.previousSourceSegments);
+        setTrackSegmentLayout(lastEntry.targetTrackVersionId, lastEntry.previousTargetSegments);
+        setSelectedTrackVersionId(lastEntry.previousSelectedTrackVersionId);
+        setSelectedSegmentId(lastEntry.previousSelectedSegmentId);
+      } else if (lastEntry.kind === 'cut') {
+        setTrackSegmentLayout(lastEntry.trackVersionId, lastEntry.previousSegments);
+        setSelectedSegmentId(lastEntry.previousSelectedSegmentId);
+      } else if (lastEntry.kind === 'delete-segment') {
+        setTrackSegmentLayout(lastEntry.trackVersionId, lastEntry.previousSegments);
+        setSelectedSegmentId(lastEntry.previousSelectedSegmentId);
+      } else if (lastEntry.kind === 'recording-takes' && lastEntry.deletedTake) {
+        await commitEditingOperation({
+          demoId,
+          operationType: 'TAKE_RESTORED',
+          payload: buildTakeRestorePayload(lastEntry.deletedTake),
+          targetTrackId: lastEntry.deletedTake.trackId,
+          affectedTimeRange: {
+            startMs: lastEntry.deletedTake.timelineStartMs,
+            endMs: lastEntry.deletedTake.timelineEndMs,
+          },
+        });
+        setSelectedTrackVersionId(lastEntry.previousSelectedTrackVersionId);
+        setSelectedSegmentId(lastEntry.deletedTake.id);
+      } else if (lastEntry.kind === 'recording-takes') {
+        await replaceTrackRecordingTakes(lastEntry.trackId, lastEntry.previousTakes);
+        if (lastEntry.targetTrackId && lastEntry.targetPreviousTakes) {
+          await replaceTrackRecordingTakes(lastEntry.targetTrackId, lastEntry.targetPreviousTakes);
+        }
+        setSelectedTrackVersionId(lastEntry.previousSelectedTrackVersionId);
+        setSelectedSegmentId(lastEntry.previousSelectedSegmentId);
       }
-    } else if (lastEntry.kind === 'move-segment-track') {
-      setTrackSegmentLayout(lastEntry.sourceTrackVersionId, lastEntry.previousSourceSegments);
-      setTrackSegmentLayout(lastEntry.targetTrackVersionId, lastEntry.previousTargetSegments);
-      setSelectedTrackVersionId(lastEntry.previousSelectedTrackVersionId);
-      setSelectedSegmentId(lastEntry.previousSelectedSegmentId);
-    } else if (lastEntry.kind === 'cut') {
-      setTrackSegmentLayout(lastEntry.trackVersionId, lastEntry.previousSegments);
-      setSelectedSegmentId(lastEntry.previousSelectedSegmentId);
-    } else if (lastEntry.kind === 'delete-segment') {
-      setTrackSegmentLayout(lastEntry.trackVersionId, lastEntry.previousSegments);
-      setSelectedSegmentId(lastEntry.previousSelectedSegmentId);
-    } else if (lastEntry.kind === 'recording-takes') {
-      await replaceTrackRecordingTakes(lastEntry.trackId, lastEntry.previousTakes);
-      if (lastEntry.targetTrackId && lastEntry.targetPreviousTakes) {
-        await replaceTrackRecordingTakes(lastEntry.targetTrackId, lastEntry.targetPreviousTakes);
-      }
-      setSelectedTrackVersionId(lastEntry.previousSelectedTrackVersionId);
-      setSelectedSegmentId(lastEntry.previousSelectedSegmentId);
-    }
 
-    setTimelineHistory((prev) => prev.slice(0, -1));
-    return true;
+      setTimelineHistory((prev) => prev.slice(0, -1));
+      return true;
+    } catch (error) {
+      setDragError(error instanceof Error ? error.message : 'Could not undo timeline edit');
+      return false;
+    } finally {
+      undoTimelineEditInFlightRef.current = false;
+    }
   }
 
   async function deleteSelectedClip() {
@@ -1324,6 +1463,8 @@ export function DemoDawClient({
       const nextRecordingTakes = currentRecordingTakes
         .filter((take) => take.id !== selectedRecordingTake.id)
         .map((take, index) => ({ ...take, position: index }));
+      const deletedAt = new Date().toISOString();
+      const operationSummary = `Removed recording from ${selectedTrack.trackName}`;
       await replaceTrackRecordingTakes(selectedTrack.trackId, nextRecordingTakes);
       setSelectedSegmentId(
         nextRecordingTakes[selectedRecordingTakeIndex]?.id ??
@@ -1331,17 +1472,41 @@ export function DemoDawClient({
           nextRecordingTakes[0]?.id ??
           null,
       );
-      setSplitError(null);
-      setDragError(null);
-      pushTimelineHistory({
-        kind: 'recording-takes',
-        trackId: selectedTrack.trackId,
-        previousTakes: currentRecordingTakes,
-        nextTakes: nextRecordingTakes,
-        previousSelectedTrackVersionId: selectedTrackVersionId,
-        previousSelectedSegmentId: selectedSegmentId,
-      });
-      return true;
+      try {
+        await commitEditingOperation({
+          demoId,
+          operationType: 'TAKE_DELETED',
+          payload: {
+            trackId: selectedTrack.trackId,
+            takeId: selectedRecordingTake.id,
+            deletedAt,
+            deletedBy: currentUserId,
+            operationSummary,
+          },
+          targetTrackId: selectedTrack.trackId,
+          affectedTimeRange: {
+            startMs: selectedRecordingTake.timelineStartMs,
+            endMs: selectedRecordingTake.timelineEndMs,
+          },
+        });
+        setSplitError(null);
+        setDragError(null);
+        pushTimelineHistory({
+          kind: 'recording-takes',
+          trackId: selectedTrack.trackId,
+          previousTakes: currentRecordingTakes,
+          nextTakes: nextRecordingTakes,
+          previousSelectedTrackVersionId: selectedTrackVersionId,
+          previousSelectedSegmentId: selectedSegmentId,
+          deletedTake: { ...selectedRecordingTake },
+        });
+        return true;
+      } catch (error) {
+        await replaceTrackRecordingTakes(selectedTrack.trackId, currentRecordingTakes);
+        setSelectedSegmentId(selectedSegmentId);
+        setDragError(error instanceof Error ? error.message : 'Could not delete take');
+        return false;
+      }
     }
 
     if (!selectedSegment) return false;
@@ -1459,9 +1624,9 @@ export function DemoDawClient({
   }, [playbackEngine, publishPresence, stopMetronomeSchedule]);
 
   useEffect(() => {
-    setSelectedVersionId(currentVersionId);
+    setSelectedVersionId(liveCurrentVersionId);
     stopTransport();
-  }, [currentVersionId, stopTransport]);
+  }, [liveCurrentVersionId, stopTransport]);
 
   function pauseTransport() {
     if (clockRef.current) {
@@ -1570,6 +1735,9 @@ export function DemoDawClient({
         return findTrackByVersionId(
           (payload as Extract<DawCommandPayload, { trackVersionId: string }>).trackVersionId,
         )?.trackId ?? null;
+      case 'TAKE_DELETED':
+      case 'TAKE_RESTORED':
+        return (payload as Extract<DawCommandPayload, { trackId: string }>).trackId;
       case 'VERSION_TIMING_UPDATED':
         return null;
       case 'COMMENT_ADDED':
@@ -1605,6 +1773,9 @@ export function DemoDawClient({
           >;
           return crossfade.leftSegmentId ?? crossfade.rightSegmentId ?? null;
         }
+      case 'TAKE_DELETED':
+      case 'TAKE_RESTORED':
+        return null;
       case 'COMMENT_ADDED':
       case 'COMMENT_UPDATED':
       case 'COMMENT_DELETED':
@@ -1641,6 +1812,22 @@ export function DemoDawClient({
         const deleted = payload as Extract<DawCommandPayload, { trackVersionId: string; segmentId: string }>;
         const segment = findSegmentById(deleted.trackVersionId, deleted.segmentId);
         return segment ? { startMs: segment.timelineStartMs, endMs: segment.timelineEndMs } : null;
+      }
+      case 'TAKE_DELETED': {
+        const deleted = payload as Extract<DawCommandPayload, { trackId: string; takeId: string }>;
+        const take = getTrackRecordingTake(deleted.trackId, deleted.takeId);
+        return take ? { startMs: take.timelineStartMs, endMs: take.timelineEndMs } : null;
+      }
+      case 'TAKE_RESTORED': {
+        const restored = payload as Extract<
+          DawCommandPayload,
+          { trackId: string; takeId: string; timelineStartMs: number; timelineEndMs: number }
+        >;
+        const take = getTrackRecordingTake(restored.trackId, restored.takeId);
+        if (take) {
+          return { startMs: take.timelineStartMs, endMs: take.timelineEndMs };
+        }
+        return { startMs: restored.timelineStartMs, endMs: restored.timelineEndMs };
       }
       case 'SEGMENT_TRIMMED':
         {
@@ -2673,7 +2860,7 @@ export function DemoDawClient({
   }
 
   async function handleAddTrack() {
-    await performUpload(createBlankTrackFile(), 'Empty Track', 'uploadUnchanged');
+    await performUpload(createBlankTrackFile(), getNextEmptyTrackName(selectedTracks), 'uploadUnchanged');
   }
 
   function handleRecordingStreamReady(
@@ -2682,19 +2869,30 @@ export function DemoDawClient({
     target: ResolvedRecordingTarget,
     recordedTempoBpm: number,
   ) {
-    isLiveRecordingRef.current = true;
-    setRecordingStream(stream);
-    setTemporaryRecordingTrack({
+    const recordingSession: RecordingSession = {
       id: `rec-${Date.now()}`,
-      name: target.trackName,
       targetTrackId: target.trackId,
       targetTrackVersionId: target.trackVersionId,
       targetTrackName: target.trackName,
-      startOffsetMs,
+      timelineStartMs: startOffsetMs,
       startedAtPlayheadMs: startOffsetMs,
-      durationMs: 0,
       recordedTempoBpm,
       sourceTempoBpm: recordedTempoBpm,
+    };
+    recordingSessionRef.current = recordingSession;
+    isLiveRecordingRef.current = true;
+    setRecordingStream(stream);
+    setTemporaryRecordingTrack({
+      id: recordingSession.id,
+      name: recordingSession.targetTrackName,
+      targetTrackId: recordingSession.targetTrackId,
+      targetTrackVersionId: recordingSession.targetTrackVersionId,
+      targetTrackName: recordingSession.targetTrackName,
+      startOffsetMs: recordingSession.timelineStartMs,
+      startedAtPlayheadMs: recordingSession.startedAtPlayheadMs,
+      durationMs: 0,
+      recordedTempoBpm: recordingSession.recordedTempoBpm,
+      sourceTempoBpm: recordingSession.sourceTempoBpm,
       status: 'recording',
       syncStatus: 'idle',
       peaks: [],
@@ -2711,30 +2909,66 @@ export function DemoDawClient({
     setTemporaryRecordingTrack((prev) => (prev ? { ...prev, durationMs } : prev));
   }
 
-  async function handleRecordingStopped(blob: Blob, durationMs: number) {
-    const previewUrl = ingestEngine.createObjectUrl(blob);
-    recordingPreviewUrlRef.current = previewUrl;
+  async function handleRecordingStopped(blob: Blob, wallClockDurationMs: number) {
+    const recordingSession = recordingSessionRef.current;
     isLiveRecordingRef.current = false;
     setRecordingStream(null);
-    const recordingStartMs = temporaryRecordingTrack?.startOffsetMs ?? currentTimeMs;
+    if (!recordingSession) {
+      setTemporaryRecordingTrack((prev) =>
+        prev
+          ? {
+              ...prev,
+              status: 'error',
+              syncStatus: 'error',
+              error: 'Recording session was lost before saving. Please record again.',
+            }
+          : prev,
+      );
+      return;
+    }
+
+    let measuredDurationMs: number | null = null;
+    let durationDecodeError: unknown = null;
+    try {
+      measuredDurationMs = await ingestEngine.getRecordedBlobDurationMs(blob);
+    } catch (error) {
+      durationDecodeError = error;
+      measuredDurationMs = null;
+    }
+    if (measuredDurationMs === null) {
+      console.warn(
+        durationDecodeError
+          ? '[daw] Could not inspect recorded blob duration; falling back to wall-clock duration'
+          : '[daw] Could not decode recorded blob duration; falling back to wall-clock duration',
+        recordingSession.id,
+        durationDecodeError,
+      );
+    }
+    const recordingBounds = buildRecordedTakeBounds({
+      timelineStartMs: recordingSession.timelineStartMs,
+      measuredDurationMs,
+      fallbackDurationMs: wallClockDurationMs,
+    });
+    const previewUrl = ingestEngine.createObjectUrl(blob);
+    recordingPreviewUrlRef.current = previewUrl;
     pauseTransport();
-    seekTransport(recordingStartMs);
+    seekTransport(recordingBounds.startOffsetMs);
     tracksScrollContainerRef.current?.scrollTo({
-      left: Math.max(0, (recordingStartMs / 1000) * PX_PER_SECOND - 48),
+      left: Math.max(0, (recordingBounds.startOffsetMs / 1000) * PX_PER_SECOND - 48),
       behavior: 'auto',
     });
     const previewRecording = {
       ...(temporaryRecordingTrack ?? {
-        id: `rec-${Date.now()}`,
-        name: activeRecordingTarget?.trackName ?? 'Recording',
-        targetTrackId: activeRecordingTarget?.trackId ?? '',
-        targetTrackVersionId: activeRecordingTarget?.trackVersionId ?? '',
-        targetTrackName: activeRecordingTarget?.trackName ?? '',
-        startOffsetMs: recordingStartMs,
-        startedAtPlayheadMs: recordingStartMs,
-        durationMs,
-        recordedTempoBpm: resolvedLocalTempoBpm,
-        sourceTempoBpm: resolvedLocalTempoBpm,
+        id: recordingSession.id,
+        name: recordingSession.targetTrackName,
+        targetTrackId: recordingSession.targetTrackId,
+        targetTrackVersionId: recordingSession.targetTrackVersionId,
+        targetTrackName: recordingSession.targetTrackName,
+        startOffsetMs: recordingBounds.startOffsetMs,
+        startedAtPlayheadMs: recordingSession.startedAtPlayheadMs,
+        durationMs: recordingBounds.durationMs,
+        recordedTempoBpm: recordingSession.recordedTempoBpm,
+        sourceTempoBpm: recordingSession.sourceTempoBpm,
         status: 'preview' as const,
         syncStatus: 'idle' as const,
       }),
@@ -2742,13 +2976,17 @@ export function DemoDawClient({
       syncStatus: 'idle' as const,
       blob,
       previewUrl,
-      durationMs,
+      startOffsetMs: recordingBounds.startOffsetMs,
+      startedAtPlayheadMs: recordingSession.startedAtPlayheadMs,
+      durationMs: recordingBounds.durationMs,
+      recordedTempoBpm: recordingSession.recordedTempoBpm,
+      sourceTempoBpm: recordingSession.sourceTempoBpm,
       peaks: [],
     };
     setTemporaryRecordingTrack(previewRecording);
     void publishPresence('online');
 
-    void handleSaveRecording(previewRecording);
+    void handleSaveRecording(previewRecording, recordingBounds);
 
     try {
       const peaks = await ingestEngine.generateLocalPeaks(blob);
@@ -2770,7 +3008,10 @@ export function DemoDawClient({
     }
   }, [timelineTool]);
 
-  async function handleSaveRecording(recording: TemporaryRecordingTrack | null = temporaryRecordingTrack) {
+  async function handleSaveRecording(
+    recording: TemporaryRecordingTrack | null = temporaryRecordingTrack,
+    bounds: RecordingTakeBounds | null = null,
+  ) {
     const track = recording ?? temporaryRecordingTrack;
     if (!track?.blob || !track.targetTrackId) {
       setTemporaryRecordingTrack((prev) =>
@@ -2778,6 +3019,29 @@ export function DemoDawClient({
       );
       return;
     }
+
+    const recordingSession = recordingSessionRef.current;
+    if (!recordingSession) {
+      setTemporaryRecordingTrack((prev) =>
+        prev
+          ? {
+              ...prev,
+              status: 'error',
+              syncStatus: 'error',
+              error: 'Recording session was lost before saving. Please record again.',
+            }
+          : prev,
+      );
+      return;
+    }
+
+    const effectiveBounds =
+      bounds ??
+      buildRecordedTakeBounds({
+        timelineStartMs: recordingSession.timelineStartMs,
+        measuredDurationMs: track.durationMs,
+        fallbackDurationMs: track.durationMs,
+      });
 
     isLiveRecordingRef.current = false;
     setTemporaryRecordingTrack((prev) =>
@@ -2796,7 +3060,18 @@ export function DemoDawClient({
           name: track.name,
           sourceVersionId: selectedVersionId,
           trackId: track.targetTrackId,
-          startOffsetMs: track.startOffsetMs,
+          trackVersionId: track.targetTrackVersionId,
+          takeId: track.id,
+          startOffsetMs: effectiveBounds.startOffsetMs,
+          sourceStartMs: effectiveBounds.sourceStartMs,
+          sourceEndMs: effectiveBounds.sourceEndMs,
+          timelineStartMs: effectiveBounds.timelineStartMs,
+          timelineEndMs: effectiveBounds.timelineEndMs,
+          gainDb: 0,
+          fadeInMs: 0,
+          fadeOutMs: 0,
+          isMuted: false,
+          position: getTrackRecordingTakes(track.targetTrackId).length,
           recordedTempoBpm: track.recordedTempoBpm,
           sourceTempoBpm: track.sourceTempoBpm,
           timingChoice: 'uploadUnchanged',
@@ -2808,12 +3083,12 @@ export function DemoDawClient({
           trackId: track.targetTrackId,
           trackVersionId: null,
           name: track.name,
-          startOffsetMs: track.startOffsetMs,
-          durationMs: track.durationMs,
-          sourceStartMs: 0,
-          sourceEndMs: track.durationMs,
-          timelineStartMs: track.startOffsetMs,
-          timelineEndMs: track.startOffsetMs + track.durationMs,
+          startOffsetMs: effectiveBounds.startOffsetMs,
+          durationMs: effectiveBounds.durationMs,
+          sourceStartMs: effectiveBounds.sourceStartMs,
+          sourceEndMs: effectiveBounds.sourceEndMs,
+          timelineStartMs: effectiveBounds.timelineStartMs,
+          timelineEndMs: effectiveBounds.timelineEndMs,
           gainDb: 0,
           fadeInMs: 0,
           fadeOutMs: 0,
@@ -2834,6 +3109,7 @@ export function DemoDawClient({
           recordingPreviewUrlRef.current = null;
         }
 
+        recordingSessionRef.current = null;
         setTemporaryRecordingTrack(null);
         return;
       }
@@ -2844,7 +3120,7 @@ export function DemoDawClient({
         name: track.name,
         sourceVersionId: selectedVersionId,
         trackId: shouldCreateNewTrack ? undefined : track.targetTrackId,
-        startOffsetMs: track.startOffsetMs,
+        startOffsetMs: effectiveBounds.startOffsetMs,
         recordedTempoBpm: track.recordedTempoBpm,
         sourceTempoBpm: track.sourceTempoBpm,
         timingChoice: 'uploadUnchanged',
@@ -3280,8 +3556,9 @@ export function DemoDawClient({
                     projectId={projectId}
                     demoId={demoId}
                     baseOperationSeq={projectSyncState.lastSyncedOperationSeq}
-                    versions={versions}
-                    currentVersionId={currentVersionId}
+                    versions={liveVersions}
+                    operationHistory={projectSyncState.projectState?.operationHistory ?? []}
+                    currentVersionId={liveCurrentVersionId}
                     selectedVersionId={selectedVersionId}
                     onSelectVersion={(id) => {
                       setSelectedVersionId(id);
@@ -3722,8 +3999,10 @@ export function DemoDawClient({
                           splitHoverTimeMs >= segment.timelineStartMs && splitHoverTimeMs <= segment.timelineEndMs,
                       ) ?? null
                     : null;
-    const isRenaming = renameState?.trackId === track.trackId;
-    const trackComments = commentsByTrackId[track.trackId] ?? [];
+                const isRenaming = renameState?.trackId === track.trackId;
+                const trackComments = commentsByTrackId[track.trackId] ?? [];
+                const isBlankTrack = trackSegments.length === 0 && trackRecording === null;
+                const blankTrackTicks = isBlankTrack ? getTimelineTicks(totalDurationMs, selectedTiming) : [];
 
                 return (
                   <div
@@ -3898,6 +4177,29 @@ export function DemoDawClient({
                         style={{ left: visualProjection.currentTimeLeftPx }}
                       />
 
+                      {isBlankTrack && blankTrackTicks.length > 0 ? (
+                        <div
+                          className="pointer-events-none absolute left-0 top-0 z-0 overflow-hidden opacity-60"
+                          style={{ width: timelineRulerWidthPx, height: '100%' }}
+                          aria-hidden
+                        >
+                          {blankTrackTicks.map((tick) => {
+                            const tickLeftPx = Math.round(tick.leftPx);
+                            return (
+                              <div key={tick.leftPx} className="absolute inset-y-0" style={{ left: tickLeftPx }}>
+                                <div
+                                  className="absolute top-0 left-0 w-px"
+                                  style={{
+                                    height: 12,
+                                    backgroundColor: '#475569',
+                                  }}
+                                />
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : null}
+
                       {trackRecording ? (
                         <RecordingTrackLane
                           recording={trackRecording}
@@ -4059,7 +4361,7 @@ export function DemoDawClient({
             </div>
           ) : (
             <div className="rounded-md border border-gray-800 bg-gray-900 px-4 py-8 text-sm text-gray-400">
-              This version has no tracks yet. Upload, record, or add an empty track to get started.
+              This version has no tracks yet. Upload, record, or add a track to get started.
               <div className="mt-4">
                 <AddTrackButton onClick={() => void handleAddTrack()} disabled={isUploading} />
               </div>

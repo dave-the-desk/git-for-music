@@ -60,7 +60,7 @@ export const RecordingControls = forwardRef<RecordingControlsHandle, Props>(func
   const streamRef = useRef<MediaStream | null>(null);
   const rafRef = useRef<number | null>(null);
   const startTimeRef = useRef<number>(0);
-  const finalDurationMsRef = useRef<number>(0);
+  const wallClockDurationMsRef = useRef<number>(0);
 
   useEffect(() => {
     setIsSupported(
@@ -118,6 +118,7 @@ export const RecordingControls = forwardRef<RecordingControlsHandle, Props>(func
 
     setRecState('requesting');
     try {
+      const capturedStartOffsetMs = currentTimeMs;
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           deviceId: { exact: selectedAudioInputDeviceId },
@@ -128,7 +129,6 @@ export const RecordingControls = forwardRef<RecordingControlsHandle, Props>(func
       });
       streamRef.current = stream;
 
-      const capturedStartOffsetMs = currentTimeMs;
       startTimeRef.current = performance.now();
       setElapsedMs(0);
       setRecState('recording');
@@ -147,7 +147,7 @@ export const RecordingControls = forwardRef<RecordingControlsHandle, Props>(func
 
       recorder.onstop = () => {
         const blob = new Blob(chunksRef.current, { type: recorder.mimeType || 'audio/webm' });
-        onStopped(blob, finalDurationMsRef.current);
+        onStopped(blob, wallClockDurationMsRef.current);
         setRecState('idle');
         setElapsedMs(0);
       };
@@ -167,7 +167,7 @@ export const RecordingControls = forwardRef<RecordingControlsHandle, Props>(func
   }
 
   function stopRecording() {
-    finalDurationMsRef.current = performance.now() - startTimeRef.current;
+    wallClockDurationMsRef.current = performance.now() - startTimeRef.current;
     stopDurationLoop();
     mediaRecorderRef.current?.stop();
     streamRef.current?.getTracks().forEach((t) => t.stop());

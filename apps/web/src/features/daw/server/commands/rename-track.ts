@@ -2,6 +2,8 @@ import { prisma } from '@git-for-music/db';
 import { NextResponse } from 'next/server';
 import type { ApiError } from '@git-for-music/shared';
 import { recordDemoDawOperation } from '@/features/daw/server/snapshot-builder';
+import type { DawProjectOperationRecord } from '@/features/daw/protocol';
+import { emitAcceptedDawOperation } from '@/features/daw/server/realtime-gateway';
 
 const MAX_NAME_LENGTH = 100;
 
@@ -60,7 +62,7 @@ export async function renameTrackCommand(input: {
       select: { id: true, name: true },
     });
 
-    await recordDemoDawOperation(
+    const operation = await recordDemoDawOperation(
       tx,
       {
         projectId: track.demo.project.id,
@@ -77,8 +79,25 @@ export async function renameTrackCommand(input: {
       },
     );
 
-    return trackUpdate;
+    return { trackUpdate, operation };
   });
 
-  return NextResponse.json(updated);
+  if (updated.operation.created) {
+    emitAcceptedDawOperation({
+      projectId: track.demo.project.id,
+      demoId: track.demoId,
+      operationId: updated.operation.id,
+      operationSeq: updated.operation.operationSeq,
+      actorUserId: input.userId,
+      operationType: updated.operation.operationType ?? 'TRACK_RENAMED',
+      payload: updated.operation.payload as DawProjectOperationRecord['payload'],
+      createdAt: updated.operation.createdAt ?? new Date().toISOString(),
+      idempotencyKey: updated.operation.idempotencyKey ?? null,
+      clientOperationId: updated.operation.clientOperationId ?? null,
+      baseSnapshotId: updated.operation.baseSnapshotId ?? null,
+      baseOperationSeq: updated.operation.baseOperationSeq ?? 0,
+    });
+  }
+
+  return NextResponse.json(updated.trackUpdate);
 }

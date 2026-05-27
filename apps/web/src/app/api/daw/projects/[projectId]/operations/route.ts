@@ -5,6 +5,7 @@ import { getAuthenticatedUserFromRequest } from '@/lib/auth/current-user';
 import {
   commitDawProjectOperation,
   loadDawProjectOperations,
+  loadDawProjectSnapshotSequence,
 } from '@/features/daw/server/command-api';
 import type { DawOperationCommitRequest } from '@/features/daw/protocol';
 
@@ -52,7 +53,24 @@ export async function GET(
     return NextResponse.json<ApiError>({ error: 'Project not found' }, { status: 404 });
   }
 
-  return NextResponse.json({ operations });
+  const latestSnapshotSeq = await loadDawProjectSnapshotSequence(prisma, {
+    projectId,
+    demoId,
+    userId: user.id,
+  });
+
+  if (latestSnapshotSeq === null) {
+    return NextResponse.json<ApiError>({ error: 'Project not found' }, { status: 404 });
+  }
+
+  const rebootstrapRequired =
+    latestSnapshotSeq > 0 && afterSeq < latestSnapshotSeq - 12;
+
+  return NextResponse.json({
+    operations,
+    latestSnapshotSeq,
+    rebootstrapRequired,
+  });
 }
 
 export async function POST(

@@ -1,4 +1,5 @@
 import type { DemoAnnotation, DemoComment, TimingSource } from '@git-for-music/shared';
+import type { DawOperationType } from '@/features/daw/protocol';
 
 export type TrackTimelineSegment = {
   id: string;
@@ -68,9 +69,15 @@ export type TrackRecordingTake = {
 export type DawVersion = {
   id: string;
   label: string;
+  name?: string | null;
+  branchName?: string | null;
+  operationSummary?: string | null;
+  createdBy?: string | null;
   description: string | null;
   parentId: string | null;
+  parentVersionId?: string | null;
   createdAt: string;
+  operationSeq?: number;
   isCurrent: boolean;
   tempoBpm: number | null;
   timeSignatureNum: number;
@@ -86,11 +93,28 @@ export type TempoMetadataEntry = {
   sourceTempoBpm: number | null;
 };
 
+export type ProjectOperationHistoryEntry = {
+  operationId: string;
+  operationType: DawOperationType;
+  versionId: string | null;
+  currentVersionId: string | null;
+  trackId: string | null;
+  takeId: string | null;
+  segmentId: string | null;
+  summary: string;
+  actorUserId: string;
+  createdAt: string;
+};
+
 export type LocalProjectState = {
   versions: DawVersion[];
   currentVersionId: string;
+  versionTreeUpdatedAt?: string | null;
+  lastVersionOperationSeq?: number;
+  lastSeenOperationSeq?: number;
   comments: DemoComment[];
   annotations: DemoAnnotation[];
   tempoMetadataByTrackVersionId: Record<string, TempoMetadataEntry>;
   recordingTakesByTrackId: Record<string, TrackRecordingTake[]>;
+  operationHistory: ProjectOperationHistoryEntry[];
 };

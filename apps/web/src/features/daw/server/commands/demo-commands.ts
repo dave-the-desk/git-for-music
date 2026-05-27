@@ -1,6 +1,8 @@
 import { prisma } from '@git-for-music/db';
 import { NextResponse } from 'next/server';
 import type { ApiError } from '@git-for-music/shared';
+import type { DawProjectOperationRecord } from '@/features/daw/protocol';
+import { emitAcceptedDawOperation } from '@/features/daw/server/realtime-gateway';
 import {
   checkpointDemoDawSnapshot,
   recordDemoDawOperation,
@@ -62,6 +64,23 @@ export async function recordDemoCommand(input: {
       },
     );
   });
+
+  if (result.created) {
+    emitAcceptedDawOperation({
+      projectId: demo.project.id,
+      demoId: demo.id,
+      operationId: result.id,
+      operationSeq: result.operationSeq,
+      actorUserId: input.userId,
+      operationType: input.operationType,
+      payload: input.payload as DawProjectOperationRecord['payload'],
+      createdAt: result.createdAt ?? new Date().toISOString(),
+      idempotencyKey: input.idempotencyKey ?? null,
+      clientOperationId: input.clientOperationId ?? null,
+      baseSnapshotId: result.baseSnapshotId ?? null,
+      baseOperationSeq: result.baseOperationSeq ?? 0,
+    });
+  }
 
   return NextResponse.json(result, { status: 201 });
 }

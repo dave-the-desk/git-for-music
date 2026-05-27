@@ -1,5 +1,8 @@
 import { createHash } from 'node:crypto';
-import type { DawProjectOperationRecord } from '@/features/daw/protocol';
+import type {
+  DawProjectOperationRecord,
+  DawRealtimeAcceptedOperationPayload,
+} from '@/features/daw/protocol';
 
 type DawRealtimeRoomKey = string;
 
@@ -9,7 +12,8 @@ type DawRealtimeBaseEvent = {
   createdAt: string;
 };
 
-export type DawRealtimeAcceptedOperationEvent = DawRealtimeBaseEvent & {
+export type DawRealtimeAcceptedOperationEvent = DawRealtimeBaseEvent &
+  DawRealtimeAcceptedOperationPayload & {
   type: 'accepted_operation';
   operation: DawProjectOperationRecord;
 };
@@ -52,12 +56,25 @@ export type DawRealtimeCommentActivityEvent = DawRealtimeBaseEvent & {
   activity: 'created' | 'updated' | 'deleted' | 'resolved' | 'unresolved';
 };
 
+export type DawRealtimeVersionTreeEvent = DawRealtimeBaseEvent & {
+  type: 'version_tree_changed';
+  actorUserId: string;
+};
+
+export type DawRealtimeProjectRebootstrapRequiredEvent = DawRealtimeBaseEvent & {
+  type: 'project_rebootstrap_required';
+  actorUserId: string;
+  reason: string;
+};
+
 export type DawRealtimeEvent =
   | DawRealtimeAcceptedOperationEvent
   | DawRealtimePresenceEvent
   | DawRealtimeTransportStateEvent
   | DawRealtimeAssetProcessingStatusEvent
-  | DawRealtimeCommentActivityEvent;
+  | DawRealtimeCommentActivityEvent
+  | DawRealtimeVersionTreeEvent
+  | DawRealtimeProjectRebootstrapRequiredEvent;
 
 export type DawRealtimeEventType = DawRealtimeEvent['type'];
 
@@ -127,15 +144,56 @@ export function subscribeToDawProjectRealtime(
   };
 }
 
-export function emitAcceptedDawOperation(input: {
-  projectId: string;
-  demoId: string;
-  operation: DawProjectOperationRecord;
-}) {
+export function emitAcceptedDawOperation(
+  input: {
+    projectId: string;
+    demoId: string;
+  } & (
+    | {
+        operation: DawProjectOperationRecord;
+      }
+    | {
+        operationId: string;
+        operationSeq: number;
+        actorUserId: string;
+        operationType: DawProjectOperationRecord['type'];
+        payload: DawProjectOperationRecord['payload'];
+        createdAt: string;
+        clientOperationId?: string | null;
+        idempotencyKey?: string | null;
+        baseSnapshotId?: string | null;
+        baseOperationSeq?: number;
+      }
+  ),
+) {
+  const operation: DawProjectOperationRecord =
+    'operation' in input
+      ? input.operation
+      : {
+          id: input.operationId,
+          projectId: input.projectId,
+          demoId: input.demoId,
+          type: input.operationType,
+          createdAt: input.createdAt,
+          actorUserId: input.actorUserId,
+          baseSnapshotId: input.baseSnapshotId ?? null,
+          baseOperationSeq: input.baseOperationSeq ?? 0,
+          operationSeq: input.operationSeq,
+          payload: input.payload,
+          idempotencyKey: input.idempotencyKey ?? '',
+          clientOperationId: input.clientOperationId ?? '',
+        };
   dispatchEvent({
     ...createEventBase(input),
     type: 'accepted_operation',
-    operation: input.operation,
+    operationId: operation.id,
+    operationSeq: operation.operationSeq,
+    actorUserId: operation.actorUserId,
+    operationType: operation.type,
+    payload: operation.payload,
+    clientOperationId: operation.clientOperationId,
+    idempotencyKey: operation.idempotencyKey,
+    operation,
   });
 }
 
@@ -220,6 +278,37 @@ export function emitDawCommentActivity(input: {
     trackId: input.trackId,
     actorUserId: input.actorUserId,
     activity: input.activity,
+  });
+}
+
+export function emitDawVersionTreeChanged(input: {
+  projectId: string;
+  demoId: string;
+  actorUserId: string;
+}) {
+  dispatchEvent({
+    ...createEventBase(input),
+    type: 'version_tree_changed',
+    actorUserId: input.actorUserId,
+  });
+}
+
+export function emitDawProjectRebootstrapRequired(input: {
+  projectId: string;
+  demoId: string;
+  actorUserId: string;
+  reason: string;
+}) {
+  if (process.env.NODE_ENV !== 'production') {
+    console.warn(
+      `[daw] project_rebootstrap_required for ${input.projectId}/${input.demoId}: ${input.reason}`,
+    );
+  }
+  dispatchEvent({
+    ...createEventBase(input),
+    type: 'project_rebootstrap_required',
+    actorUserId: input.actorUserId,
+    reason: input.reason,
   });
 }
 

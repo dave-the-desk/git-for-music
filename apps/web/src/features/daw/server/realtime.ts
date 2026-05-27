@@ -4,6 +4,8 @@ export {
   emitDawAssetProcessingStatus,
   emitDawCommentActivity,
   emitDawProjectPresence,
+  emitDawProjectRebootstrapRequired,
+  emitDawVersionTreeChanged,
   emitDawProjectTransportState,
   encodeDawRealtimeEvent,
   subscribeToDawProjectRealtime,

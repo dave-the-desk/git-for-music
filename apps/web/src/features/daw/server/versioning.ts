@@ -1,4 +1,10 @@
 import type { Prisma } from '@git-for-music/db';
+import type {
+  DawVersionTreeNodeSnapshot,
+  DawVersionTreeTrackSnapshot,
+} from '@/features/daw/protocol';
+
+type DemoDawTimingSource = 'MANUAL' | 'ANALYZED' | 'IMPORTED';
 
 const TRACK_VERSION_FIELDS = {
   id: true,
@@ -34,6 +40,7 @@ const TRACK_VERSION_FIELDS = {
 } as const;
 
 const DEMO_VERSION_FIELDS = {
+  description: true,
   tempoBpm: true,
   timeSignatureNum: true,
   timeSignatureDen: true,
@@ -163,6 +170,13 @@ export async function createDemoVersionWithCopiedTracks(
     select: {
       id: true,
       label: true,
+      description: true,
+      tempoBpm: true,
+      timeSignatureNum: true,
+      timeSignatureDen: true,
+      musicalKey: true,
+      tempoSource: true,
+      keySource: true,
       createdAt: true,
       parentId: true,
     },
@@ -182,5 +196,73 @@ export async function createDemoVersionWithCopiedTracks(
       trackVersionIdMap: new Map<string, string>(),
       segmentIdMap: new Map<string, string>(),
     },
+  };
+}
+
+export function serializeCreatedDemoVersionTreeNode(input: {
+  id: string;
+  label: string;
+  description?: string | null;
+  parentId?: string | null;
+  createdAt: string | Date;
+  tempoBpm?: number | null;
+  timeSignatureNum?: number;
+  timeSignatureDen?: number;
+  musicalKey?: string | null;
+  tempoSource?: DemoDawTimingSource;
+  keySource?: DemoDawTimingSource;
+  isCurrent?: boolean;
+  tracks?: DawVersionTreeTrackSnapshot[];
+}): DawVersionTreeNodeSnapshot {
+  return {
+    id: input.id,
+    label: input.label,
+    description: input.description ?? null,
+    parentId: input.parentId ?? null,
+    createdAt:
+      typeof input.createdAt === 'string' ? input.createdAt : input.createdAt.toISOString(),
+    isCurrent: input.isCurrent ?? false,
+    tempoBpm: input.tempoBpm ?? null,
+    timeSignatureNum: input.timeSignatureNum ?? 4,
+    timeSignatureDen: input.timeSignatureDen ?? 4,
+    musicalKey: input.musicalKey ?? null,
+    tempoSource: input.tempoSource ?? 'MANUAL',
+    keySource: input.keySource ?? 'MANUAL',
+    tracks: input.tracks ?? [],
+  };
+}
+
+export function serializeCreatedDemoTrackVersionTreeTrack(input: {
+  trackId: string;
+  trackName: string;
+  trackPosition: number;
+  trackVersionId: string;
+  storageKey: string;
+  mimeType?: string | null;
+  durationMs?: number | null;
+  startOffsetMs?: number;
+  createdAt?: string | Date;
+  isDerived?: boolean;
+  operationType?: 'ORIGINAL' | 'TIME_STRETCH';
+  parentTrackVersionId?: string | null;
+  segments?: DawVersionTreeTrackSnapshot['segments'];
+}): DawVersionTreeTrackSnapshot {
+  return {
+    trackId: input.trackId,
+    trackName: input.trackName,
+    trackPosition: input.trackPosition,
+    trackVersionId: input.trackVersionId,
+    storageKey: input.storageKey,
+    mimeType: input.mimeType ?? null,
+    durationMs: input.durationMs ?? null,
+    startOffsetMs: input.startOffsetMs ?? 0,
+    createdAt:
+      typeof input.createdAt === 'string'
+        ? input.createdAt
+        : input.createdAt?.toISOString() ?? new Date().toISOString(),
+    isDerived: input.isDerived ?? false,
+    operationType: input.operationType ?? 'ORIGINAL',
+    parentTrackVersionId: input.parentTrackVersionId ?? null,
+    segments: input.segments ?? [],
   };
 }

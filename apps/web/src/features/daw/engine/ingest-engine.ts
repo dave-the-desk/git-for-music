@@ -29,7 +29,18 @@ export type IngestUploadInput = {
   name?: string;
   sourceVersionId?: string;
   trackId?: string;
+  trackVersionId?: string | null;
+  takeId?: string;
   startOffsetMs?: number;
+  sourceStartMs?: number;
+  sourceEndMs?: number;
+  timelineStartMs?: number;
+  timelineEndMs?: number;
+  gainDb?: number;
+  fadeInMs?: number;
+  fadeOutMs?: number;
+  isMuted?: boolean;
+  position?: number;
   sourceType?: 'recording' | 'upload';
   attachMode?: 'track-version' | 'clip';
   recordedTempoBpm?: number | null;
@@ -45,6 +56,19 @@ export class AudioIngestEngine {
 
   revokeObjectUrl(url: string) {
     URL.revokeObjectURL(url);
+  }
+
+  async getRecordedBlobDurationMs(blob: Blob): Promise<number | null> {
+    const bytes = await blob.arrayBuffer();
+    const audioContext = new AudioContext();
+    try {
+      const audioBuffer = await audioContext.decodeAudioData(bytes.slice(0));
+      return Math.max(0, Math.round(audioBuffer.duration * 1000));
+    } catch {
+      return null;
+    } finally {
+      await audioContext.close().catch(() => {});
+    }
   }
 
   async readAudioMetadata(file: Blob) {
@@ -212,6 +236,22 @@ export class AudioIngestEngine {
       channelCount: metadata.channelCount,
       sizeBytes: metadata.sizeBytes,
       attachMode: input.attachMode ?? 'track-version',
+      takeId: input.takeId,
+      trackId: input.trackId,
+      trackVersionId: input.trackVersionId,
+      name: input.name?.trim() || undefined,
+      startOffsetMs: input.startOffsetMs,
+      sourceStartMs: input.sourceStartMs,
+      sourceEndMs: input.sourceEndMs,
+      timelineStartMs: input.timelineStartMs,
+      timelineEndMs: input.timelineEndMs,
+      gainDb: input.gainDb,
+      fadeInMs: input.fadeInMs,
+      fadeOutMs: input.fadeOutMs,
+      isMuted: input.isMuted,
+      position: input.position,
+      recordedTempoBpm: input.recordedTempoBpm,
+      sourceTempoBpm: input.sourceTempoBpm,
     };
 
     const completeResponse = await fetch('/api/daw/assets/complete-upload', {

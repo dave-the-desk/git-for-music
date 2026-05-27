@@ -256,6 +256,22 @@ export interface DawAssetCompleteUploadRequest {
   channelCount: number;
   sizeBytes: number;
   attachMode?: 'track-version' | 'clip';
+  takeId?: string;
+  trackId?: string;
+  trackVersionId?: string | null;
+  name?: string;
+  startOffsetMs?: number;
+  sourceStartMs?: number;
+  sourceEndMs?: number;
+  timelineStartMs?: number;
+  timelineEndMs?: number;
+  gainDb?: number;
+  fadeInMs?: number;
+  fadeOutMs?: number;
+  isMuted?: boolean;
+  position?: number;
+  recordedTempoBpm?: number | null;
+  sourceTempoBpm?: number | null;
 }
 
 export interface DawAssetSignedDownloadResponse {

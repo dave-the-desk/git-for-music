@@ -1,8 +1,15 @@
 import { prisma } from '@git-for-music/db';
 import { NextResponse } from 'next/server';
 import type { ApiError } from '@git-for-music/shared';
-import { checkpointDemoDawSnapshot } from '@/features/daw/server/snapshot-builder';
+import type { DawProjectOperationRecord } from '@/features/daw/protocol';
+import {
+  checkpointDemoDawSnapshot,
+  recordDemoDawOperation,
+} from '@/features/daw/server/snapshot-builder';
+import type { DemoDawOperationInsertResult } from '@/features/daw/server/snapshot-builder';
 import { isValidTempoBpm } from '@/features/daw/utils/timing';
+import { emitAcceptedDawOperation } from '@/features/daw/server/realtime-gateway';
+import { serializeCreatedDemoVersionTreeNode } from '@/features/daw/server/versioning';
 
 const MAX_NAME_LENGTH = 80;
 const MAX_DESCRIPTION_LENGTH = 500;
@@ -68,6 +75,13 @@ export async function createDemoCommand(input: {
     return NextResponse.json<ApiError>({ error: 'Project not found' }, { status: 404 });
   }
 
+  let versionCreatedOperation:
+    | Awaited<ReturnType<typeof recordDemoDawOperation>>
+    | null = null;
+  let currentVersionChangedOperation:
+    | Awaited<ReturnType<typeof recordDemoDawOperation>>
+    | null = null;
+
   const demo = await prisma.$transaction(async (tx) => {
     const createdDemo = await tx.demo.create({
       data: {
@@ -92,6 +106,16 @@ export async function createDemoCommand(input: {
       },
       select: {
         id: true,
+        label: true,
+        description: true,
+        tempoBpm: true,
+        timeSignatureNum: true,
+        timeSignatureDen: true,
+        musicalKey: true,
+        tempoSource: true,
+        keySource: true,
+        createdAt: true,
+        parentId: true,
       },
     });
 
@@ -107,6 +131,59 @@ export async function createDemoCommand(input: {
       },
     });
 
+    versionCreatedOperation = await recordDemoDawOperation(
+      tx,
+      {
+        projectId: project.id,
+        demoId: createdDemo.id,
+        actorUserId: input.userId,
+        operationType: 'VERSION_CREATED',
+        payload: {
+          versionId: initialVersion.id,
+          parentVersionId: initialVersion.parentId,
+          branchName: initialVersion.label,
+          label: initialVersion.label,
+          createdAt: initialVersion.createdAt.toISOString(),
+          createdBy: input.userId,
+          operationSummary: initialVersion.description,
+          version: serializeCreatedDemoVersionTreeNode({
+            id: initialVersion.id,
+            label: initialVersion.label,
+            description: initialVersion.description,
+            parentId: initialVersion.parentId,
+            createdAt: initialVersion.createdAt,
+            tempoBpm: initialVersion.tempoBpm,
+            timeSignatureNum: initialVersion.timeSignatureNum,
+            timeSignatureDen: initialVersion.timeSignatureDen,
+            musicalKey: initialVersion.musicalKey,
+            tempoSource: initialVersion.tempoSource,
+            keySource: initialVersion.keySource,
+            isCurrent: true,
+          }),
+        },
+      },
+      {
+        checkpointCreatedById: input.userId,
+      },
+    );
+
+    currentVersionChangedOperation = await recordDemoDawOperation(
+      tx,
+      {
+        projectId: project.id,
+        demoId: createdDemo.id,
+        actorUserId: input.userId,
+        operationType: 'CURRENT_VERSION_CHANGED',
+        payload: {
+          previousVersionId: null,
+          currentVersionId: initialVersion.id,
+        },
+      },
+      {
+        checkpointCreatedById: input.userId,
+      },
+    );
+
     await checkpointDemoDawSnapshot(tx, {
       projectId: project.id,
       demoId: createdDemo.id,
@@ -115,6 +192,47 @@ export async function createDemoCommand(input: {
 
     return createdDemo;
   });
+
+  const recordedVersionCreatedOperation =
+    versionCreatedOperation as DemoDawOperationInsertResult | null;
+  const recordedCurrentVersionChangedOperation =
+    currentVersionChangedOperation as DemoDawOperationInsertResult | null;
+
+  if (recordedVersionCreatedOperation?.created) {
+    emitAcceptedDawOperation({
+      projectId: project.id,
+      demoId: demo.id,
+      operationId: recordedVersionCreatedOperation.id,
+      operationSeq: recordedVersionCreatedOperation.operationSeq,
+      actorUserId: input.userId,
+      operationType: recordedVersionCreatedOperation.operationType ?? 'VERSION_CREATED',
+      payload: recordedVersionCreatedOperation.payload as DawProjectOperationRecord['payload'],
+      createdAt: recordedVersionCreatedOperation.createdAt ?? new Date().toISOString(),
+      idempotencyKey: recordedVersionCreatedOperation.idempotencyKey ?? null,
+      clientOperationId: recordedVersionCreatedOperation.clientOperationId ?? null,
+      baseSnapshotId: recordedVersionCreatedOperation.baseSnapshotId ?? null,
+      baseOperationSeq: recordedVersionCreatedOperation.baseOperationSeq ?? 0,
+    });
+  }
+
+  if (recordedCurrentVersionChangedOperation?.created) {
+    emitAcceptedDawOperation({
+      projectId: project.id,
+      demoId: demo.id,
+      operationId: recordedCurrentVersionChangedOperation.id,
+      operationSeq: recordedCurrentVersionChangedOperation.operationSeq,
+      actorUserId: input.userId,
+      operationType:
+        recordedCurrentVersionChangedOperation.operationType ?? 'CURRENT_VERSION_CHANGED',
+      payload:
+        recordedCurrentVersionChangedOperation.payload as DawProjectOperationRecord['payload'],
+      createdAt: recordedCurrentVersionChangedOperation.createdAt ?? new Date().toISOString(),
+      idempotencyKey: recordedCurrentVersionChangedOperation.idempotencyKey ?? null,
+      clientOperationId: recordedCurrentVersionChangedOperation.clientOperationId ?? null,
+      baseSnapshotId: recordedCurrentVersionChangedOperation.baseSnapshotId ?? null,
+      baseOperationSeq: recordedCurrentVersionChangedOperation.baseOperationSeq ?? 0,
+    });
+  }
 
   return NextResponse.json(
     {

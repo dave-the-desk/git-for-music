@@ -14,6 +14,8 @@ import { isValidTempoBpm, normalizeTimeSignature } from '@/features/daw/utils/ti
 import {
   createProjectPresenceSeed,
   emitAcceptedDawOperation,
+  emitDawProjectRebootstrapRequired,
+  emitDawVersionTreeChanged,
 } from '@/features/daw/server/realtime-gateway';
 import { createDemoVersionWithCopiedTracks } from '@/features/daw/server/versions';
 import type {
@@ -34,6 +36,10 @@ import type {
   DawOperationPayloadAnnotationAdded,
   DawOperationPayloadAnnotationUpdated,
   DawOperationPayloadAnnotationDeleted,
+  DawOperationPayloadTakeAdded,
+  DawOperationPayloadTakeDeleted,
+  DawOperationPayloadTakeRestored,
+  DawOperationPayloadVersionRenamed,
   DawOperationPayloadVersionTimingUpdated,
 } from '@/features/daw/protocol';
 import type { JsonValue, TimingSource } from '@git-for-music/shared';
@@ -1222,6 +1228,102 @@ async function executeOperationMutation(
       };
     }
 
+    case 'VERSION_RENAMED': {
+      const payload = request.payload as DawOperationPayloadVersionRenamed;
+      const nextLabel = (payload.label ?? payload.name ?? payload.branchName ?? '').trim();
+      if (!nextLabel) {
+        throw new Error('Label is required');
+      }
+
+      const version = await client.demoVersion.findFirst({
+        where: {
+          id: payload.versionId,
+          demo: {
+            project: {
+              id: workspace.project.id,
+            },
+          },
+        },
+        select: {
+          id: true,
+          label: true,
+        },
+      });
+
+      if (!version) {
+        throw new Error('Version not found');
+      }
+
+      const updated = await client.demoVersion.update({
+        where: {
+          id: version.id,
+        },
+        data: {
+          label: nextLabel,
+        },
+        select: {
+          id: true,
+          label: true,
+        },
+      });
+
+      return {
+        logPayload: {
+          versionId: updated.id,
+          label: updated.label,
+        },
+      };
+    }
+
+    case 'VERSION_SELECTED':
+    case 'CURRENT_VERSION_CHANGED': {
+      const payload = request.payload as { currentVersionId: string; previousVersionId?: string | null };
+      const version = await client.demoVersion.findFirst({
+        where: {
+          id: payload.currentVersionId,
+          demo: {
+            project: {
+              id: workspace.project.id,
+            },
+          },
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      if (!version) {
+        throw new Error('Version not found');
+      }
+
+      await client.demo.update({
+        where: {
+          id: workspace.demo.id,
+        },
+        data: {
+          currentVersionId: version.id,
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      workspace = {
+        ...workspace,
+        demo: {
+          ...workspace.demo,
+          currentVersionId: version.id,
+        },
+      };
+
+      return {
+        logPayload: {
+          previousVersionId: payload.previousVersionId ?? null,
+          currentVersionId: version.id,
+        },
+      };
+    }
+
     case 'VERSION_TIMING_UPDATED': {
       const validationError = validateVersionTimingPayload(request.payload);
       if (validationError) {
@@ -1316,6 +1418,81 @@ async function executeOperationMutation(
         forceCheckpoint: true,
       };
     }
+    case 'TAKE_ADDED': {
+      const payload = request.payload as DawOperationPayloadTakeAdded;
+      if (!isNonEmptyString(payload.trackId)) {
+        throw new Error('trackId is required');
+      }
+      if (!isNonEmptyString(payload.takeId)) {
+        throw new Error('takeId is required');
+      }
+      if (!isNonEmptyString(payload.assetId)) {
+        throw new Error('assetId is required');
+      }
+      if (!isNonEmptyString(payload.storageKey)) {
+        throw new Error('storageKey is required');
+      }
+
+      return {
+        logPayload: {
+          ...payload,
+        },
+      };
+    }
+    case 'TAKE_DELETED': {
+      const payload = request.payload as DawOperationPayloadTakeDeleted;
+      if (!isNonEmptyString(payload.trackId)) {
+        throw new Error('trackId is required');
+      }
+      if (!isNonEmptyString(payload.takeId)) {
+        throw new Error('takeId is required');
+      }
+      if (!isNonEmptyString(payload.deletedAt)) {
+        throw new Error('deletedAt is required');
+      }
+      if (!isNonEmptyString(payload.deletedBy)) {
+        throw new Error('deletedBy is required');
+      }
+      if (!isNonEmptyString(payload.operationSummary)) {
+        throw new Error('operationSummary is required');
+      }
+
+      return {
+        logPayload: {
+          ...payload,
+        },
+      };
+    }
+    case 'TAKE_RESTORED': {
+      const payload = request.payload as DawOperationPayloadTakeRestored;
+      if (!isNonEmptyString(payload.trackId)) {
+        throw new Error('trackId is required');
+      }
+      if (!isNonEmptyString(payload.takeId)) {
+        throw new Error('takeId is required');
+      }
+      if (!isNonEmptyString(payload.assetId)) {
+        throw new Error('assetId is required');
+      }
+      if (!isNonEmptyString(payload.storageKey)) {
+        throw new Error('storageKey is required');
+      }
+      if (!isNonEmptyString(payload.restoredAt)) {
+        throw new Error('restoredAt is required');
+      }
+      if (!isNonEmptyString(payload.restoredBy)) {
+        throw new Error('restoredBy is required');
+      }
+      if (!isNonEmptyString(payload.operationSummary)) {
+        throw new Error('operationSummary is required');
+      }
+
+      return {
+        logPayload: {
+          ...payload,
+        },
+      };
+    }
     case 'COMMENT_ADDED':
     case 'COMMENT_UPDATED':
     case 'COMMENT_DELETED': {
@@ -1352,6 +1529,8 @@ async function executeOperationMutation(
         },
       };
     }
+    default:
+      throw new Error(`Unsupported operation type: ${request.operationType}`);
   }
 }
 
@@ -1644,6 +1823,7 @@ export async function commitDawProjectOperation(
           } | null;
         };
       };
+  let versionTreeChanged = false;
 
   try {
     result = await client.$transaction(async (tx) => {
@@ -1690,6 +1870,7 @@ export async function commitDawProjectOperation(
               currentVersionId: branchVersion.id,
             },
           };
+          versionTreeChanged = true;
 
           effectiveRequest = translateRequestForBranch(request, branchVersion.id, branchVersion.cloneMap);
           branchedFromHistoricalBase = true;
@@ -1733,6 +1914,7 @@ export async function commitDawProjectOperation(
                 label: createdBranch.label,
                 parentId: createdBranch.parentId,
               };
+              versionTreeChanged = true;
             }
           }
 
@@ -1806,6 +1988,20 @@ export async function commitDawProjectOperation(
       projectId: workspace.project.id,
       demoId: workspace.demo.id,
       operation: result.operation,
+    });
+  }
+
+  if (versionTreeChanged) {
+    await emitDawVersionTreeChanged({
+      projectId: workspace.project.id,
+      demoId: workspace.demo.id,
+      actorUserId: input.userId,
+    });
+    await emitDawProjectRebootstrapRequired({
+      projectId: workspace.project.id,
+      demoId: workspace.demo.id,
+      actorUserId: input.userId,
+      reason: 'Server-side version tree mutation may require a client resync',
     });
   }
 

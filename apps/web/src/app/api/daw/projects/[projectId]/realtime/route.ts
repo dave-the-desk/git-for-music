@@ -129,6 +129,13 @@ export async function GET(
               projectId,
               demoId,
               createdAt: operation.createdAt,
+              operationId: operation.id,
+              operationSeq: operation.operationSeq,
+              actorUserId: operation.actorUserId,
+              operationType: operation.type,
+              payload: operation.payload,
+              clientOperationId: operation.clientOperationId,
+              idempotencyKey: operation.idempotencyKey,
               operation,
             }),
           );

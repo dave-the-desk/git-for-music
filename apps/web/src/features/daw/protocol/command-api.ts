@@ -9,8 +9,21 @@ export type DawOperationType =
   | 'SEGMENT_TRIMMED'
   | 'SEGMENT_MERGED'
   | 'CROSSFADE_SET'
+  | 'VERSION_CREATED'
+  | 'VERSION_RENAMED'
+  | 'VERSION_SELECTED'
+  | 'VERSION_BRANCH_CREATED'
+  | 'VERSION_REVERTED_FROM'
+  | 'CURRENT_VERSION_CHANGED'
+  | 'TRACK_VERSION_CREATED'
+  | 'VERSION_PARENT_SET'
+  | 'VERSION_OPERATION_SUMMARY_SET'
+  | 'VERSION_NODE_ADDED'
   | 'VERSION_TIMING_UPDATED'
   | 'ASSET_ADDED'
+  | 'TAKE_ADDED'
+  | 'TAKE_DELETED'
+  | 'TAKE_RESTORED'
   | 'COMMENT_ADDED'
   | 'COMMENT_UPDATED'
   | 'COMMENT_DELETED'
@@ -91,6 +104,143 @@ export interface DawOperationPayloadCrossfadeSet {
   curve: string | null;
 }
 
+export interface DawOperationPayloadTakeAdded {
+  trackId: string;
+  takeId: string;
+  assetId: string;
+  storageKey: string;
+  name: string;
+  trackVersionId: string | null;
+  startOffsetMs: number;
+  durationMs: number;
+  sourceStartMs: number;
+  sourceEndMs: number;
+  timelineStartMs: number;
+  timelineEndMs: number;
+  gainDb: number;
+  fadeInMs: number;
+  fadeOutMs: number;
+  isMuted: boolean;
+  position: number;
+  recordedTempoBpm: number | null;
+  sourceTempoBpm: number | null;
+  createdAt: string;
+}
+
+export interface DawOperationPayloadTakeRestored extends DawOperationPayloadTakeAdded {
+  restoredAt: string;
+  restoredBy: string;
+  operationSummary: string;
+}
+
+export interface DawOperationPayloadTakeDeleted {
+  trackId: string;
+  takeId: string;
+  deletedAt: string;
+  deletedBy: string;
+  operationSummary: string;
+}
+
+export interface DawVersionTreeTrackSnapshot {
+  trackId: string;
+  trackName: string;
+  trackPosition: number;
+  trackVersionId: string;
+  storageKey: string;
+  mimeType: string | null;
+  durationMs: number | null;
+  startOffsetMs: number;
+  createdAt: string;
+  isDerived: boolean;
+  operationType: 'ORIGINAL' | 'TIME_STRETCH';
+  parentTrackVersionId: string | null;
+  segments: DawSegmentSnapshot[];
+}
+
+export interface DawVersionTreeNodeSnapshot {
+  id: string;
+  label: string;
+  description: string | null;
+  parentId: string | null;
+  createdAt: string;
+  isCurrent: boolean;
+  tempoBpm: number | null;
+  timeSignatureNum: number;
+  timeSignatureDen: number;
+  musicalKey: string | null;
+  tempoSource: TimingSource;
+  keySource: TimingSource;
+  tracks: DawVersionTreeTrackSnapshot[];
+}
+
+export interface DawOperationPayloadVersionCreated {
+  versionId?: string;
+  parentVersionId?: string | null;
+  branchName?: string | null;
+  label?: string | null;
+  createdAt?: string;
+  createdBy?: string;
+  operationSummary?: string | null;
+  version: DawVersionTreeNodeSnapshot;
+}
+
+export interface DawOperationPayloadVersionRenamed {
+  versionId: string;
+  label?: string;
+  name?: string;
+  branchName?: string | null;
+}
+
+export interface DawOperationPayloadVersionSelected {
+  currentVersionId: string;
+  previousVersionId: string | null;
+}
+
+export interface DawOperationPayloadVersionBranchCreated {
+  versionId?: string;
+  parentVersionId?: string | null;
+  branchName?: string | null;
+  label?: string | null;
+  createdAt?: string;
+  createdBy?: string;
+  operationSummary?: string | null;
+  version: DawVersionTreeNodeSnapshot;
+  sourceVersionId: string;
+}
+
+export interface DawOperationPayloadVersionRevertedFrom {
+  versionId: string;
+  revertedFromVersionId: string;
+  currentVersionId: string;
+}
+
+export interface DawOperationPayloadCurrentVersionChanged {
+  previousVersionId: string | null;
+  currentVersionId: string;
+}
+
+export interface DawOperationPayloadTrackVersionCreated {
+  versionId?: string | null;
+  trackId?: string;
+  trackVersionId?: string;
+  operationSummary?: string | null;
+  track: DawVersionTreeTrackSnapshot;
+}
+
+export interface DawOperationPayloadVersionParentSet {
+  versionId: string;
+  parentId: string | null;
+}
+
+export interface DawOperationPayloadVersionOperationSummarySet {
+  versionId: string;
+  description: string | null;
+}
+
+export interface DawOperationPayloadVersionNodeAdded {
+  version: DawVersionTreeNodeSnapshot;
+}
+
 export interface DawOperationPayloadVersionTimingUpdated {
   versionId: string;
   label?: string;
@@ -163,6 +313,19 @@ export type DawCommandPayload =
   | DawOperationPayloadSegmentTrimmed
   | DawOperationPayloadSegmentMerged
   | DawOperationPayloadCrossfadeSet
+  | DawOperationPayloadVersionCreated
+  | DawOperationPayloadVersionRenamed
+  | DawOperationPayloadVersionSelected
+  | DawOperationPayloadVersionBranchCreated
+  | DawOperationPayloadVersionRevertedFrom
+  | DawOperationPayloadCurrentVersionChanged
+  | DawOperationPayloadTrackVersionCreated
+  | DawOperationPayloadTakeAdded
+  | DawOperationPayloadTakeDeleted
+  | DawOperationPayloadTakeRestored
+  | DawOperationPayloadVersionParentSet
+  | DawOperationPayloadVersionOperationSummarySet
+  | DawOperationPayloadVersionNodeAdded
   | DawOperationPayloadVersionTimingUpdated
   | DawOperationPayloadCommentAdded
   | DawOperationPayloadCommentUpdated
@@ -194,6 +357,19 @@ export type DawOperationLogPayload =
   | DawOperationPayloadSegmentTrimmed
   | DawOperationPayloadSegmentMerged
   | DawOperationPayloadCrossfadeSet
+  | DawOperationPayloadVersionCreated
+  | DawOperationPayloadVersionRenamed
+  | DawOperationPayloadVersionSelected
+  | DawOperationPayloadVersionBranchCreated
+  | DawOperationPayloadVersionRevertedFrom
+  | DawOperationPayloadCurrentVersionChanged
+  | DawOperationPayloadTrackVersionCreated
+  | DawOperationPayloadTakeAdded
+  | DawOperationPayloadTakeDeleted
+  | DawOperationPayloadTakeRestored
+  | DawOperationPayloadVersionParentSet
+  | DawOperationPayloadVersionOperationSummarySet
+  | DawOperationPayloadVersionNodeAdded
   | {
       versionId: string;
       label: string;
@@ -224,6 +400,19 @@ export interface DawProjectOperationRecord {
   payload: JsonValue;
   idempotencyKey: string;
   clientOperationId: string;
+}
+
+export interface DawRealtimeAcceptedOperationPayload {
+  projectId: string;
+  demoId: string;
+  operationId: string;
+  operationSeq: number;
+  actorUserId: string;
+  operationType: DawOperationType;
+  payload: JsonValue;
+  createdAt: string;
+  clientOperationId?: string | null;
+  idempotencyKey?: string | null;
 }
 
 export interface DawProjectSnapshotRecord {
@@ -353,8 +542,73 @@ export type DawOperationCommitRequest =
     })
   | (DawOperationCommitMetadata & {
       demoId: string;
+      operationType: 'VERSION_CREATED';
+      payload: DawOperationPayloadVersionCreated;
+    })
+  | (DawOperationCommitMetadata & {
+      demoId: string;
+      operationType: 'VERSION_RENAMED';
+      payload: DawOperationPayloadVersionRenamed;
+    })
+  | (DawOperationCommitMetadata & {
+      demoId: string;
+      operationType: 'VERSION_SELECTED';
+      payload: DawOperationPayloadVersionSelected;
+    })
+  | (DawOperationCommitMetadata & {
+      demoId: string;
+      operationType: 'VERSION_BRANCH_CREATED';
+      payload: DawOperationPayloadVersionBranchCreated;
+    })
+  | (DawOperationCommitMetadata & {
+      demoId: string;
+      operationType: 'VERSION_REVERTED_FROM';
+      payload: DawOperationPayloadVersionRevertedFrom;
+    })
+  | (DawOperationCommitMetadata & {
+      demoId: string;
+      operationType: 'CURRENT_VERSION_CHANGED';
+      payload: DawOperationPayloadCurrentVersionChanged;
+    })
+  | (DawOperationCommitMetadata & {
+      demoId: string;
+      operationType: 'TRACK_VERSION_CREATED';
+      payload: DawOperationPayloadTrackVersionCreated;
+    })
+  | (DawOperationCommitMetadata & {
+      demoId: string;
+      operationType: 'VERSION_PARENT_SET';
+      payload: DawOperationPayloadVersionParentSet;
+    })
+  | (DawOperationCommitMetadata & {
+      demoId: string;
+      operationType: 'VERSION_OPERATION_SUMMARY_SET';
+      payload: DawOperationPayloadVersionOperationSummarySet;
+    })
+  | (DawOperationCommitMetadata & {
+      demoId: string;
+      operationType: 'VERSION_NODE_ADDED';
+      payload: DawOperationPayloadVersionNodeAdded;
+    })
+  | (DawOperationCommitMetadata & {
+      demoId: string;
       operationType: 'VERSION_TIMING_UPDATED';
       payload: DawOperationPayloadVersionTimingUpdated;
+    })
+  | (DawOperationCommitMetadata & {
+      demoId: string;
+      operationType: 'TAKE_ADDED';
+      payload: DawOperationPayloadTakeAdded;
+    })
+  | (DawOperationCommitMetadata & {
+      demoId: string;
+      operationType: 'TAKE_DELETED';
+      payload: DawOperationPayloadTakeDeleted;
+    })
+  | (DawOperationCommitMetadata & {
+      demoId: string;
+      operationType: 'TAKE_RESTORED';
+      payload: DawOperationPayloadTakeRestored;
     })
   | (DawOperationCommitMetadata & {
       demoId: string;

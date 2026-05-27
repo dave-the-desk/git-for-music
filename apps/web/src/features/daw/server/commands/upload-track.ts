@@ -2,13 +2,27 @@ import { createHash, randomUUID } from 'node:crypto';
 import { prisma } from '@git-for-music/db';
 import { NextResponse } from 'next/server';
 import type { ApiError, UploadTimingChoice, UploadTrackResponse } from '@git-for-music/shared';
-import { checkpointDemoDawSnapshot } from '@/features/daw/server/snapshot-builder';
+import type { DawProjectOperationRecord } from '@/features/daw/protocol';
+import {
+  checkpointDemoDawSnapshot,
+  recordDemoDawOperation,
+} from '@/features/daw/server/snapshot-builder';
+import type { DemoDawOperationInsertResult } from '@/features/daw/server/snapshot-builder';
 import { enqueueTrackUploadProcessingJobs } from '@/features/daw/server/jobs/upload-processing';
 import {
   fileNameWithoutExtension,
   storeTrackUploadAsset,
 } from '@/features/daw/server/assets';
 import { createDemoVersionWithCopiedTracks } from '@/features/daw/server/versions';
+import {
+  emitAcceptedDawOperation,
+  emitDawProjectRebootstrapRequired,
+  emitDawVersionTreeChanged,
+} from '@/features/daw/server/realtime-gateway';
+import {
+  serializeCreatedDemoTrackVersionTreeTrack,
+  serializeCreatedDemoVersionTreeNode,
+} from '@/features/daw/server/versioning';
 
 export async function uploadTrackCommand(input: {
   userId: string;
@@ -91,6 +105,8 @@ export async function uploadTrackCommand(input: {
   const assetId = randomUUID();
 
   let existingTrackId: string | null = null;
+  let existingTrackName: string | null = null;
+  let existingTrackPosition: number | null = null;
   if (typeof input.trackId === 'string' && input.trackId) {
     const existingTrack = await prisma.track.findFirst({
       where: {
@@ -99,6 +115,8 @@ export async function uploadTrackCommand(input: {
       },
       select: {
         id: true,
+        name: true,
+        position: true,
       },
     });
 
@@ -107,9 +125,15 @@ export async function uploadTrackCommand(input: {
     }
 
     existingTrackId = existingTrack.id;
+    existingTrackName = existingTrack.name;
+    existingTrackPosition = existingTrack.position;
   }
 
   const trackId = existingTrackId ?? randomUUID();
+  const trackName =
+    typeof input.name === 'string' && input.name.trim()
+      ? input.name.trim()
+      : fileNameWithoutExtension(originalName);
   const uploadedAsset = await storeTrackUploadAsset({
     groupId: demo.project.group.id,
     projectId: demo.project.id,
@@ -121,12 +145,22 @@ export async function uploadTrackCommand(input: {
     rawBuffer,
   });
 
+  let trackVersionCreatedOperation:
+    | Awaited<ReturnType<typeof recordDemoDawOperation>>
+    | null = null;
+  let versionCreatedOperation:
+    | Awaited<ReturnType<typeof recordDemoDawOperation>>
+    | null = null;
+  let currentVersionChangedOperation:
+    | Awaited<ReturnType<typeof recordDemoDawOperation>>
+    | null = null;
+
   const createdTrackVersion = await prisma.$transaction(async (tx) => {
     const nextVersion = await createDemoVersionWithCopiedTracks(tx, {
       demoId: demo.id,
       sourceVersionId: selectedSourceVersionId,
       parentId: selectedSourceVersionId,
-      label: `Added: ${typeof input.name === 'string' && input.name.trim() ? input.name.trim() : fileNameWithoutExtension(uploadedAsset.originalName)}`,
+      label: `Added: ${trackName}`,
       description: 'Added audio track',
     });
 
@@ -143,20 +177,35 @@ export async function uploadTrackCommand(input: {
         },
       });
 
-      await tx.track.create({
+      const createdTrack = await tx.track.create({
         data: {
           id: trackId,
           demoId: demo.id,
-          name:
-            typeof input.name === 'string' && input.name.trim()
-              ? input.name.trim()
-              : fileNameWithoutExtension(uploadedAsset.originalName),
+          name: trackName,
           position: (highestPositionTrack?.position ?? -1) + 1,
         },
         select: {
           id: true,
+          name: true,
+          position: true,
         },
       });
+      existingTrackId = createdTrack.id;
+      existingTrackName = createdTrack.name;
+      existingTrackPosition = createdTrack.position;
+    } else if (existingTrackName === null || existingTrackPosition === null) {
+      const track = await tx.track.findFirst({
+        where: {
+          id: trackId,
+          demoId: demo.id,
+        },
+        select: {
+          name: true,
+          position: true,
+        },
+      });
+      existingTrackName = track?.name ?? trackName;
+      existingTrackPosition = track?.position ?? 0;
     }
 
     const trackVersion = await tx.trackVersion.create({
@@ -171,8 +220,43 @@ export async function uploadTrackCommand(input: {
       },
       select: {
         id: true,
+        createdAt: true,
       },
     });
+
+    trackVersionCreatedOperation = await recordDemoDawOperation(
+      tx,
+      {
+        projectId: demo.project.id,
+        demoId: demo.id,
+        actorUserId: input.userId,
+        operationType: 'TRACK_VERSION_CREATED',
+        payload: {
+          versionId: nextVersion.id,
+          trackId,
+          trackVersionId: trackVersion.id,
+          operationSummary: 'Added audio track',
+          track: serializeCreatedDemoTrackVersionTreeTrack({
+            trackId,
+            trackName: existingTrackName ?? trackName,
+            trackPosition: existingTrackPosition ?? 0,
+            trackVersionId: trackVersion.id,
+            storageKey: uploadedAsset.storageKey,
+            mimeType: input.file.type || 'audio/mpeg',
+            durationMs: null,
+            startOffsetMs: 0,
+            createdAt: trackVersion.createdAt,
+            isDerived: false,
+            operationType: 'ORIGINAL',
+            parentTrackVersionId: null,
+            segments: [],
+          }),
+        },
+      },
+      {
+        checkpointCreatedById: input.userId,
+      },
+    );
 
     const timingChoice =
       input.timingChoice === 'keepProjectTempo' ||
@@ -201,6 +285,54 @@ export async function uploadTrackCommand(input: {
       },
     });
 
+    versionCreatedOperation = await recordDemoDawOperation(
+      tx,
+      {
+        projectId: demo.project.id,
+        demoId: demo.id,
+        actorUserId: input.userId,
+        operationType: 'VERSION_BRANCH_CREATED',
+        payload: {
+          versionId: nextVersion.id,
+          parentVersionId: nextVersion.parentId,
+          branchName: nextVersion.label,
+          label: nextVersion.label,
+          createdAt: nextVersion.createdAt.toISOString(),
+          createdBy: input.userId,
+          operationSummary: nextVersion.description,
+          sourceVersionId: selectedSourceVersionId,
+          version: serializeCreatedDemoVersionTreeNode({
+            id: nextVersion.id,
+            label: nextVersion.label,
+            description: nextVersion.description,
+            parentId: nextVersion.parentId,
+            createdAt: nextVersion.createdAt,
+            isCurrent: true,
+          }),
+        },
+      },
+      {
+        checkpointCreatedById: input.userId,
+      },
+    );
+
+    currentVersionChangedOperation = await recordDemoDawOperation(
+      tx,
+      {
+        projectId: demo.project.id,
+        demoId: demo.id,
+        actorUserId: input.userId,
+        operationType: 'CURRENT_VERSION_CHANGED',
+        payload: {
+          previousVersionId: currentVersionId,
+          currentVersionId: nextVersion.id,
+        },
+      },
+      {
+        checkpointCreatedById: input.userId,
+      },
+    );
+
     return {
       trackVersionId: trackVersion.id,
       demoVersionId: nextVersion.id,
@@ -212,6 +344,80 @@ export async function uploadTrackCommand(input: {
     projectId: demo.project.id,
     demoId: demo.id,
     createdById: input.userId,
+  });
+
+  const recordedTrackVersionCreatedOperation =
+    trackVersionCreatedOperation as DemoDawOperationInsertResult | null;
+  const recordedVersionCreatedOperation =
+    versionCreatedOperation as DemoDawOperationInsertResult | null;
+  const recordedCurrentVersionChangedOperation =
+    currentVersionChangedOperation as DemoDawOperationInsertResult | null;
+
+  if (recordedTrackVersionCreatedOperation?.created) {
+    emitAcceptedDawOperation({
+      projectId: demo.project.id,
+      demoId: demo.id,
+      operationId: recordedTrackVersionCreatedOperation.id,
+      operationSeq: recordedTrackVersionCreatedOperation.operationSeq,
+      actorUserId: input.userId,
+      operationType:
+        recordedTrackVersionCreatedOperation.operationType ?? 'TRACK_VERSION_CREATED',
+      payload: recordedTrackVersionCreatedOperation.payload as DawProjectOperationRecord['payload'],
+      createdAt: recordedTrackVersionCreatedOperation.createdAt ?? new Date().toISOString(),
+      idempotencyKey: recordedTrackVersionCreatedOperation.idempotencyKey ?? null,
+      clientOperationId: recordedTrackVersionCreatedOperation.clientOperationId ?? null,
+      baseSnapshotId: recordedTrackVersionCreatedOperation.baseSnapshotId ?? null,
+      baseOperationSeq: recordedTrackVersionCreatedOperation.baseOperationSeq ?? 0,
+    });
+  }
+
+  if (recordedVersionCreatedOperation?.created) {
+    emitAcceptedDawOperation({
+      projectId: demo.project.id,
+      demoId: demo.id,
+      operationId: recordedVersionCreatedOperation.id,
+      operationSeq: recordedVersionCreatedOperation.operationSeq,
+      actorUserId: input.userId,
+      operationType: recordedVersionCreatedOperation.operationType ?? 'VERSION_BRANCH_CREATED',
+      payload: recordedVersionCreatedOperation.payload as DawProjectOperationRecord['payload'],
+      createdAt: recordedVersionCreatedOperation.createdAt ?? new Date().toISOString(),
+      idempotencyKey: recordedVersionCreatedOperation.idempotencyKey ?? null,
+      clientOperationId: recordedVersionCreatedOperation.clientOperationId ?? null,
+      baseSnapshotId: recordedVersionCreatedOperation.baseSnapshotId ?? null,
+      baseOperationSeq: recordedVersionCreatedOperation.baseOperationSeq ?? 0,
+    });
+  }
+
+  if (recordedCurrentVersionChangedOperation?.created) {
+    emitAcceptedDawOperation({
+      projectId: demo.project.id,
+      demoId: demo.id,
+      operationId: recordedCurrentVersionChangedOperation.id,
+      operationSeq: recordedCurrentVersionChangedOperation.operationSeq,
+      actorUserId: input.userId,
+      operationType:
+        recordedCurrentVersionChangedOperation.operationType ?? 'CURRENT_VERSION_CHANGED',
+      payload:
+        recordedCurrentVersionChangedOperation.payload as DawProjectOperationRecord['payload'],
+      createdAt: recordedCurrentVersionChangedOperation.createdAt ?? new Date().toISOString(),
+      idempotencyKey: recordedCurrentVersionChangedOperation.idempotencyKey ?? null,
+      clientOperationId: recordedCurrentVersionChangedOperation.clientOperationId ?? null,
+      baseSnapshotId: recordedCurrentVersionChangedOperation.baseSnapshotId ?? null,
+      baseOperationSeq: recordedCurrentVersionChangedOperation.baseOperationSeq ?? 0,
+    });
+  }
+
+  emitDawVersionTreeChanged({
+    projectId: demo.project.id,
+    demoId: demo.id,
+    actorUserId: input.userId,
+  });
+
+  emitDawProjectRebootstrapRequired({
+    projectId: demo.project.id,
+    demoId: demo.id,
+    actorUserId: input.userId,
+    reason: 'Upload created a new version head and should be reconciled by clients',
   });
 
   const response: UploadTrackResponse = {

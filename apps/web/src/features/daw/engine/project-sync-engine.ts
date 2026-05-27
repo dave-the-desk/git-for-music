@@ -43,6 +43,12 @@ type RealtimeAcceptedOperationEvent = {
   operation: DawProjectOperationRecord;
 };
 
+type OperationCatchUpResponse = {
+  operations: DawProjectOperationRecord[];
+  latestSnapshotSeq?: number;
+  rebootstrapRequired?: boolean;
+};
+
 type RealtimeAssetProcessingStatusEvent = {
   type: 'asset_processing_status';
   projectId: string;
@@ -55,6 +61,39 @@ type RealtimeAssetProcessingStatusEvent = {
   message: string | null;
 };
 
+type RealtimePresenceEvent = {
+  type: 'presence';
+  projectId: string;
+  demoId: string;
+  createdAt: string;
+  presenceId: string;
+  actorUserId: string;
+  presenceSeed: string;
+  status: 'online' | 'idle' | 'away' | 'offline';
+  cursorTimeMs: number | null;
+  selectedTrackId: string | null;
+  currentTool: 'select' | 'split';
+  recordingState: 'idle' | 'recording' | 'preview' | 'uploading' | 'error';
+  playbackFollowState: boolean;
+};
+
+type RealtimeVersionTreeChangedEvent = {
+  type: 'version_tree_changed';
+  projectId: string;
+  demoId: string;
+  createdAt: string;
+  actorUserId: string;
+};
+
+type RealtimeProjectRebootstrapRequiredEvent = {
+  type: 'project_rebootstrap_required';
+  projectId: string;
+  demoId: string;
+  createdAt: string;
+  actorUserId: string;
+  reason: string;
+};
+
 export type ProjectSyncBootstrapInput = {
   projectId: string;
   demoId: string;
@@ -63,6 +102,7 @@ export type ProjectSyncBootstrapInput = {
 
 export type ProjectSyncOperationListener = (state: ProjectSyncSnapshot) => void;
 export type ProjectSyncAssetStatusListener = (event: RealtimeAssetProcessingStatusEvent) => void;
+export type ProjectSyncPresenceListener = (event: RealtimePresenceEvent) => void;
 
 function clone<T>(value: T): T {
   return typeof structuredClone === 'function'
@@ -128,6 +168,7 @@ function toPersistedPendingStatus(status: LocalOperationQueueEntry['status']) {
 export class ProjectSyncEngine {
   private readonly listeners = new Set<ProjectSyncOperationListener>();
   private readonly assetStatusListeners = new Set<ProjectSyncAssetStatusListener>();
+  private readonly presenceListeners = new Set<ProjectSyncPresenceListener>();
   private readonly inFlightByIdempotencyKey = new Map<string, Promise<DawProjectOperationRecord>>();
   private realtimeSource: EventSource | null = null;
   private projectId: string | null = null;
@@ -156,6 +197,13 @@ export class ProjectSyncEngine {
     this.assetStatusListeners.add(listener);
     return () => {
       this.assetStatusListeners.delete(listener);
+    };
+  }
+
+  subscribePresence(listener: ProjectSyncPresenceListener) {
+    this.presenceListeners.add(listener);
+    return () => {
+      this.presenceListeners.delete(listener);
     };
   }
 
@@ -271,13 +319,61 @@ export class ProjectSyncEngine {
     }
   };
 
+  private readonly handleRealtimePresence = (event: MessageEvent<string>) => {
+    try {
+      const payload = JSON.parse(event.data) as RealtimePresenceEvent;
+      if (payload.type !== 'presence') return;
+      if (payload.projectId !== this.projectId || payload.demoId !== this.demoId) return;
+      for (const listener of this.presenceListeners) {
+        listener(payload);
+      }
+    } catch {
+      // Presence is best-effort and non-durable.
+    }
+  };
+
+  private readonly handleRealtimeVersionTreeChanged = async (event: MessageEvent<string>) => {
+    try {
+      const payload = JSON.parse(event.data) as RealtimeVersionTreeChangedEvent;
+      if (payload.type !== 'version_tree_changed') return;
+      if (payload.projectId !== this.projectId || payload.demoId !== this.demoId) return;
+      await this.refreshVersionTreeFromServer();
+    } catch {
+      // Version tree refresh is best-effort; accepted operations will still reconcile core edits.
+    }
+  };
+
+  private readonly handleRealtimeProjectRebootstrapRequired = async (event: MessageEvent<string>) => {
+    try {
+      const payload = JSON.parse(event.data) as RealtimeProjectRebootstrapRequiredEvent;
+      if (payload.type !== 'project_rebootstrap_required') return;
+      if (payload.projectId !== this.projectId || payload.demoId !== this.demoId) return;
+
+      if (process.env.NODE_ENV !== 'production') {
+        console.warn(
+          `[daw] project_rebootstrap_required received for ${payload.projectId}/${payload.demoId}: ${payload.reason}`,
+        );
+      }
+
+      const caughtUp = await this.catchUpFromServer();
+      if (!caughtUp) {
+        await this.rebootstrapFromServer();
+        return;
+      }
+
+      await this.refreshVersionTreeFromServer();
+    } catch {
+      // Fallback resync is best-effort.
+    }
+  };
+
   private openRealtimeConnection() {
     if (!this.projectId || !this.demoId) return;
 
     this.closeRealtimeConnection();
 
     const source = new EventSource(
-      `/api/daw/projects/${this.projectId}/realtime?demoId=${this.demoId}&afterSeq=${this.state.lastSyncedOperationSeq}`,
+      `/api/daw/projects/${this.projectId}/realtime?demoId=${this.demoId}&afterSeq=${this.getLastSeenOperationSeq()}`,
     );
 
     source.addEventListener('open', () => {
@@ -289,6 +385,15 @@ export class ProjectSyncEngine {
     });
     source.addEventListener('asset_processing_status', (event) => {
       this.handleRealtimeAssetStatus(event as MessageEvent<string>);
+    });
+    source.addEventListener('presence', (event) => {
+      this.handleRealtimePresence(event as MessageEvent<string>);
+    });
+    source.addEventListener('version_tree_changed', (event) => {
+      void this.handleRealtimeVersionTreeChanged(event as MessageEvent<string>);
+    });
+    source.addEventListener('project_rebootstrap_required', (event) => {
+      void this.handleRealtimeProjectRebootstrapRequired(event as MessageEvent<string>);
     });
     source.addEventListener('error', () => {
       this.setState({
@@ -303,6 +408,50 @@ export class ProjectSyncEngine {
   private setState(next: Partial<ProjectSyncSnapshot>) {
     this.state = { ...this.state, ...next };
     this.emit();
+  }
+
+  private getLastSeenOperationSeq() {
+    return this.state.projectState?.lastSeenOperationSeq ?? this.state.lastSyncedOperationSeq;
+  }
+
+  private reconcileQueueForOperation(operation: DawProjectOperationRecord) {
+    const matchingEntry = this.state.queue.entries.find(
+      (entry) =>
+        entry.idempotencyKey === operation.idempotencyKey ||
+        entry.clientOperationId === operation.clientOperationId,
+    );
+    if (!matchingEntry) return;
+
+    this.setState({
+      queue: {
+        entries: this.state.queue.entries.map((entry) =>
+          entry.id === matchingEntry.id
+            ? { ...entry, status: 'accepted' as const, error: null, updatedAt: Date.now() }
+            : entry,
+        ),
+      },
+    });
+  }
+
+  private async applyAcceptedOperation(operation: DawProjectOperationRecord) {
+    const lastSeenOperationSeq = this.getLastSeenOperationSeq();
+    const isDuplicateOrOlder = operation.operationSeq <= lastSeenOperationSeq;
+
+    if (!isDuplicateOrOlder && this.state.projectState) {
+      this.setState({
+        projectState: {
+          ...applyAcceptedProjectOperation(this.state.projectState, operation),
+          lastSeenOperationSeq: Math.max(lastSeenOperationSeq, operation.operationSeq),
+        },
+        lastSyncedOperationSeq: Math.max(this.state.lastSyncedOperationSeq, operation.operationSeq),
+      });
+    }
+
+    this.reconcileQueueForOperation(operation);
+
+    await dawLocalCache.putAcceptedOperation(operation.projectId, operation.demoId, operation);
+    await this.deletePendingOperation(operation.idempotencyKey);
+    await this.persistProjectState();
   }
 
   private async persistProjectState() {
@@ -372,6 +521,92 @@ export class ProjectSyncEngine {
     await dawLocalCache.deletePendingOperation(this.projectId, this.demoId, idempotencyKey);
   }
 
+  private async catchUpFromServer() {
+    if (!this.projectId || !this.demoId || !this.state.projectState) return false;
+
+    const afterSeq = this.getLastSeenOperationSeq();
+    const response = await fetch(
+      `/api/daw/projects/${this.projectId}/operations?demoId=${this.demoId}&afterSeq=${afterSeq}`,
+    );
+    const data = (await response.json()) as OperationCatchUpResponse | { error?: string };
+
+    if (!response.ok) {
+      throw new Error(
+        'error' in data ? data.error ?? 'Could not catch up project operations' : 'Could not catch up project operations',
+      );
+    }
+
+    if ('rebootstrapRequired' in data && data.rebootstrapRequired) {
+      return false;
+    }
+
+    const catchUpResponse = data as OperationCatchUpResponse;
+    const operations = catchUpResponse.operations ?? [];
+    if (operations.length === 0) {
+      if (typeof catchUpResponse.latestSnapshotSeq === 'number' && this.state.projectState) {
+        this.setState({
+          projectState: {
+            ...this.state.projectState,
+            lastSeenOperationSeq: Math.max(
+              this.getLastSeenOperationSeq(),
+              catchUpResponse.latestSnapshotSeq,
+            ),
+          },
+          lastSyncedOperationSeq: Math.max(
+            this.state.lastSyncedOperationSeq,
+            catchUpResponse.latestSnapshotSeq,
+          ),
+        });
+      }
+      return true;
+    }
+
+    await this.receiveAcceptedRemoteOperations(operations);
+    return true;
+  }
+
+  private async rebootstrapFromServer() {
+    if (!this.projectId || !this.demoId) return;
+
+    const bootstrapResponse = await this.fetchBootstrap();
+    if (!bootstrapResponse) return;
+
+    this.bootstrapResponse = bootstrapResponse;
+    const bootstrappedState = createLocalProjectStateFromBootstrap(bootstrapResponse);
+    if (bootstrappedState) {
+      bootstrappedState.tempoMetadataByTrackVersionId = {
+        ...(this.state.projectState?.tempoMetadataByTrackVersionId ?? {}),
+        ...bootstrappedState.tempoMetadataByTrackVersionId,
+      };
+      bootstrappedState.recordingTakesByTrackId = {
+        ...(this.state.projectState?.recordingTakesByTrackId ?? {}),
+        ...bootstrappedState.recordingTakesByTrackId,
+      };
+    }
+
+    this.setState({
+      projectState: bootstrappedState ? clone(bootstrappedState) : this.state.projectState,
+      baseSnapshotId: bootstrapResponse.latestSnapshot?.id ?? this.state.baseSnapshotId,
+      lastSyncedOperationSeq: bootstrapResponse.latestSnapshot?.operationSeq ?? this.state.lastSyncedOperationSeq,
+    });
+
+    if (bootstrapResponse.operationTail.length > 0 && this.state.projectState) {
+      const tailMaxSeq = Math.max(
+        this.state.lastSyncedOperationSeq,
+        ...bootstrapResponse.operationTail.map((operation) => operation.operationSeq),
+      );
+      this.setState({
+        projectState: {
+          ...applyAcceptedProjectOperations(this.state.projectState, bootstrapResponse.operationTail),
+          lastSeenOperationSeq: tailMaxSeq,
+        },
+        lastSyncedOperationSeq: tailMaxSeq,
+      });
+    }
+
+    await this.persistProjectState();
+  }
+
   async bootstrap(input: ProjectSyncBootstrapInput) {
     this.projectId = input.projectId;
     this.demoId = input.demoId;
@@ -386,10 +621,24 @@ export class ProjectSyncEngine {
       this.bootstrapResponse = clone(cachedProject.bootstrap);
     }
 
-    const cachedState =
-      cachedProject?.projectState ??
-      (cachedProject?.bootstrap ? createLocalProjectStateFromBootstrap(cachedProject.bootstrap) : null) ??
-      input.initialProjectState;
+    const cachedState = cachedProject?.projectState
+      ? {
+          ...cachedProject.projectState,
+          versionTreeUpdatedAt:
+            cachedProject.projectState.versionTreeUpdatedAt ??
+            cachedProject?.bootstrap?.latestSnapshot?.createdAt ??
+            null,
+          lastVersionOperationSeq:
+            cachedProject.projectState.lastVersionOperationSeq ??
+            cachedProject?.latestAcceptedOperationSeq ??
+            0,
+          lastSeenOperationSeq:
+            cachedProject.projectState.lastSeenOperationSeq ??
+            cachedProject?.latestAcceptedOperationSeq ??
+            0,
+        }
+      : (cachedProject?.bootstrap ? createLocalProjectStateFromBootstrap(cachedProject.bootstrap) : null) ??
+        input.initialProjectState;
     this.setState({
       projectState: clone(cachedState),
       baseSnapshotId: cachedProject?.bootstrap?.latestSnapshot?.id ?? null,
@@ -400,12 +649,16 @@ export class ProjectSyncEngine {
     });
 
     if (cachedAccepted.length > 0 && this.state.projectState) {
+      const cachedMaxSeq = Math.max(
+        this.state.lastSyncedOperationSeq,
+        ...cachedAccepted.map((operation) => operation.operationSeq),
+      );
       this.setState({
-        projectState: applyAcceptedProjectOperations(this.state.projectState, cachedAccepted),
-        lastSyncedOperationSeq: Math.max(
-          this.state.lastSyncedOperationSeq,
-          ...cachedAccepted.map((operation) => operation.operationSeq),
-        ),
+        projectState: {
+          ...applyAcceptedProjectOperations(this.state.projectState, cachedAccepted),
+          lastSeenOperationSeq: cachedMaxSeq,
+        },
+        lastSyncedOperationSeq: cachedMaxSeq,
       });
     }
 
@@ -430,8 +683,16 @@ export class ProjectSyncEngine {
           lastSyncedOperationSeq: bootstrapResponse.latestSnapshot?.operationSeq ?? this.state.lastSyncedOperationSeq,
         });
         if (bootstrapResponse.operationTail.length > 0 && this.state.projectState) {
+          const tailMaxSeq = Math.max(
+            this.state.lastSyncedOperationSeq,
+            ...bootstrapResponse.operationTail.map((operation) => operation.operationSeq),
+          );
           this.setState({
-            projectState: applyAcceptedProjectOperations(this.state.projectState, bootstrapResponse.operationTail),
+            projectState: {
+              ...applyAcceptedProjectOperations(this.state.projectState, bootstrapResponse.operationTail),
+              lastSeenOperationSeq: tailMaxSeq,
+            },
+            lastSyncedOperationSeq: tailMaxSeq,
           });
         }
         await this.persistProjectState();
@@ -452,6 +713,10 @@ export class ProjectSyncEngine {
   async handleReconnect() {
     this.setState({ isOnline: isBrowserOnline(), lastError: null });
     try {
+      const caughtUp = await this.catchUpFromServer();
+      if (!caughtUp) {
+        await this.rebootstrapFromServer();
+      }
       this.openRealtimeConnection();
       await this.syncPendingOperations();
     } catch (error) {
@@ -490,43 +755,13 @@ export class ProjectSyncEngine {
   async receiveAcceptedRemoteOperations(operations: DawProjectOperationRecord[]) {
     if (!this.state.projectState || !this.projectId || !this.demoId) return;
     const freshOperations = operations.filter(
-      (operation) => operation.operationSeq > this.state.lastSyncedOperationSeq,
+      (operation) => operation.operationSeq > this.getLastSeenOperationSeq(),
     );
     if (freshOperations.length === 0) return;
 
     for (const operation of freshOperations) {
-      await dawLocalCache.putAcceptedOperation(operation.projectId, operation.demoId, operation);
+      await this.applyAcceptedOperation(operation);
     }
-
-    this.setState({
-      projectState: applyAcceptedProjectOperations(this.state.projectState, freshOperations),
-      lastSyncedOperationSeq: Math.max(
-        this.state.lastSyncedOperationSeq,
-        ...freshOperations.map((operation) => operation.operationSeq),
-      ),
-      queue: {
-        entries: this.state.queue.entries.map((entry) => {
-          const accepted = freshOperations.find(
-            (operation) =>
-              operation.idempotencyKey === entry.idempotencyKey ||
-              operation.clientOperationId === entry.clientOperationId,
-          );
-          if (!accepted) return entry;
-          return {
-            ...entry,
-            status: 'accepted' as const,
-            error: null,
-            updatedAt: Date.now(),
-          };
-        }),
-      },
-    });
-
-    for (const operation of freshOperations) {
-      await this.deletePendingOperation(operation.idempotencyKey);
-    }
-
-    await this.persistProjectState();
   }
 
   async commitOperation(request: DawOperationCommitRequest): Promise<DawProjectOperationRecord> {
@@ -584,22 +819,8 @@ export class ProjectSyncEngine {
       clientOperationId,
     })
       .then(async (operation) => {
-        this.setState({
-          projectState: this.state.projectState
-            ? applyAcceptedProjectOperation(this.state.projectState, operation)
-            : this.state.projectState,
-          lastSyncedOperationSeq: Math.max(this.state.lastSyncedOperationSeq, operation.operationSeq),
-          queue: {
-            entries: this.state.queue.entries.map((entry) =>
-              entry.id === queueEntry.id ? { ...entry, status: 'accepted' as const, error: null } : entry,
-            ),
-          },
-          isOnline: true,
-          lastError: null,
-        });
-        await dawLocalCache.putAcceptedOperation(operation.projectId, operation.demoId, operation);
-        await this.deletePendingOperation(idempotencyKey);
-        await this.persistProjectState();
+        await this.receiveAcceptedRemoteOperations([operation]);
+        this.setState({ isOnline: true, lastError: null });
         return operation;
       })
       .catch(async (error) => {
@@ -709,13 +930,7 @@ export class ProjectSyncEngine {
 
   private async refreshFromServer() {
     if (!this.projectId || !this.demoId) return;
-    const response = await fetch(`/api/daw/projects/${this.projectId}/operations?demoId=${this.demoId}&afterSeq=${this.state.lastSyncedOperationSeq}`);
-    const data = (await response.json()) as { operations?: DawProjectOperationRecord[]; error?: string };
-    if (!response.ok) {
-      throw new Error(data.error ?? 'Could not load remote operations');
-    }
-
-    await this.receiveAcceptedRemoteOperations(data.operations ?? []);
+    await this.catchUpFromServer();
   }
 
   private async fetchBootstrap() {
@@ -726,6 +941,30 @@ export class ProjectSyncEngine {
       throw new Error('error' in data ? data.error ?? 'Could not load project bootstrap' : 'Could not load project bootstrap');
     }
     return data as DawProjectBootstrapResponse;
+  }
+
+  private async refreshVersionTreeFromServer() {
+    if (!this.projectId || !this.demoId || !this.state.projectState) return;
+
+    const bootstrapResponse = await this.fetchBootstrap();
+    if (!bootstrapResponse) return;
+
+    this.bootstrapResponse = bootstrapResponse;
+    const bootstrappedState = createLocalProjectStateFromBootstrap(bootstrapResponse);
+
+    this.setState({
+      projectState: {
+        ...this.state.projectState,
+        versions: bootstrappedState.versions,
+        currentVersionId: bootstrappedState.currentVersionId,
+        versionTreeUpdatedAt: bootstrappedState.versionTreeUpdatedAt,
+        lastVersionOperationSeq: bootstrappedState.lastVersionOperationSeq,
+      },
+      baseSnapshotId: bootstrapResponse.latestSnapshot?.id ?? this.state.baseSnapshotId,
+      lastSyncedOperationSeq: bootstrapResponse.latestSnapshot?.operationSeq ?? this.state.lastSyncedOperationSeq,
+    });
+
+    await this.persistProjectState();
   }
 
   private async sendOperationToServer(request: DawOperationCommitRequest) {

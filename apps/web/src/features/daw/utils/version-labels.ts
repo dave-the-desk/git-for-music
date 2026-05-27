@@ -159,6 +159,31 @@ function summarizeNotes(
   return null;
 }
 
+export function getHistoryOperationBadgeLabel(operationType: string) {
+  switch (operationType) {
+    case 'TAKE_ADDED':
+      return 'Take added';
+    case 'TAKE_DELETED':
+      return 'Take deleted';
+    case 'TAKE_RESTORED':
+      return 'Take restored';
+    case 'TRACK_VERSION_CREATED':
+      return 'Track version';
+    case 'TRACK_RENAMED':
+      return 'Track renamed';
+    case 'SEGMENT_SPLIT':
+      return 'Split';
+    case 'SEGMENT_MOVED':
+      return 'Moved';
+    case 'SEGMENT_TRIMMED':
+      return 'Trimmed';
+    case 'CROSSFADE_SET':
+      return 'Crossfade';
+    default:
+      return 'Activity';
+  }
+}
+
 export function getVersionOperationSummary<T extends VersionLike>(
   version: T,
   versionsById: Map<string, T>,
