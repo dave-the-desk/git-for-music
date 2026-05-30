@@ -21,9 +21,6 @@ export type DawOperationType =
   | 'VERSION_NODE_ADDED'
   | 'VERSION_TIMING_UPDATED'
   | 'ASSET_ADDED'
-  | 'TAKE_ADDED'
-  | 'TAKE_DELETED'
-  | 'TAKE_RESTORED'
   | 'COMMENT_ADDED'
   | 'COMMENT_UPDATED'
   | 'COMMENT_DELETED'
@@ -37,6 +34,7 @@ export interface DawSegmentSnapshot {
   startMs: number;
   endMs: number;
   timelineStartMs: number | null;
+  timelineEndMs: number | null;
   gainDb: number;
   fadeInMs: number;
   fadeOutMs: number;
@@ -66,9 +64,13 @@ export interface DawOperationPayloadSegmentSplit {
 }
 
 export interface DawOperationPayloadSegmentMoved {
-  trackVersionId: string;
+  fromTrackVersionId: string;
+  toTrackVersionId: string;
   segmentId: string;
-  timelineStartMs: number;
+  fromTimelineStartMs: number;
+  fromTimelineEndMs: number;
+  toTimelineStartMs: number;
+  toTimelineEndMs: number;
 }
 
 export interface DawOperationPayloadSegmentDeleted {
@@ -104,43 +106,6 @@ export interface DawOperationPayloadCrossfadeSet {
   curve: string | null;
 }
 
-export interface DawOperationPayloadTakeAdded {
-  trackId: string;
-  takeId: string;
-  assetId: string;
-  storageKey: string;
-  name: string;
-  trackVersionId: string | null;
-  startOffsetMs: number;
-  durationMs: number;
-  sourceStartMs: number;
-  sourceEndMs: number;
-  timelineStartMs: number;
-  timelineEndMs: number;
-  gainDb: number;
-  fadeInMs: number;
-  fadeOutMs: number;
-  isMuted: boolean;
-  position: number;
-  recordedTempoBpm: number | null;
-  sourceTempoBpm: number | null;
-  createdAt: string;
-}
-
-export interface DawOperationPayloadTakeRestored extends DawOperationPayloadTakeAdded {
-  restoredAt: string;
-  restoredBy: string;
-  operationSummary: string;
-}
-
-export interface DawOperationPayloadTakeDeleted {
-  trackId: string;
-  takeId: string;
-  deletedAt: string;
-  deletedBy: string;
-  operationSummary: string;
-}
-
 export interface DawVersionTreeTrackSnapshot {
   trackId: string;
   trackName: string;
@@ -164,6 +129,7 @@ export interface DawVersionTreeNodeSnapshot {
   parentId: string | null;
   createdAt: string;
   isCurrent: boolean;
+  branchMode?: 'continue' | 'fork';
   tempoBpm: number | null;
   timeSignatureNum: number;
   timeSignatureDen: number;
@@ -177,6 +143,7 @@ export interface DawOperationPayloadVersionCreated {
   versionId?: string;
   parentVersionId?: string | null;
   branchName?: string | null;
+  branchMode?: 'continue' | 'fork';
   label?: string | null;
   createdAt?: string;
   createdBy?: string;
@@ -191,6 +158,7 @@ export interface DawOperationPayloadVersionRenamed {
   branchName?: string | null;
 }
 
+/** @deprecated Legacy compatibility only. Use the per-user active-version API instead. */
 export interface DawOperationPayloadVersionSelected {
   currentVersionId: string;
   previousVersionId: string | null;
@@ -200,6 +168,7 @@ export interface DawOperationPayloadVersionBranchCreated {
   versionId?: string;
   parentVersionId?: string | null;
   branchName?: string | null;
+  branchMode?: 'continue' | 'fork';
   label?: string | null;
   createdAt?: string;
   createdBy?: string;
@@ -214,6 +183,7 @@ export interface DawOperationPayloadVersionRevertedFrom {
   currentVersionId: string;
 }
 
+/** @deprecated Legacy compatibility only. Use the per-user active-version API instead. */
 export interface DawOperationPayloadCurrentVersionChanged {
   previousVersionId: string | null;
   currentVersionId: string;
@@ -238,6 +208,7 @@ export interface DawOperationPayloadVersionOperationSummarySet {
 }
 
 export interface DawOperationPayloadVersionNodeAdded {
+  branchMode?: 'continue' | 'fork';
   version: DawVersionTreeNodeSnapshot;
 }
 
@@ -320,9 +291,6 @@ export type DawCommandPayload =
   | DawOperationPayloadVersionRevertedFrom
   | DawOperationPayloadCurrentVersionChanged
   | DawOperationPayloadTrackVersionCreated
-  | DawOperationPayloadTakeAdded
-  | DawOperationPayloadTakeDeleted
-  | DawOperationPayloadTakeRestored
   | DawOperationPayloadVersionParentSet
   | DawOperationPayloadVersionOperationSummarySet
   | DawOperationPayloadVersionNodeAdded
@@ -364,9 +332,6 @@ export type DawOperationLogPayload =
   | DawOperationPayloadVersionRevertedFrom
   | DawOperationPayloadCurrentVersionChanged
   | DawOperationPayloadTrackVersionCreated
-  | DawOperationPayloadTakeAdded
-  | DawOperationPayloadTakeDeleted
-  | DawOperationPayloadTakeRestored
   | DawOperationPayloadVersionParentSet
   | DawOperationPayloadVersionOperationSummarySet
   | DawOperationPayloadVersionNodeAdded
@@ -489,6 +454,9 @@ export interface DawProjectBootstrapSnapshot {
 export interface DawProjectBootstrapResponse {
   project: DawProjectBootstrapProject;
   latestSnapshot: DawProjectBootstrapSnapshot | null;
+  activeVersionId: string | null;
+  isFollowingHead: boolean;
+  activeBranchName?: string | null;
   projectState?: JsonValue;
   operationTail: DawProjectOperationRecord[];
   assets: DawProjectBootstrapAsset[];
@@ -497,6 +465,18 @@ export interface DawProjectBootstrapResponse {
   annotations?: JsonValue;
   presenceSeed?: string;
   permissions: DawProjectPermissions;
+}
+
+export interface DawSetUserActiveVersionRequest {
+  demoId: string;
+  activeVersionId: string;
+  isFollowingHead?: boolean;
+}
+
+export interface DawSetUserActiveVersionResponse {
+  activeVersionId: string;
+  isFollowingHead: boolean;
+  activeBranchName: string | null;
 }
 
 export type DawOperationCommitRequest =
@@ -594,21 +574,6 @@ export type DawOperationCommitRequest =
       demoId: string;
       operationType: 'VERSION_TIMING_UPDATED';
       payload: DawOperationPayloadVersionTimingUpdated;
-    })
-  | (DawOperationCommitMetadata & {
-      demoId: string;
-      operationType: 'TAKE_ADDED';
-      payload: DawOperationPayloadTakeAdded;
-    })
-  | (DawOperationCommitMetadata & {
-      demoId: string;
-      operationType: 'TAKE_DELETED';
-      payload: DawOperationPayloadTakeDeleted;
-    })
-  | (DawOperationCommitMetadata & {
-      demoId: string;
-      operationType: 'TAKE_RESTORED';
-      payload: DawOperationPayloadTakeRestored;
     })
   | (DawOperationCommitMetadata & {
       demoId: string;

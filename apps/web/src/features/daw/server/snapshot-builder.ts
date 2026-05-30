@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { Prisma, PrismaClient, prisma } from '@git-for-music/db';
+import { loadOrCreateDemoUserActiveVersionState } from '@/features/daw/server/demo-user-active-version';
 
 export type DemoDawTimingSource = 'MANUAL' | 'ANALYZED' | 'IMPORTED';
 
@@ -9,6 +10,7 @@ export interface DemoDawSnapshotSegment {
   startMs: number;
   endMs: number;
   timelineStartMs: number | null;
+  timelineEndMs: number | null;
   gainDb: number;
   fadeInMs: number;
   fadeOutMs: number;
@@ -67,37 +69,21 @@ export interface DemoDawSnapshotData {
   comments: DemoDawSnapshotComment[];
   annotations: DemoDawSnapshotAnnotation[];
   operationHistory: DemoDawSnapshotOperationHistoryItem[];
-  recordingTakesByTrackId: Record<string, Array<{
-    id: string;
-    trackId: string;
-    trackVersionId: string | null;
-    name: string;
-    startOffsetMs: number;
-    durationMs: number;
-    sourceStartMs: number;
-    sourceEndMs: number;
-    timelineStartMs: number;
-    timelineEndMs: number;
-    gainDb: number;
-    fadeInMs: number;
-    fadeOutMs: number;
-    isMuted: boolean;
-    position: number;
-    storageKey: string;
-    assetId: string | null;
-    recordedTempoBpm: number | null;
-    sourceTempoBpm: number | null;
-    createdAt: string;
-  }>>;
+}
+
+export interface DemoDawPageData extends DemoDawSnapshotData {
+  activeVersionId: string | null;
+  isFollowingHead: boolean;
+  activeBranchName: string | null;
 }
 
 export interface DemoDawSnapshotOperationHistoryItem {
   operationId: string;
+  operationSeq: number;
   operationType: DemoDawOperationType;
   versionId: string | null;
   currentVersionId: string | null;
   trackId: string | null;
-  takeId: string | null;
   segmentId: string | null;
   summary: string;
   actorUserId: string;
@@ -163,9 +149,6 @@ export type DemoDawOperationType =
   | 'VERSION_NODE_ADDED'
   | 'VERSION_TIMING_UPDATED'
   | 'ASSET_ADDED'
-  | 'TAKE_ADDED'
-  | 'TAKE_DELETED'
-  | 'TAKE_RESTORED'
   | 'COMMENT_ADDED'
   | 'COMMENT_UPDATED'
   | 'COMMENT_DELETED'
@@ -189,9 +172,13 @@ export type DemoDawOperationPayload =
       rightSegment: DemoDawSnapshotSegment;
     }
   | {
-      trackVersionId: string;
       segmentId: string;
-      timelineStartMs: number;
+      fromTrackVersionId: string;
+      toTrackVersionId: string;
+      fromTimelineStartMs: number;
+      fromTimelineEndMs: number;
+      toTimelineStartMs: number;
+      toTimelineEndMs: number;
     }
   | {
       trackVersionId: string;
@@ -224,7 +211,6 @@ export type DemoDawOperationPayload =
     }
   | {
       trackId: string;
-      takeId: string;
       assetId: string;
       storageKey: string;
       name: string;
@@ -246,7 +232,6 @@ export type DemoDawOperationPayload =
     }
   | {
       trackId: string;
-      takeId: string;
       assetId: string;
       storageKey: string;
       name: string;
@@ -271,7 +256,6 @@ export type DemoDawOperationPayload =
     }
   | {
       trackId: string;
-      takeId: string;
       deletedAt: string;
       deletedBy: string;
       operationSummary: string;
@@ -280,6 +264,7 @@ export type DemoDawOperationPayload =
       versionId?: string;
       parentVersionId?: string | null;
       branchName?: string | null;
+      branchMode?: 'continue' | 'fork';
       label?: string | null;
       createdAt?: string;
       createdBy?: string;
@@ -295,6 +280,7 @@ export type DemoDawOperationPayload =
       previousVersionId: string | null;
     }
   | {
+      branchMode?: 'continue' | 'fork';
       version: DemoDawSnapshotVersion;
       sourceVersionId: string;
     }
@@ -502,12 +488,14 @@ function serializeSegment(
   segment: DemoSourceVersionRow['trackVersions'][number]['segments'][number],
 ): DemoDawSnapshotSegment {
   const timelineStartMs = segment.timelineStartMs ?? segment.startMs;
+  const timelineEndMs = timelineStartMs + Math.max(0, segment.endMs - segment.startMs);
   return {
     id: segment.id,
     trackVersionId,
     startMs: segment.startMs,
     endMs: segment.endMs,
     timelineStartMs,
+    timelineEndMs,
     gainDb: segment.gainDb,
     fadeInMs: segment.fadeInMs,
     fadeOutMs: segment.fadeOutMs,
@@ -604,17 +592,11 @@ function serializeDemoSourceData(demo: DemoSourceData): DemoDawSnapshotData {
     comments: demo.comments,
     annotations: demo.annotations,
     operationHistory: [],
-    recordingTakesByTrackId: {},
   };
 }
 
 function cloneSnapshot<T>(snapshot: T): T {
   return structuredClone(snapshot);
-}
-
-function ensureRecordingTakesByTrackId(snapshot: DemoDawSnapshotData) {
-  snapshot.recordingTakesByTrackId ??= {};
-  return snapshot.recordingTakesByTrackId;
 }
 
 function ensureOperationHistory(snapshot: DemoDawSnapshotData) {
@@ -688,6 +670,13 @@ function updateVersionTiming(
   if ('keySource' in payload && payload.keySource) version.keySource = payload.keySource;
 }
 
+function normalizeSnapshotTrackSegments(segments: DemoDawSnapshotSegment[]) {
+  return segments.map((segment, index) => ({
+    ...segment,
+    position: index,
+  }));
+}
+
 function upsertVersion(snapshot: DemoDawSnapshotData, version: DemoDawSnapshotVersion) {
   const existingIndex = snapshot.versions.findIndex((candidate) => candidate.id === version.id);
   if (existingIndex === -1) {
@@ -713,14 +702,18 @@ function upsertVersionTrack(snapshot: DemoDawSnapshotData, versionId: string, tr
   const version = snapshot.versions.find((candidate) => candidate.id === versionId);
   if (!version) return;
 
-  const existingIndex = version.tracks.findIndex((candidate) => candidate.trackVersionId === track.trackVersionId);
+  const existingIndex = version.tracks.findIndex(
+    (candidate) => candidate.trackVersionId === track.trackVersionId || candidate.trackId === track.trackId,
+  );
   if (existingIndex === -1) {
     version.tracks = [...version.tracks, cloneSnapshot(track)];
     return;
   }
 
   version.tracks = version.tracks.map((candidate) =>
-    candidate.trackVersionId === track.trackVersionId ? { ...candidate, ...cloneSnapshot(track) } : candidate,
+    candidate.trackVersionId === track.trackVersionId || candidate.trackId === track.trackId
+      ? { ...candidate, ...cloneSnapshot(track) }
+      : candidate,
   );
 }
 
@@ -732,26 +725,120 @@ function setCurrentVersion(snapshot: DemoDawSnapshotData, currentVersionId: stri
   }));
 }
 
+function getLatestVersionId(snapshot: DemoDawSnapshotData) {
+  let latestVersionId: string | null = null;
+  let latestCreatedAt = -Infinity;
+
+  for (const version of snapshot.versions) {
+    const createdAt = Date.parse(version.createdAt);
+    if (!Number.isFinite(createdAt)) {
+      continue;
+    }
+
+    if (latestVersionId === null || createdAt > latestCreatedAt) {
+      latestVersionId = version.id;
+      latestCreatedAt = createdAt;
+    }
+  }
+
+  return latestVersionId;
+}
+
+function reconcileCurrentVersion(snapshot: DemoDawSnapshotData) {
+  const latestVersionId = getLatestVersionId(snapshot);
+  if (!latestVersionId) {
+    return;
+  }
+
+  setCurrentVersion(snapshot, latestVersionId);
+}
+
 function moveSegment(
   snapshot: DemoDawSnapshotData,
-  trackVersionId: string,
-  segmentId: string,
-  timelineStartMs: number,
+  payload: {
+    segmentId: string;
+    fromTrackVersionId: string;
+    toTrackVersionId: string;
+    fromTimelineStartMs: number;
+    fromTimelineEndMs: number;
+    toTimelineStartMs: number;
+    toTimelineEndMs: number;
+  },
 ) {
   for (const version of snapshot.versions) {
-    const track = version.tracks.find((candidate) => candidate.trackVersionId === trackVersionId);
-    if (!track) continue;
+    const sourceTrackIndex = version.tracks.findIndex((candidate) => candidate.trackVersionId === payload.fromTrackVersionId);
+    const targetTrackIndex = version.tracks.findIndex((candidate) => candidate.trackVersionId === payload.toTrackVersionId);
 
-    const nextSegments = track.segments.map((segment) =>
-      segment.id === segmentId
-        ? {
-            ...segment,
-            timelineStartMs,
-          }
-        : segment,
+    if (targetTrackIndex === -1) continue;
+
+    const sourceTrack = sourceTrackIndex >= 0 ? version.tracks[sourceTrackIndex] : null;
+    const targetTrack = version.tracks[targetTrackIndex] ?? null;
+    if (!targetTrack) continue;
+
+    const occurrences = version.tracks.flatMap((track) =>
+      track.segments
+        .filter((segment) => segment.id === payload.segmentId)
+        .map((segment) => ({
+          track,
+          segment,
+        })),
     );
 
-    track.segments = nextSegments;
+    const sourceSegment = sourceTrack?.segments.find((segment) => segment.id === payload.segmentId) ?? null;
+    const targetSegment = targetTrack.segments.find((segment) => segment.id === payload.segmentId) ?? null;
+    const existingSegment = sourceSegment ?? targetSegment ?? occurrences[0]?.segment ?? null;
+
+    if (!existingSegment) continue;
+
+    if (
+      occurrences.length === 1 &&
+      targetSegment &&
+      targetSegment.trackVersionId === payload.toTrackVersionId &&
+      targetSegment.timelineStartMs === payload.toTimelineStartMs &&
+      targetSegment.timelineEndMs === payload.toTimelineEndMs
+    ) {
+      return;
+    }
+
+    const cleanedTracks = version.tracks.map((track) => ({
+      ...track,
+      segments: normalizeSnapshotTrackSegments(track.segments.filter((segment) => segment.id !== payload.segmentId)),
+    }));
+    const cleanedTargetTrack = cleanedTracks.find((track) => track.trackVersionId === payload.toTrackVersionId);
+    if (!cleanedTargetTrack) continue;
+
+    const insertionIndex =
+      payload.fromTrackVersionId === payload.toTrackVersionId
+        ? Math.min(existingSegment.position, cleanedTargetTrack.segments.length)
+        : cleanedTargetTrack.segments.length;
+
+    const movedSegment: DemoDawSnapshotSegment = {
+      ...existingSegment,
+      trackVersionId: payload.toTrackVersionId,
+      timelineStartMs: payload.toTimelineStartMs,
+      timelineEndMs: payload.toTimelineEndMs,
+      position: insertionIndex,
+    };
+
+    const nextTargetSegments = normalizeSnapshotTrackSegments(
+      [
+        ...cleanedTargetTrack.segments.slice(0, insertionIndex),
+        movedSegment,
+        ...cleanedTargetTrack.segments.slice(insertionIndex),
+      ].map((segment) => ({
+        ...segment,
+        trackVersionId: payload.toTrackVersionId,
+      })),
+    );
+
+    version.tracks = cleanedTracks.map((track) =>
+      track.trackVersionId === payload.toTrackVersionId
+        ? {
+            ...track,
+            segments: nextTargetSegments,
+          }
+        : track,
+    );
     return;
   }
 }
@@ -846,104 +933,6 @@ function setCrossfade(
     });
     return;
   }
-}
-
-function normalizeRecordingTakeSnapshot(
-  take: {
-    id?: string;
-    takeId?: string;
-    trackId?: string;
-    trackVersionId?: string | null;
-    name?: string;
-    startOffsetMs?: number;
-    durationMs?: number;
-    sourceStartMs?: number;
-    sourceEndMs?: number;
-    timelineStartMs?: number;
-    timelineEndMs?: number;
-    gainDb?: number;
-    fadeInMs?: number;
-    fadeOutMs?: number;
-    isMuted?: boolean;
-    position?: number;
-    storageKey?: string;
-    assetId?: string | null;
-    recordedTempoBpm?: number | null;
-    sourceTempoBpm?: number | null;
-    createdAt?: string;
-  },
-  defaults: Partial<DemoDawSnapshotData['recordingTakesByTrackId'][string][number]> & { trackId: string },
-) {
-  const id = take.id ?? take.takeId ?? '';
-  const startOffsetMs = take.startOffsetMs ?? 0;
-  const durationMs = take.durationMs ?? 0;
-  const sourceStartMs = take.sourceStartMs ?? 0;
-  const sourceEndMs = take.sourceEndMs ?? sourceStartMs + durationMs;
-  const timelineStartMs = take.timelineStartMs ?? startOffsetMs;
-  const timelineEndMs = take.timelineEndMs ?? timelineStartMs + durationMs;
-  return {
-    id,
-    trackId: take.trackId ?? defaults.trackId,
-    trackVersionId: take.trackVersionId ?? null,
-    name: take.name ?? '',
-    startOffsetMs,
-    durationMs,
-    sourceStartMs,
-    sourceEndMs,
-    timelineStartMs,
-    timelineEndMs,
-    gainDb: take.gainDb ?? 0,
-    fadeInMs: take.fadeInMs ?? 0,
-    fadeOutMs: take.fadeOutMs ?? 0,
-    isMuted: take.isMuted ?? false,
-    position: take.position ?? 0,
-    storageKey: take.storageKey ?? '',
-    assetId: take.assetId ?? null,
-    recordedTempoBpm: take.recordedTempoBpm ?? null,
-    sourceTempoBpm: take.sourceTempoBpm ?? null,
-    createdAt: take.createdAt ?? new Date().toISOString(),
-  };
-}
-
-function upsertRecordingTake(
-  snapshot: DemoDawSnapshotData,
-  take: {
-    id?: string;
-    takeId?: string;
-    trackId?: string;
-    trackVersionId?: string | null;
-    name?: string;
-    startOffsetMs?: number;
-    durationMs?: number;
-    sourceStartMs?: number;
-    sourceEndMs?: number;
-    timelineStartMs?: number;
-    timelineEndMs?: number;
-    gainDb?: number;
-    fadeInMs?: number;
-    fadeOutMs?: number;
-    isMuted?: boolean;
-    position?: number;
-    storageKey?: string;
-    assetId?: string | null;
-    recordedTempoBpm?: number | null;
-    sourceTempoBpm?: number | null;
-    createdAt?: string;
-  },
-  trackId: string,
-) {
-  ensureRecordingTakesByTrackId(snapshot);
-  const currentTakes = snapshot.recordingTakesByTrackId[trackId] ?? [];
-  const nextTake = normalizeRecordingTakeSnapshot(take, { trackId });
-  const existingIndex = currentTakes.findIndex((entry) => entry.id === nextTake.id);
-  if (existingIndex === -1) {
-    snapshot.recordingTakesByTrackId[trackId] = [...currentTakes, nextTake];
-    return;
-  }
-
-  snapshot.recordingTakesByTrackId[trackId] = currentTakes.map((entry) =>
-    entry.id === nextTake.id ? { ...entry, ...nextTake } : entry,
-  );
 }
 
 function upsertComment(
@@ -1105,9 +1094,17 @@ function applyDemoOperation(snapshot: DemoDawSnapshotData, operation: DemoDawSna
       {
         const payload = operation.payload as Extract<
           DemoDawOperationPayload,
-          { trackVersionId: string; segmentId: string; timelineStartMs: number }
+          {
+            segmentId: string;
+            fromTrackVersionId: string;
+            toTrackVersionId: string;
+            fromTimelineStartMs: number;
+            fromTimelineEndMs: number;
+            toTimelineStartMs: number;
+            toTimelineEndMs: number;
+          }
         >;
-        moveSegment(snapshot, payload.trackVersionId, payload.segmentId, payload.timelineStartMs);
+        moveSegment(snapshot, payload);
         const historyItem = buildOperationHistoryItem(snapshot, operation);
         if (historyItem) {
           upsertOperationHistory(snapshot, historyItem);
@@ -1181,110 +1178,6 @@ function applyDemoOperation(snapshot: DemoDawSnapshotData, operation: DemoDawSna
         }
       }
       return snapshot;
-    case 'TAKE_ADDED':
-      {
-        const payload = operation.payload as Extract<
-          DemoDawOperationPayload,
-          {
-            trackId: string;
-            takeId: string;
-            assetId: string;
-            storageKey: string;
-            name: string;
-            trackVersionId: string | null;
-            startOffsetMs: number;
-            durationMs: number;
-            sourceStartMs: number;
-            sourceEndMs: number;
-            timelineStartMs: number;
-            timelineEndMs: number;
-            gainDb: number;
-            fadeInMs: number;
-            fadeOutMs: number;
-            isMuted: boolean;
-            position: number;
-            recordedTempoBpm: number | null;
-            sourceTempoBpm: number | null;
-            createdAt: string;
-          }
-        >;
-        upsertRecordingTake(snapshot, {
-          ...payload,
-          id: payload.takeId,
-        }, payload.trackId);
-        const historyItem = buildOperationHistoryItem(snapshot, operation);
-        if (historyItem) {
-          upsertOperationHistory(snapshot, historyItem);
-        }
-      }
-      return snapshot;
-    case 'TAKE_RESTORED':
-      {
-        const payload = operation.payload as Extract<
-          DemoDawOperationPayload,
-          {
-            trackId: string;
-            takeId: string;
-            assetId: string;
-            storageKey: string;
-            name: string;
-            trackVersionId: string | null;
-            startOffsetMs: number;
-            durationMs: number;
-            sourceStartMs: number;
-            sourceEndMs: number;
-            timelineStartMs: number;
-            timelineEndMs: number;
-            gainDb: number;
-            fadeInMs: number;
-            fadeOutMs: number;
-            isMuted: boolean;
-            position: number;
-            recordedTempoBpm: number | null;
-            sourceTempoBpm: number | null;
-            createdAt: string;
-            restoredAt: string;
-            restoredBy: string;
-            operationSummary: string;
-          }
-        >;
-        upsertRecordingTake(
-          snapshot,
-          {
-            ...payload,
-            id: payload.takeId,
-          },
-          payload.trackId,
-        );
-        const historyItem = buildOperationHistoryItem(snapshot, operation);
-        if (historyItem) {
-          upsertOperationHistory(snapshot, historyItem);
-        }
-      }
-      return snapshot;
-    case 'TAKE_DELETED':
-      {
-        const payload = operation.payload as Extract<
-          DemoDawOperationPayload,
-          {
-            trackId: string;
-            takeId: string;
-            deletedAt: string;
-            deletedBy: string;
-            operationSummary?: string | null;
-          }
-        >;
-        const currentTakes = snapshot.recordingTakesByTrackId[payload.trackId] ?? [];
-        const nextTakes = currentTakes.filter((entry) => entry.id !== payload.takeId);
-        if (nextTakes.length !== currentTakes.length) {
-          snapshot.recordingTakesByTrackId[payload.trackId] = nextTakes;
-        }
-        const historyItem = buildOperationHistoryItem(snapshot, operation);
-        if (historyItem) {
-          upsertOperationHistory(snapshot, historyItem);
-        }
-      }
-      return snapshot;
     case 'VERSION_CREATED':
     case 'VERSION_NODE_ADDED':
       upsertVersion(
@@ -1310,24 +1203,10 @@ function applyDemoOperation(snapshot: DemoDawSnapshotData, operation: DemoDawSna
         }
       }
       return snapshot;
+    // Legacy replay only: checkout mutations are not part of the shared graph.
     case 'VERSION_SELECTED':
     case 'CURRENT_VERSION_CHANGED':
-      {
-        const payload = operation.payload as Extract<
-          DemoDawOperationPayload,
-          { currentVersionId: string; previousVersionId?: string | null }
-        >;
-        setCurrentVersion(snapshot, payload.currentVersionId);
-      }
-      return snapshot;
     case 'VERSION_REVERTED_FROM':
-      {
-        const payload = operation.payload as Extract<
-          DemoDawOperationPayload,
-          { versionId: string; revertedFromVersionId: string; currentVersionId: string }
-        >;
-        setCurrentVersion(snapshot, payload.currentVersionId);
-      }
       return snapshot;
     case 'TRACK_VERSION_CREATED':
       {
@@ -1578,6 +1457,35 @@ export async function loadLatestDemoSnapshot(
   });
 }
 
+export async function loadLatestDemoSnapshotAtOrBeforeOperationSeq(
+  client: DemoDawDatabaseClient,
+  scope: DemoScope,
+  operationSeq: number,
+) {
+  return client.projectSnapshot.findFirst({
+    where: {
+      projectId: scope.projectId,
+      demoId: scope.demoId,
+      operationSeq: {
+        lte: operationSeq,
+      },
+    },
+    orderBy: [
+      { operationSeq: 'desc' },
+      { createdAt: 'desc' },
+    ],
+    select: {
+      id: true,
+      projectId: true,
+      demoId: true,
+      operationSeq: true,
+      snapshot: true,
+      createdById: true,
+      createdAt: true,
+    },
+  });
+}
+
 function findTrackById(snapshot: DemoDawSnapshotData, trackId: string) {
   for (const version of snapshot.versions) {
     const track = version.tracks.find((candidate) => candidate.trackId === trackId);
@@ -1601,11 +1509,11 @@ function buildOperationHistoryItem(
   const currentVersionId = snapshot.currentVersionId ?? null;
   const baseItem = {
     operationId: operation.id,
+    operationSeq: operation.operationSeq,
     operationType: operation.type,
     versionId: currentVersionId,
     currentVersionId,
     trackId: null,
-    takeId: null,
     segmentId: null,
     actorUserId: operation.actorUserId,
     createdAt: operation.createdAt,
@@ -1641,16 +1549,24 @@ function buildOperationHistoryItem(
       return {
         ...baseItem,
         trackId: track?.trackId ?? null,
-        segmentId: payload.segmentId ?? null,
+        segmentId: payload.sourceSegmentId ?? null,
         summary: track ? `Split clip on ${track.trackName}` : 'Split clip',
       };
     }
     case 'SEGMENT_MOVED': {
       const payload = operation.payload as Extract<
         DemoDawOperationPayload,
-        { trackVersionId: string; segmentId: string; timelineStartMs: number }
+        {
+          segmentId: string;
+          fromTrackVersionId: string;
+          toTrackVersionId: string;
+          fromTimelineStartMs: number;
+          fromTimelineEndMs: number;
+          toTimelineStartMs: number;
+          toTimelineEndMs: number;
+        }
       >;
-      const track = findTrackByVersionId(snapshot, payload.trackVersionId);
+      const track = findTrackByVersionId(snapshot, payload.toTrackVersionId);
       return {
         ...baseItem,
         trackId: track?.trackId ?? null,
@@ -1689,57 +1605,6 @@ function buildOperationHistoryItem(
         trackId: track?.trackId ?? null,
         segmentId: payload.leftSegmentId,
         summary: track ? `Adjusted crossfade on ${track.trackName}` : 'Adjusted crossfade',
-      };
-    }
-    case 'TAKE_ADDED': {
-      const payload = operation.payload as Extract<
-        DemoDawOperationPayload,
-        {
-          trackId: string;
-          takeId: string;
-          name: string;
-        }
-      >;
-      const track = findTrackById(snapshot, payload.trackId);
-      return {
-        ...baseItem,
-        trackId: payload.trackId,
-        takeId: payload.takeId,
-        summary: track ? `Added recording to ${track.trackName}` : `Added take: ${payload.name}`,
-      };
-    }
-    case 'TAKE_RESTORED': {
-      const payload = operation.payload as Extract<
-        DemoDawOperationPayload,
-        {
-          trackId: string;
-          takeId: string;
-          operationSummary?: string;
-        }
-      >;
-      const track = findTrackById(snapshot, payload.trackId);
-      return {
-        ...baseItem,
-        trackId: payload.trackId,
-        takeId: payload.takeId,
-        summary: track ? `Restored recording on ${track.trackName}` : payload.operationSummary ?? 'Restored recording',
-      };
-    }
-    case 'TAKE_DELETED': {
-      const payload = operation.payload as Extract<
-        DemoDawOperationPayload,
-        {
-          trackId: string;
-          takeId: string;
-          operationSummary?: string | null;
-        }
-      >;
-      const track = findTrackById(snapshot, payload.trackId);
-      return {
-        ...baseItem,
-        trackId: payload.trackId,
-        takeId: payload.takeId,
-        summary: track ? `Deleted recording from ${track.trackName}` : payload.operationSummary ?? 'Deleted recording',
       };
     }
     default:
@@ -1783,7 +1648,7 @@ export async function loadDemoOperationTail(
     projectId: row.projectId,
     demoId: row.demoId,
     type: row.operationType as DemoDawOperationType,
-    createdAt: row.createdAt.toISOString(),
+    createdAt: toIsoString(row.createdAt),
     actorUserId: row.actorUserId,
     baseSnapshotId: row.baseSnapshotId,
     baseOperationSeq: row.baseOperationSeq,
@@ -1888,7 +1753,7 @@ export async function appendDemoDawOperation(
   return {
     id: created.id,
     operationSeq: created.operationSeq,
-    createdAt: created.createdAt.toISOString(),
+    createdAt: toIsoString(created.createdAt),
     created: true,
     projectId: input.projectId,
     demoId: input.demoId,
@@ -2007,7 +1872,8 @@ export async function checkpointDemoDawSnapshot(
     projectId: input.projectId,
     demoId: input.demoId,
   };
-  const source = snapshotState ?? serializeDemoSourceData(await loadDemoSourceData(client, scope));
+  const source = snapshotState ?? (await loadSnapshotStateForDemo(client, scope));
+  reconcileCurrentVersion(source);
   return writeDemoDawSnapshot(client, {
     projectId: input.projectId,
     demoId: input.demoId,
@@ -2021,12 +1887,14 @@ export async function loadDemoDawPageDataWithSnapshots({
   projectId,
   demoId,
   userId,
+  operationSeq,
 }: {
   groupId: string;
   projectId: string;
   demoId: string;
   userId: string;
-}): Promise<DemoDawSnapshotData | null> {
+  operationSeq?: number | null;
+}): Promise<DemoDawPageData | null> {
   const accessibleDemo = await resolveAccessibleDemo(prisma, {
     groupId,
     projectId,
@@ -2038,13 +1906,81 @@ export async function loadDemoDawPageDataWithSnapshots({
     return null;
   }
 
-  return loadSnapshotStateForDemo(prisma, accessibleDemo);
+  const [snapshotState, activeVersionState] = await Promise.all([
+    loadSnapshotStateForDemo(prisma, accessibleDemo, {
+      operationSeq,
+    }),
+    loadOrCreateDemoUserActiveVersionState(prisma, {
+      // Use the resolved database project id here. The route param is a slug.
+      projectId: accessibleDemo.projectId,
+      demoId,
+      userId,
+    }),
+  ]);
+
+  return {
+    ...snapshotState,
+    activeVersionId: activeVersionState.activeVersionId,
+    isFollowingHead: activeVersionState.isFollowingHead,
+    activeBranchName: activeVersionState.activeBranchName,
+  };
 }
 
 export async function loadSnapshotStateForDemo(
   client: DemoDawDatabaseClient,
   scope: DemoScope,
+  options: {
+    operationSeq?: number | null;
+  } = {},
 ) {
+  const targetOperationSeq =
+    typeof options.operationSeq === 'number' && Number.isFinite(options.operationSeq)
+      ? options.operationSeq
+      : null;
+
+  if (targetOperationSeq !== null) {
+    const latestSnapshot = await loadLatestDemoSnapshotAtOrBeforeOperationSeq(
+      client,
+      scope,
+      targetOperationSeq,
+    );
+
+    if (!latestSnapshot) {
+      const result = serializeDemoSourceData(await loadDemoSourceData(client, scope));
+      const operations = await loadDemoOperationTail(client, scope, 0);
+      for (const operation of operations) {
+        if (operation.operationSeq > targetOperationSeq) {
+          break;
+        }
+        applyDemoOperation(result, operation);
+      }
+      ensureOperationHistory(result);
+      reconcileCurrentVersion(result);
+      return result;
+    }
+
+    const snapshot = latestSnapshot.snapshot as unknown as DemoDawSnapshotData;
+    const result = cloneSnapshot(snapshot);
+    if (result && typeof result === 'object') {
+      delete (result as unknown as Record<string, unknown>).recordingTakesByTrackId;
+    }
+    if (!result.project?.id || !result.project.group?.id) {
+      hydrateSnapshotProjectMetadata(result, await loadDemoSourceData(client, scope));
+    }
+    ensureOperationHistory(result);
+    const tailOperations = await loadDemoOperationTail(client, scope, latestSnapshot.operationSeq);
+
+    for (const operation of tailOperations) {
+      if (operation.operationSeq > targetOperationSeq) {
+        break;
+      }
+      applyDemoOperation(result, operation);
+    }
+
+    reconcileCurrentVersion(result);
+    return result;
+  }
+
   const latestSnapshot = await loadLatestDemoSnapshot(client, scope);
 
   if (!latestSnapshot) {
@@ -2053,21 +1989,26 @@ export async function loadSnapshotStateForDemo(
     for (const operation of operations) {
       applyDemoOperation(result, operation);
     }
+    reconcileCurrentVersion(result);
     return result;
   }
 
   const snapshot = latestSnapshot.snapshot as unknown as DemoDawSnapshotData;
   const result = cloneSnapshot(snapshot);
+  if (result && typeof result === 'object') {
+    delete (result as unknown as Record<string, unknown>).recordingTakesByTrackId;
+  }
   if (!result.project?.id || !result.project.group?.id) {
     hydrateSnapshotProjectMetadata(result, await loadDemoSourceData(client, scope));
   }
   ensureOperationHistory(result);
-  ensureRecordingTakesByTrackId(result);
   const tailOperations = await loadDemoOperationTail(client, scope, latestSnapshot.operationSeq);
 
   for (const operation of tailOperations) {
     applyDemoOperation(result, operation);
   }
+
+  reconcileCurrentVersion(result);
 
   return result;
 }

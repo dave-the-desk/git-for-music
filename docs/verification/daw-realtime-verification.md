@@ -13,6 +13,7 @@ The realtime sync model has been verified by code-path tracing and focused tests
 - `ProjectSyncEngine` fetches `/api/daw/projects/[projectId]/bootstrap?demoId=...`
 - `LocalProjectState` is created through `createLocalProjectStateFromBootstrap(...)`
 - `operationTail` is applied through `applyAcceptedProjectOperations(...)`
+- The bootstrap payload carries the viewer's `activeVersionId` / `isFollowingHead` separately from the shared version graph
 
 ### Local edit
 
@@ -36,12 +37,14 @@ The realtime sync model has been verified by code-path tracing and focused tests
 - If `rebootstrapRequired` is `true`, it reboots from bootstrap
 - Otherwise it applies the operation tail
 - Then it reopens SSE and resyncs pending operations
+- Rebootstrap restores the viewer's active checkout from `DemoUserActiveVersion` or the bootstrap fallback instead of snapping to a demo-wide head
 
 ### Non-durable realtime
 
 - Presence is handled separately from `accepted_operation`
 - Presence does not write to project history or create Version Tree nodes
 - Local-only tempo UI state stays local and does not become durable history
+- The selected node in the Version Tree remains UI-only and does not define the checkout
 
 ## Operations verified
 
@@ -62,13 +65,19 @@ The realtime sync model has been verified by code-path tracing and focused tests
 - `VERSION_CREATED`
 - `VERSION_BRANCH_CREATED`
 - `VERSION_RENAMED`
-- `CURRENT_VERSION_CHANGED`
-- `VERSION_SELECTED`
 - `VERSION_REVERTED_FROM`
 - `TRACK_VERSION_CREATED`
 - `VERSION_PARENT_SET`
 - `VERSION_OPERATION_SUMMARY_SET`
 - `VERSION_NODE_ADDED`
+
+### Legacy checkout operations
+
+- `CURRENT_VERSION_CHANGED`
+- `VERSION_SELECTED`
+
+These remain readable in old logs, but current checkout changes use the per-user active-version API instead of shared project operations.
+The `currentVersionId` fields that remain in snapshot and history payloads are shared-head metadata only.
 
 ## Stale prop check
 
@@ -80,6 +89,7 @@ The realtime sync model has been verified by code-path tracing and focused tests
 - `currentVersionId={liveCurrentVersionId}`
 
 Those values come from `projectSyncState.projectState`, with bootstrap props used only as fallback seed data.
+The active checkout itself comes from `activeVersionId`, not `currentVersionId`.
 
 ## Remaining manual browser verification
 
@@ -103,10 +113,7 @@ Those values come from `projectSyncState.projectState`, with bootstrap props use
 
 ## Test results
 
-Focused node tests passed:
-
-- 4 tests passed
-- 0 failed
+Focused node tests passed.
 
 ## Relationship to architecture note
 

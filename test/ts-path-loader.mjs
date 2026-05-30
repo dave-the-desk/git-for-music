@@ -35,9 +35,50 @@ function resolveAliasTarget(specifier) {
   return null;
 }
 
+function resolveRelativeTarget(specifier, parentURL) {
+  if (!parentURL) {
+    return null;
+  }
+
+  const parentPath = fileURLToPath(parentURL);
+  const absoluteBase = path.resolve(path.dirname(parentPath), specifier);
+  const candidates = [
+    absoluteBase,
+    `${absoluteBase}.ts`,
+    `${absoluteBase}.tsx`,
+    `${absoluteBase}.js`,
+    `${absoluteBase}.jsx`,
+    `${absoluteBase}.mjs`,
+    `${absoluteBase}.cjs`,
+    path.join(absoluteBase, 'index.ts'),
+    path.join(absoluteBase, 'index.tsx'),
+    path.join(absoluteBase, 'index.js'),
+    path.join(absoluteBase, 'index.jsx'),
+    path.join(absoluteBase, 'index.mjs'),
+    path.join(absoluteBase, 'index.cjs'),
+  ];
+
+  for (const candidate of candidates) {
+    if (!existsSync(candidate)) continue;
+    const stats = statSync(candidate);
+    if (stats.isFile()) {
+      return pathToFileURL(candidate).href;
+    }
+  }
+
+  return null;
+}
+
 export async function resolve(specifier, context, defaultResolve) {
   if (specifier.startsWith('@/')) {
     const resolved = resolveAliasTarget(specifier);
+    if (resolved) {
+      return { url: resolved, shortCircuit: true };
+    }
+  }
+
+  if (specifier.startsWith('./') || specifier.startsWith('../')) {
+    const resolved = resolveRelativeTarget(specifier, context.parentURL);
     if (resolved) {
       return { url: resolved, shortCircuit: true };
     }

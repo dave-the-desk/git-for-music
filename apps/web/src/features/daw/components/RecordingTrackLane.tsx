@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, type RefObject } from 'react';
 import { PX_PER_SECOND } from '@/features/daw/components/TimelineRuler';
-import type { RecordingTakeVisualProjection } from '@/features/daw/rendering/visual-renderer';
+import type { RecordingPreviewVisualProjection } from '@/features/daw/rendering/visual-renderer';
 
 const TRACK_HEIGHT = 72;
 const MS_PER_PEAK = 10;
@@ -10,7 +10,7 @@ const MS_PER_PEAK = 10;
 type Peak = { timeMs: number; min: number; max: number };
 
 type Props = {
-  recording: RecordingTakeVisualProjection;
+  recording: RecordingPreviewVisualProjection;
   stream: MediaStream | null;
   currentTimeMs: number;
   scrollContainerRef: RefObject<HTMLDivElement | null>;

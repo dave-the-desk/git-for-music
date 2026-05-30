@@ -3,7 +3,6 @@ import type {
   DawAssetUploadRequest,
   DawAssetUploadResponse,
   UploadTimingChoice,
-  UploadRecordedClipResponse,
   UploadTrackResponse,
 } from '@git-for-music/shared';
 import { dawLocalCache } from '@/features/daw/engine/daw-local-cache';
@@ -30,7 +29,6 @@ export type IngestUploadInput = {
   sourceVersionId?: string;
   trackId?: string;
   trackVersionId?: string | null;
-  takeId?: string;
   startOffsetMs?: number;
   sourceStartMs?: number;
   sourceEndMs?: number;
@@ -42,7 +40,6 @@ export type IngestUploadInput = {
   isMuted?: boolean;
   position?: number;
   sourceType?: 'recording' | 'upload';
-  attachMode?: 'track-version' | 'clip';
   recordedTempoBpm?: number | null;
   sourceTempoBpm?: number | null;
   timingChoice: UploadTimingChoice;
@@ -128,7 +125,7 @@ export class AudioIngestEngine {
 
   async uploadAudioFile(
     input: IngestUploadInput,
-  ): Promise<(UploadTrackResponse | UploadRecordedClipResponse) & { assetId: string; objectKey: string }> {
+  ): Promise<UploadTrackResponse & { assetId: string; objectKey: string }> {
     const localBlobId = `local:${crypto.randomUUID()}`;
     const localMetadata = {
       mimeType: input.file.type || 'application/octet-stream',
@@ -172,7 +169,7 @@ export class AudioIngestEngine {
         trackId: input.trackId ?? undefined,
         name: input.name?.trim() || undefined,
         sourceVersionId: input.sourceVersionId,
-        attachMode: input.attachMode ?? 'track-version',
+        sourceType: input.sourceType ?? 'upload',
         timingChoice: input.timingChoice,
         fileName: input.file.name,
         contentType: input.file.type || 'application/octet-stream',
@@ -235,8 +232,6 @@ export class AudioIngestEngine {
       bitDepth: metadata.bitDepth,
       channelCount: metadata.channelCount,
       sizeBytes: metadata.sizeBytes,
-      attachMode: input.attachMode ?? 'track-version',
-      takeId: input.takeId,
       trackId: input.trackId,
       trackVersionId: input.trackVersionId,
       name: input.name?.trim() || undefined,
@@ -262,10 +257,7 @@ export class AudioIngestEngine {
       body: JSON.stringify(completeBody),
     });
 
-    const completeData = (await completeResponse.json()) as
-      | UploadTrackResponse
-      | UploadRecordedClipResponse
-      | { error?: string };
+    const completeData = (await completeResponse.json()) as UploadTrackResponse | { error?: string };
     if (!completeResponse.ok) {
       await dawLocalCache.updateAsset(input.projectId, input.demoId, localBlobId, (record) => ({
         ...record,
@@ -277,15 +269,6 @@ export class AudioIngestEngine {
     }
 
     await dawLocalCache.deleteAsset(input.projectId, input.demoId, localBlobId);
-
-    if ((input.attachMode ?? 'track-version') === 'clip') {
-      return {
-        ...(completeData as UploadRecordedClipResponse),
-        assetId: uploadData.assetId,
-        objectKey: uploadData.objectKey,
-      } as UploadRecordedClipResponse & { assetId: string; objectKey: string };
-    }
-
     return {
       ...(completeData as UploadTrackResponse),
       assetId: uploadData.assetId,
@@ -302,18 +285,6 @@ export class AudioIngestEngine {
     const file = new File([input.blob], `recording-${Date.now()}.${ext}`, { type: input.blob.type });
     return this.uploadAudioFile({ ...input, sourceType: 'recording', file }) as Promise<
       UploadTrackResponse & { assetId: string; objectKey: string }
-    >;
-  }
-
-  async uploadRecordedClipBlob(input: Omit<IngestUploadInput, 'file' | 'attachMode'> & { blob: Blob }) {
-    const ext = input.blob.type.includes('ogg')
-      ? 'ogg'
-      : input.blob.type.includes('mp4')
-        ? 'mp4'
-        : 'webm';
-    const file = new File([input.blob], `recording-${Date.now()}.${ext}`, { type: input.blob.type });
-    return this.uploadAudioFile({ ...input, sourceType: 'recording', attachMode: 'clip', file }) as Promise<
-      UploadRecordedClipResponse & { assetId: string; objectKey: string }
     >;
   }
 

@@ -3,21 +3,28 @@ import { randomUUID } from 'node:crypto';
 import {
   loadDemoOperationTail,
   loadLatestDemoSnapshot,
+  loadLatestDemoSnapshotAtOrBeforeOperationSeq,
   loadSnapshotStateForDemo,
   recordDemoDawOperation,
+  type DemoDawSnapshotData,
   type DemoDawOperationPayload,
   type DemoDawSnapshotOperationRow,
 } from '@/features/daw/server/snapshot-builder';
+import {
+  loadOrCreateDemoUserActiveVersionState,
+  type DemoUserActiveVersionState,
+  setDemoUserActiveVersion,
+} from '@/features/daw/server/demo-user-active-version';
 import { analyzeDawOperationConflict } from '@/features/daw/server/conflict-rules';
 import { splitSegment, MIN_SPLIT_DISTANCE_MS } from '@/features/daw/utils/segments';
 import { isValidTempoBpm, normalizeTimeSignature } from '@/features/daw/utils/timing';
 import {
   createProjectPresenceSeed,
   emitAcceptedDawOperation,
-  emitDawProjectRebootstrapRequired,
   emitDawVersionTreeChanged,
 } from '@/features/daw/server/realtime-gateway';
 import { createDemoVersionWithCopiedTracks } from '@/features/daw/server/versions';
+import { serializeCreatedDemoVersionTreeNode } from '@/features/daw/server/versioning';
 import type {
   DawOperationCommitRequest,
   DawOperationLogPayload,
@@ -36,9 +43,6 @@ import type {
   DawOperationPayloadAnnotationAdded,
   DawOperationPayloadAnnotationUpdated,
   DawOperationPayloadAnnotationDeleted,
-  DawOperationPayloadTakeAdded,
-  DawOperationPayloadTakeDeleted,
-  DawOperationPayloadTakeRestored,
   DawOperationPayloadVersionRenamed,
   DawOperationPayloadVersionTimingUpdated,
 } from '@/features/daw/protocol';
@@ -75,9 +79,65 @@ const MAX_TRACK_NAME_LENGTH = 100;
 const MAX_VERSION_LABEL_LENGTH = 120;
 const VALID_DENOMINATORS = new Set([1, 2, 4, 8, 16, 32]);
 const VALID_TIMING_SOURCES = new Set<TimingSource>(['MANUAL', 'ANALYZED', 'IMPORTED']);
+const TIMELINE_EDIT_OPERATION_TYPES = new Set<DawOperationType>([
+  'TRACK_RENAMED',
+  'TRACK_OFFSET_UPDATED',
+  'SEGMENT_SPLIT',
+  'SEGMENT_MOVED',
+  'SEGMENT_DELETED',
+  'SEGMENT_TRIMMED',
+  'SEGMENT_MERGED',
+  'CROSSFADE_SET',
+]);
+const BRANCH_CREATING_OPERATION_TYPES = new Set<DawOperationType>([
+  'TRACK_RENAMED',
+  'SEGMENT_SPLIT',
+  'SEGMENT_DELETED',
+  'SEGMENT_TRIMMED',
+  'SEGMENT_MERGED',
+  'CROSSFADE_SET',
+]);
+
+export function shouldBranchFromHistoricalBase(input: {
+  baseSnapshotId: string | null;
+  latestSnapshotId: string | null;
+}) {
+  return Boolean(input.baseSnapshotId && input.baseSnapshotId !== input.latestSnapshotId);
+}
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
+}
+
+export function isTimelineEditOperation(operationType: DawOperationType) {
+  return TIMELINE_EDIT_OPERATION_TYPES.has(operationType);
+}
+
+export function shouldCreateBranchForOperation(operationType: DawOperationType) {
+  return BRANCH_CREATING_OPERATION_TYPES.has(operationType);
+}
+
+export function getTimelineEditBranchLabel(operationType: DawOperationType) {
+  if (!shouldCreateBranchForOperation(operationType)) {
+    return null;
+  }
+
+  switch (operationType) {
+    case 'TRACK_RENAMED':
+      return 'Track renamed';
+    case 'SEGMENT_SPLIT':
+      return 'Split clip';
+    case 'SEGMENT_DELETED':
+      return 'Deleted clip';
+    case 'SEGMENT_TRIMMED':
+      return 'Trimmed clip';
+    case 'SEGMENT_MERGED':
+      return 'Merged clips';
+    case 'CROSSFADE_SET':
+      return 'Crossfade adjusted';
+    default:
+      return null;
+  }
 }
 
 function toIsoString(value: Date | string) {
@@ -180,6 +240,7 @@ function serializeSegmentSnapshot(
     startMs: number;
     endMs: number;
     timelineStartMs: number | null;
+    timelineEndMs?: number | null;
     gainDb: number;
     fadeInMs: number;
     fadeOutMs: number;
@@ -191,12 +252,15 @@ function serializeSegmentSnapshot(
   },
 ): DawSegmentSnapshot {
   const timelineStartMs = segment.timelineStartMs ?? segment.startMs;
+  const timelineEndMs =
+    segment.timelineEndMs ?? timelineStartMs + Math.max(0, segment.endMs - segment.startMs);
   return {
     id: segment.id,
     trackVersionId,
     startMs: segment.startMs,
     endMs: segment.endMs,
     timelineStartMs,
+    timelineEndMs,
     gainDb: segment.gainDb,
     fadeInMs: segment.fadeInMs,
     fadeOutMs: segment.fadeOutMs,
@@ -396,6 +460,7 @@ async function resolveDawProjectWorkspace(
       id: demo.id,
       name: demo.name,
       description: demo.description,
+      // Fallback seed only; the viewer's live checkout comes from DemoUserActiveVersion.
       currentVersionId: demo.currentVersionId,
     },
     permissions: {
@@ -567,6 +632,7 @@ async function executeOperationMutation(
   client: DawDatabaseClient,
   workspace: DawProjectWorkspace,
   request: DawOperationCommitRequest,
+  actorUserId: string,
 ): Promise<DawOperationExecutionResult> {
   switch (request.operationType) {
     case 'TRACK_RENAMED': {
@@ -658,15 +724,81 @@ async function executeOperationMutation(
     }
 
     case 'SEGMENT_MOVED': {
-      const { segmentId, timelineStartMs, trackVersionId } = request.payload;
-      if (typeof timelineStartMs !== 'number' || !Number.isFinite(timelineStartMs) || timelineStartMs < 0) {
-        throw new Error('timelineStartMs must be a non-negative number');
+      const {
+        segmentId,
+        fromTrackVersionId,
+        toTrackVersionId,
+        fromTimelineStartMs,
+        fromTimelineEndMs,
+        toTimelineStartMs,
+        toTimelineEndMs,
+      } = request.payload;
+
+      if (typeof segmentId !== 'string' || segmentId.trim().length === 0) {
+        throw new Error('segmentId is required');
+      }
+      if (typeof fromTrackVersionId !== 'string' || fromTrackVersionId.trim().length === 0) {
+        throw new Error('fromTrackVersionId is required');
+      }
+      if (typeof toTrackVersionId !== 'string' || toTrackVersionId.trim().length === 0) {
+        throw new Error('toTrackVersionId is required');
+      }
+      if (
+        typeof fromTimelineStartMs !== 'number' ||
+        !Number.isFinite(fromTimelineStartMs) ||
+        fromTimelineStartMs < 0
+      ) {
+        throw new Error('fromTimelineStartMs must be a non-negative number');
+      }
+      if (typeof fromTimelineEndMs !== 'number' || !Number.isFinite(fromTimelineEndMs) || fromTimelineEndMs < 0) {
+        throw new Error('fromTimelineEndMs must be a non-negative number');
+      }
+      if (typeof toTimelineStartMs !== 'number' || !Number.isFinite(toTimelineStartMs) || toTimelineStartMs < 0) {
+        throw new Error('toTimelineStartMs must be a non-negative number');
+      }
+      if (typeof toTimelineEndMs !== 'number' || !Number.isFinite(toTimelineEndMs) || toTimelineEndMs <= toTimelineStartMs) {
+        throw new Error('toTimelineEndMs must be greater than toTimelineStartMs');
+      }
+
+      const [sourceTrackVersion, targetTrackVersion] = await Promise.all([
+        client.trackVersion.findFirst({
+          where: {
+            id: fromTrackVersionId,
+            track: {
+              demo: {
+                id: workspace.demo.id,
+                projectId: workspace.project.id,
+              },
+            },
+          },
+          select: {
+            id: true,
+          },
+        }),
+        client.trackVersion.findFirst({
+          where: {
+            id: toTrackVersionId,
+            track: {
+              demo: {
+                id: workspace.demo.id,
+                projectId: workspace.project.id,
+              },
+            },
+          },
+          select: {
+            id: true,
+          },
+        }),
+      ]);
+
+      if (!sourceTrackVersion || !targetTrackVersion) {
+        throw new Error('Track version not found');
       }
 
       const segment = await client.segment.findFirst({
         where: {
           id: segmentId,
-          trackVersionId,
+          trackVersionId: fromTrackVersionId,
           trackVersion: {
             track: {
               demo: {
@@ -678,7 +810,15 @@ async function executeOperationMutation(
         },
         select: {
           id: true,
-          trackVersionId: true,
+          startMs: true,
+          endMs: true,
+          timelineStartMs: true,
+          position: true,
+          trackVersion: {
+            select: {
+              startOffsetMs: true,
+            },
+          },
         },
       });
 
@@ -686,23 +826,71 @@ async function executeOperationMutation(
         throw new Error('Segment not found');
       }
 
-      await client.segment.update({
-        where: {
-          id: segment.id,
-        },
-        data: {
-          timelineStartMs,
-        },
-        select: {
-          id: true,
-        },
-      });
+      const sourceDurationMs = segment.endMs - segment.startMs;
+      const currentTimelineStartMs = segment.timelineStartMs ?? segment.trackVersion.startOffsetMs + segment.startMs;
+      const currentTimelineEndMs = currentTimelineStartMs + sourceDurationMs;
+      if (
+        Math.abs(currentTimelineStartMs - fromTimelineStartMs) > 0.001 ||
+        Math.abs(currentTimelineEndMs - fromTimelineEndMs) > 0.001
+      ) {
+        throw new Error('Segment bounds no longer match the saved clip');
+      }
+
+      if (fromTrackVersionId !== toTrackVersionId) {
+        await client.segment.updateMany({
+          where: {
+            trackVersionId: fromTrackVersionId,
+            position: {
+              gt: segment.position,
+            },
+          },
+          data: {
+            position: {
+              decrement: 1,
+            },
+          },
+        });
+
+        await client.segment.update({
+          where: {
+            id: segment.id,
+          },
+          data: {
+            trackVersionId: toTrackVersionId,
+            timelineStartMs: toTimelineStartMs,
+            position: await client.segment.count({
+              where: {
+                trackVersionId: toTrackVersionId,
+              },
+            }),
+          },
+          select: {
+            id: true,
+          },
+        });
+      } else {
+        await client.segment.update({
+          where: {
+            id: segment.id,
+          },
+          data: {
+            timelineStartMs: toTimelineStartMs,
+          },
+          select: {
+            id: true,
+          },
+        });
+      }
 
       return {
         logPayload: {
-          trackVersionId,
           segmentId: segment.id,
-          timelineStartMs,
+          fromTrackVersionId,
+          toTrackVersionId,
+          fromTimelineStartMs,
+          fromTimelineEndMs,
+          toTimelineStartMs,
+          toTimelineEndMs,
         },
       };
     }
@@ -1296,25 +1484,16 @@ async function executeOperationMutation(
         throw new Error('Version not found');
       }
 
-      await client.demo.update({
-        where: {
-          id: workspace.demo.id,
-        },
-        data: {
-          currentVersionId: version.id,
-        },
-        select: {
-          id: true,
-        },
+      // Deprecated compatibility path: keep accepting legacy checkout mutations
+      // from old logs/clients, but store them in the per-user active-version row
+      // instead of the demo row and do not treat them as the shared checkout.
+      await setDemoUserActiveVersion(client, {
+        projectId: workspace.project.id,
+        demoId: workspace.demo.id,
+        userId: actorUserId,
+        versionId: version.id,
+        isFollowingHead: true,
       });
-
-      workspace = {
-        ...workspace,
-        demo: {
-          ...workspace.demo,
-          currentVersionId: version.id,
-        },
-      };
 
       return {
         logPayload: {
@@ -1418,81 +1597,6 @@ async function executeOperationMutation(
         forceCheckpoint: true,
       };
     }
-    case 'TAKE_ADDED': {
-      const payload = request.payload as DawOperationPayloadTakeAdded;
-      if (!isNonEmptyString(payload.trackId)) {
-        throw new Error('trackId is required');
-      }
-      if (!isNonEmptyString(payload.takeId)) {
-        throw new Error('takeId is required');
-      }
-      if (!isNonEmptyString(payload.assetId)) {
-        throw new Error('assetId is required');
-      }
-      if (!isNonEmptyString(payload.storageKey)) {
-        throw new Error('storageKey is required');
-      }
-
-      return {
-        logPayload: {
-          ...payload,
-        },
-      };
-    }
-    case 'TAKE_DELETED': {
-      const payload = request.payload as DawOperationPayloadTakeDeleted;
-      if (!isNonEmptyString(payload.trackId)) {
-        throw new Error('trackId is required');
-      }
-      if (!isNonEmptyString(payload.takeId)) {
-        throw new Error('takeId is required');
-      }
-      if (!isNonEmptyString(payload.deletedAt)) {
-        throw new Error('deletedAt is required');
-      }
-      if (!isNonEmptyString(payload.deletedBy)) {
-        throw new Error('deletedBy is required');
-      }
-      if (!isNonEmptyString(payload.operationSummary)) {
-        throw new Error('operationSummary is required');
-      }
-
-      return {
-        logPayload: {
-          ...payload,
-        },
-      };
-    }
-    case 'TAKE_RESTORED': {
-      const payload = request.payload as DawOperationPayloadTakeRestored;
-      if (!isNonEmptyString(payload.trackId)) {
-        throw new Error('trackId is required');
-      }
-      if (!isNonEmptyString(payload.takeId)) {
-        throw new Error('takeId is required');
-      }
-      if (!isNonEmptyString(payload.assetId)) {
-        throw new Error('assetId is required');
-      }
-      if (!isNonEmptyString(payload.storageKey)) {
-        throw new Error('storageKey is required');
-      }
-      if (!isNonEmptyString(payload.restoredAt)) {
-        throw new Error('restoredAt is required');
-      }
-      if (!isNonEmptyString(payload.restoredBy)) {
-        throw new Error('restoredBy is required');
-      }
-      if (!isNonEmptyString(payload.operationSummary)) {
-        throw new Error('operationSummary is required');
-      }
-
-      return {
-        logPayload: {
-          ...payload,
-        },
-      };
-    }
     case 'COMMENT_ADDED':
     case 'COMMENT_UPDATED':
     case 'COMMENT_DELETED': {
@@ -1590,7 +1694,8 @@ function translateRequestForBranch(
         ...request,
         payload: {
           ...request.payload,
-          trackVersionId: translateTrackVersionId(request.payload.trackVersionId),
+          fromTrackVersionId: translateTrackVersionId(request.payload.fromTrackVersionId),
+          toTrackVersionId: translateTrackVersionId(request.payload.toTrackVersionId),
           segmentId: translateSegmentId(request.payload.segmentId) ?? request.payload.segmentId,
         },
       } as DawOperationCommitRequest & { clientOperationId: string };
@@ -1667,6 +1772,7 @@ export async function loadDawProjectBootstrap(
     projectId: string;
     demoId: string;
     userId: string;
+    operationSeq?: number | null;
   },
 ): Promise<DawProjectBootstrapResponse | null> {
   const workspace = await resolveDawProjectWorkspace(client, input);
@@ -1676,17 +1782,39 @@ export async function loadDawProjectBootstrap(
     projectId: workspace.project.id,
     demoId: workspace.demo.id,
   });
-  const afterSeq = latestSnapshotRow?.operationSeq ?? 0;
+  const targetOperationSeq =
+    typeof input.operationSeq === 'number' && Number.isFinite(input.operationSeq)
+      ? input.operationSeq
+      : null;
+  const historicalSnapshotRow =
+    targetOperationSeq !== null
+      ? await loadLatestDemoSnapshotAtOrBeforeOperationSeq(
+          client,
+          {
+            projectId: workspace.project.id,
+            demoId: workspace.demo.id,
+          },
+          targetOperationSeq,
+        )
+      : latestSnapshotRow;
+  const afterSeq = historicalSnapshotRow?.operationSeq ?? 0;
 
-  const [operationTail, assets, pluginDefinitions] = await Promise.all([
-    loadDemoOperationTail(
-      client,
-      {
-        projectId: workspace.project.id,
-        demoId: workspace.demo.id,
-      },
-      afterSeq,
-    ),
+  const [activeVersionState, operationTail, assets, pluginDefinitions] = await Promise.all([
+    loadOrCreateDemoUserActiveVersionState(client, {
+      projectId: workspace.project.id,
+      demoId: workspace.demo.id,
+      userId: input.userId,
+    }),
+    targetOperationSeq === null
+      ? loadDemoOperationTail(
+          client,
+          {
+            projectId: workspace.project.id,
+            demoId: workspace.demo.id,
+          },
+          afterSeq,
+        )
+      : Promise.resolve<DemoDawSnapshotOperationRow[]>([]),
     client.audioAssetMetadata.findMany({
       where: {
         projectId: workspace.project.id,
@@ -1735,18 +1863,25 @@ export async function loadDawProjectBootstrap(
     demoId: workspace.demo.id,
     userId: input.userId,
   });
-  const projectState = await loadSnapshotStateForDemo(client, {
+  const projectState = (await loadSnapshotStateForDemo(client, {
     projectId: workspace.project.id,
     demoId: workspace.demo.id,
-  });
+  }, {
+    operationSeq: targetOperationSeq,
+  })) as DemoDawSnapshotData;
 
   return {
     project: {
       ...workspace.project,
       demoId: workspace.demo.id,
-      currentVersionId: workspace.demo.currentVersionId,
+      // Shared head metadata only. The viewer checkout is carried separately
+      // through DemoUserActiveVersion and must not be inferred from this field.
+      currentVersionId: projectState.currentVersionId ?? workspace.demo.currentVersionId,
     },
-    latestSnapshot: serializeSnapshotRow(latestSnapshotRow),
+    latestSnapshot: serializeSnapshotRow(historicalSnapshotRow),
+    activeVersionId: activeVersionState.activeVersionId,
+    isFollowingHead: activeVersionState.isFollowingHead,
+    activeBranchName: activeVersionState.activeBranchName,
     projectState: projectState as unknown as JsonValue,
     operationTail: operationTail.map((row) => serializeProjectOperation(row)),
     assets: assets.map((asset) => serializeAsset(asset)),
@@ -1755,6 +1890,37 @@ export async function loadDawProjectBootstrap(
     annotations: projectState.annotations as unknown as JsonValue,
     presenceSeed,
     permissions: workspace.permissions,
+  };
+}
+
+export async function setUserActiveVersion(
+  client: DawDatabaseClient,
+  input: {
+    projectId: string;
+    demoId: string;
+    userId: string;
+    activeVersionId: string;
+    isFollowingHead?: boolean;
+  },
+): Promise<DemoUserActiveVersionState | null> {
+  const workspace = await resolveDawProjectWorkspace(client, input);
+  if (!workspace) return null;
+
+  const activeVersionState = await loadOrCreateDemoUserActiveVersionState(client, {
+    projectId: workspace.project.id,
+    demoId: workspace.demo.id,
+    userId: input.userId,
+    currentActiveVersionId: input.activeVersionId,
+  });
+
+  if (!activeVersionState) {
+    throw new Error('Project not found');
+  }
+
+  return {
+    activeVersionId: activeVersionState.activeVersionId,
+    isFollowingHead: activeVersionState.isFollowingHead,
+    activeBranchName: activeVersionState.activeBranchName,
   };
 }
 
@@ -1791,7 +1957,18 @@ export async function commitDawProjectOperation(
   if (!resolvedWorkspace) {
     throw new Error('Project not found');
   }
-  let workspace: DawProjectWorkspace = resolvedWorkspace;
+  const workspace: DawProjectWorkspace = resolvedWorkspace;
+  const activeVersionState = await loadOrCreateDemoUserActiveVersionState(client, {
+    projectId: workspace.project.id,
+    demoId: workspace.demo.id,
+    userId: input.userId,
+  });
+  const checkoutVersionId = activeVersionState.activeVersionId ?? workspace.demo.currentVersionId;
+  const latestSnapshotRow = await loadLatestDemoSnapshot(client, {
+    projectId: workspace.project.id,
+    demoId: workspace.demo.id,
+  });
+  const latestSnapshotId = latestSnapshotRow?.id ?? null;
 
   const request = {
     ...input.request,
@@ -1824,16 +2001,23 @@ export async function commitDawProjectOperation(
         };
       };
   let versionTreeChanged = false;
+  let timelineBranchOperation: DawProjectOperationRecord | null = null;
 
   try {
     result = await client.$transaction(async (tx) => {
       let effectiveRequest = request;
       let branchedFromHistoricalBase = false;
+      const baseSnapshotId = request.baseSnapshotId ?? null;
+      const shouldCreateBranchForRequest = shouldCreateBranchForOperation(effectiveRequest.operationType);
 
-      if (request.baseSnapshotId && request.baseSnapshotId !== workspace.demo.currentVersionId) {
+      if (
+        shouldCreateBranchForRequest &&
+        baseSnapshotId &&
+        shouldBranchFromHistoricalBase({ baseSnapshotId, latestSnapshotId })
+      ) {
         const sourceVersion = await tx.demoVersion.findFirst({
           where: {
-            id: request.baseSnapshotId,
+            id: baseSnapshotId,
             demoId: workspace.demo.id,
           },
           select: {
@@ -1851,25 +2035,14 @@ export async function commitDawProjectOperation(
             description: `Branch created from ${sourceVersion.label}.`,
           });
 
-          await tx.demo.update({
-            where: {
-              id: workspace.demo.id,
-            },
-            data: {
-              currentVersionId: branchVersion.id,
-            },
-            select: {
-              id: true,
-            },
+          await setDemoUserActiveVersion(tx, {
+            projectId: workspace.project.id,
+            demoId: workspace.demo.id,
+            userId: input.userId,
+            versionId: branchVersion.id,
+            isFollowingHead: true,
           });
 
-          workspace = {
-            ...workspace,
-            demo: {
-              ...workspace.demo,
-              currentVersionId: branchVersion.id,
-            },
-          };
           versionTreeChanged = true;
 
           effectiveRequest = translateRequestForBranch(request, branchVersion.id, branchVersion.cloneMap);
@@ -1888,10 +2061,10 @@ export async function commitDawProjectOperation(
               }
             | null = null;
 
-          if (workspace.demo.currentVersionId) {
+          if (shouldCreateBranchForRequest && checkoutVersionId) {
             const currentVersion = await tx.demoVersion.findFirst({
               where: {
-                id: workspace.demo.currentVersionId,
+                id: checkoutVersionId,
                 demoId: workspace.demo.id,
               },
               select: {
@@ -1931,7 +2104,96 @@ export async function commitDawProjectOperation(
         }
       }
 
-      const execution = await executeOperationMutation(tx, workspace, effectiveRequest);
+      if (shouldCreateBranchForRequest && isTimelineEditOperation(effectiveRequest.operationType)) {
+        if (!checkoutVersionId) {
+          throw new Error('No active version available to branch from');
+        }
+
+        const branchSourceVersion = await tx.demoVersion.findFirst({
+          where: {
+            id: checkoutVersionId,
+            demoId: workspace.demo.id,
+          },
+          select: {
+            id: true,
+            label: true,
+          },
+        });
+
+        if (!branchSourceVersion) {
+          throw new Error('Version not found');
+        }
+
+        const branchLabel = getTimelineEditBranchLabel(effectiveRequest.operationType);
+        if (!branchLabel) {
+          throw new Error(`No branch label available for ${effectiveRequest.operationType}`);
+        }
+        const branchVersion = await createDemoVersionWithCopiedTracks(tx, {
+          demoId: workspace.demo.id,
+          sourceVersionId: branchSourceVersion.id,
+          parentId: branchSourceVersion.id,
+          label: branchLabel,
+          description: `${branchLabel} from ${branchSourceVersion.label}`,
+        });
+
+        await setDemoUserActiveVersion(tx, {
+          projectId: workspace.project.id,
+          demoId: workspace.demo.id,
+          userId: input.userId,
+          versionId: branchVersion.id,
+          isFollowingHead: true,
+        });
+
+        const branchOperation = await recordDemoDawOperation(
+          tx,
+          {
+            projectId: workspace.project.id,
+            demoId: workspace.demo.id,
+            actorUserId: input.userId,
+            operationType: 'VERSION_BRANCH_CREATED',
+            payload: {
+              versionId: branchVersion.id,
+              parentVersionId: branchVersion.parentId,
+              branchName: branchVersion.label,
+              branchMode: 'continue',
+              label: branchVersion.label,
+              createdAt: branchVersion.createdAt.toISOString(),
+              createdBy: input.userId,
+              operationSummary: branchVersion.description,
+              sourceVersionId: branchSourceVersion.id,
+              version: serializeCreatedDemoVersionTreeNode({
+                id: branchVersion.id,
+                label: branchVersion.label,
+                description: branchVersion.description,
+                parentId: branchVersion.parentId,
+                createdAt: branchVersion.createdAt,
+                branchMode: 'continue',
+                tempoBpm: branchVersion.tempoBpm,
+                timeSignatureNum: branchVersion.timeSignatureNum,
+                timeSignatureDen: branchVersion.timeSignatureDen,
+                musicalKey: branchVersion.musicalKey,
+                tempoSource: branchVersion.tempoSource,
+                keySource: branchVersion.keySource,
+                isCurrent: true,
+                tracks: branchVersion.tracks,
+              }),
+            },
+          },
+          {
+            checkpointCreatedById: input.userId,
+          },
+        );
+
+        timelineBranchOperation = await loadOperationBySequence(tx, {
+          demoId: workspace.demo.id,
+          operationSeq: branchOperation.operationSeq,
+        });
+
+        versionTreeChanged = true;
+        effectiveRequest = translateRequestForBranch(effectiveRequest, branchVersion.id, branchVersion.cloneMap);
+      }
+
+      const execution = await executeOperationMutation(tx, workspace, effectiveRequest, input.userId);
 
       const record = await recordDemoDawOperation(
         tx,
@@ -1983,6 +2245,14 @@ export async function commitDawProjectOperation(
     throw error;
   }
 
+  if (timelineBranchOperation) {
+    await emitAcceptedDawOperation({
+      projectId: workspace.project.id,
+      demoId: workspace.demo.id,
+      operation: timelineBranchOperation,
+    });
+  }
+
   if (result.created && result.operation) {
     await emitAcceptedDawOperation({
       projectId: workspace.project.id,
@@ -1996,12 +2266,6 @@ export async function commitDawProjectOperation(
       projectId: workspace.project.id,
       demoId: workspace.demo.id,
       actorUserId: input.userId,
-    });
-    await emitDawProjectRebootstrapRequired({
-      projectId: workspace.project.id,
-      demoId: workspace.demo.id,
-      actorUserId: input.userId,
-      reason: 'Server-side version tree mutation may require a client resync',
     });
   }
 

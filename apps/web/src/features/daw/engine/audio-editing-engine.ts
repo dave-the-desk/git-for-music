@@ -61,15 +61,19 @@ export class AudioEditingEngine {
     };
   }
 
-  moveSegment(trackVersionId: string, segmentId: string, timelineStartMs: number): DawOperationCommitRequest {
+  moveSegment(input: {
+    segmentId: string;
+    fromTrackVersionId: string;
+    toTrackVersionId: string;
+    fromTimelineStartMs: number;
+    fromTimelineEndMs: number;
+    toTimelineStartMs: number;
+    toTimelineEndMs: number;
+  }): DawOperationCommitRequest {
     return {
       demoId: this.context.demoId,
       operationType: 'SEGMENT_MOVED',
-      payload: {
-        trackVersionId,
-        segmentId,
-        timelineStartMs,
-      } satisfies DawOperationPayloadSegmentMoved,
+      payload: input satisfies DawOperationPayloadSegmentMoved,
     };
   }
 

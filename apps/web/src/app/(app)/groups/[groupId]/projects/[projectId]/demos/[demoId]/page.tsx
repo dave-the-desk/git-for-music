@@ -39,7 +39,10 @@ export default async function DemoPage({
     userId: user.id,
   });
 
-  if (!demo || !demo.currentVersionId) {
+  const initialActiveVersionId = demo?.activeVersionId ?? null;
+  const initialCurrentVersionId = demo?.currentVersionId ?? initialActiveVersionId;
+
+  if (!demo || !initialCurrentVersionId) {
     notFound();
   }
 
@@ -99,7 +102,7 @@ export default async function DemoPage({
         keySource: version.keySource,
         parentId: version.parentId,
         createdAt: version.createdAt,
-        isCurrent: version.id === demo.currentVersionId,
+        isCurrent: version.id === initialCurrentVersionId,
         tracks: Array.from(
           resolvedTracks.reduce<Map<string, (typeof resolvedTracks)[number]>>((map, trackVersion) => {
             if (!map.has(trackVersion.trackId)) {
@@ -121,7 +124,9 @@ export default async function DemoPage({
       currentUserId={user.id}
       demoName={demo.name}
       demoDescription={demo.description}
-      initialCurrentVersionId={demo.currentVersionId}
+      initialCurrentVersionId={initialCurrentVersionId}
+      initialActiveVersionId={initialActiveVersionId}
+      initialIsFollowingHead={demo.isFollowingHead}
       initialVersions={resolvedVersions}
     />
   );

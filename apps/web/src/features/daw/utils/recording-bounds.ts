@@ -1,4 +1,4 @@
-export type RecordingTakeBounds = {
+export type RecordingBounds = {
   startOffsetMs: number;
   durationMs: number;
   sourceStartMs: number;
@@ -7,11 +7,11 @@ export type RecordingTakeBounds = {
   timelineEndMs: number;
 };
 
-export function buildRecordedTakeBounds(input: {
+export function buildRecordingBounds(input: {
   timelineStartMs: number;
   measuredDurationMs: number | null;
   fallbackDurationMs: number;
-}): RecordingTakeBounds {
+}): RecordingBounds {
   const durationMs = Math.max(0, Math.round(input.measuredDurationMs ?? input.fallbackDurationMs));
   const timelineStartMs = Math.max(0, input.timelineStartMs);
   return {

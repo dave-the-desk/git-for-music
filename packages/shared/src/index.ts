@@ -94,6 +94,15 @@ export interface CreateVersionRequest {
   sourceVersionId?: string;
 }
 
+export interface CreateVersionResponse {
+  id: string;
+  label: string;
+  demoId: string;
+  activeVersionId: string;
+  isFollowingHead: boolean;
+  activeBranchName: string | null;
+}
+
 export interface UpdateDemoVersionTimingRequest {
   label?: string;
   tempoBpm?: number | null;
@@ -216,12 +225,6 @@ export interface UploadTrackResponse {
   processingJobIds: string[];
 }
 
-export interface UploadRecordedClipResponse {
-  assetId: string;
-  objectKey: string;
-  status: 'ready';
-}
-
 export interface DawAssetUploadRequest {
   demoId: string;
   projectId: string;
@@ -229,8 +232,8 @@ export interface DawAssetUploadRequest {
   trackVersionId?: string;
   name?: string;
   sourceVersionId?: string;
+  sourceType?: 'recording' | 'upload';
   timingChoice?: UploadTimingChoice;
-  attachMode?: 'track-version' | 'clip';
   fileName: string;
   contentType: string;
   sizeBytes: number;
@@ -255,8 +258,6 @@ export interface DawAssetCompleteUploadRequest {
   bitDepth: number;
   channelCount: number;
   sizeBytes: number;
-  attachMode?: 'track-version' | 'clip';
-  takeId?: string;
   trackId?: string;
   trackVersionId?: string | null;
   name?: string;

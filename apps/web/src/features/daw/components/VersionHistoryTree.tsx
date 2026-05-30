@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { DawVersion, ProjectOperationHistoryEntry } from '@/features/daw/state/local-project-state';
 import { buildTree, type TreeNode } from '@/features/daw/components/version-tree-layout';
 import {
@@ -25,6 +25,14 @@ function formatDate(iso: string) {
 
 type RenameState = {
   versionId: string;
+  value: string;
+  saving: boolean;
+  error: string | null;
+};
+
+type BranchState = {
+  sourceVersionId: string;
+  sourceVersionLabel: string;
   value: string;
   saving: boolean;
   error: string | null;
@@ -202,8 +210,15 @@ export type VersionHistoryTreeProps = {
   versions: DawVersion[];
   operationHistory: ProjectOperationHistoryEntry[];
   currentVersionId: string;
+  activeVersionId: string;
   selectedVersionId: string;
+  selectedHistoryOperationSeq: number | null;
+  isFollowingHead: boolean;
+  isHistoryViewActive: boolean;
   onSelectVersion: (id: string) => void;
+  onCheckoutSelectedVersion: () => void;
+  onSelectHistoryOperation: (operationSeq: number | null) => void;
+  onCreateBranch: (sourceVersionId: string, label: string) => Promise<{ versionId: string; label: string } | null>;
 };
 
 export function VersionHistoryTree({
@@ -213,11 +228,26 @@ export function VersionHistoryTree({
   versions,
   operationHistory,
   currentVersionId,
+  activeVersionId,
   selectedVersionId,
+  selectedHistoryOperationSeq,
+  isFollowingHead,
+  isHistoryViewActive,
   onSelectVersion,
+  onCheckoutSelectedVersion,
+  onSelectHistoryOperation,
+  onCreateBranch,
 }: VersionHistoryTreeProps) {
   const [renameState, setRenameState] = useState<RenameState | null>(null);
+  const [branchState, setBranchState] = useState<BranchState | null>(null);
   const [isExpanded, setIsExpanded] = useState(false);
+
+  useEffect(() => {
+    if (isHistoryViewActive) {
+      setRenameState(null);
+      setBranchState(null);
+    }
+  }, [isHistoryViewActive]);
 
   const roots = useMemo(() => buildTree(versions), [versions]);
   const versionsById = useMemo(() => buildVersionsById(versions), [versions]);
@@ -227,12 +257,14 @@ export function VersionHistoryTree({
   );
   const currentVersionLabel = currentVersion
     ? getVersionDisplayLabel(currentVersion, versionsById)
-    : 'Current version';
+    : 'Branch head';
   const currentVersionSummary = currentVersion
     ? getVersionOperationSummary(currentVersion, versionsById)
-    : 'No version selected';
+    : 'No branch head selected';
   const selectedHistoryVersionId = selectedVersionId || currentVersionId;
   const selectedHistoryVersion = versionsById.get(selectedHistoryVersionId) ?? currentVersion ?? null;
+  const branchSourceVersion =
+    versionsById.get(selectedVersionId) ?? versionsById.get(activeVersionId) ?? currentVersion ?? null;
   const selectedHistoryEntries = useMemo(
     () =>
       operationHistory
@@ -242,8 +274,44 @@ export function VersionHistoryTree({
     [operationHistory, selectedHistoryVersionId],
   );
 
+  function openCreateBranch() {
+    if (isHistoryViewActive) return;
+    const sourceVersion = branchSourceVersion;
+    if (!sourceVersion) return;
+    setBranchState({
+      sourceVersionId: sourceVersion.id,
+      sourceVersionLabel: getVersionDisplayLabel(sourceVersion, versionsById),
+      value: `${getVersionDisplayLabel(sourceVersion, versionsById)} branch`,
+      saving: false,
+      error: null,
+    });
+  }
+
+  async function commitBranchCreation() {
+    if (!branchState) return;
+    if (isHistoryViewActive) return;
+    const trimmed = branchState.value.trim();
+    setBranchState((prev) => (prev ? { ...prev, saving: true, error: null } : null));
+    try {
+      const result = await onCreateBranch(branchState.sourceVersionId, trimmed);
+      if (!result) {
+        setBranchState((prev) =>
+          prev ? { ...prev, saving: false, error: 'Could not create branch' } : null,
+        );
+        return;
+      }
+      setBranchState(null);
+      onSelectVersion(result.versionId);
+    } catch {
+      setBranchState((prev) =>
+        prev ? { ...prev, saving: false, error: 'Something went wrong' } : null,
+      );
+    }
+  }
+
   async function commitRename() {
     if (!renameState) return;
+    if (isHistoryViewActive) return;
     const trimmed = renameState.value.trim();
     if (!trimmed) {
       setRenameState(null);
@@ -287,6 +355,7 @@ export function VersionHistoryTree({
   }
 
   function startRename(versionId: string, label: string) {
+    if (isHistoryViewActive) return;
     setRenameState({ versionId, value: label, saving: false, error: null });
   }
 
@@ -325,27 +394,67 @@ export function VersionHistoryTree({
               {selectedHistoryVersion ? getVersionDisplayLabel(selectedHistoryVersion, versionsById) : 'Selected version'}
             </p>
           </div>
-          <p className="text-xs text-slate-500">
-            {selectedHistoryEntries.length} item{selectedHistoryEntries.length === 1 ? '' : 's'}
-          </p>
+          <div className="flex items-center gap-2">
+            {selectedHistoryOperationSeq !== null ? (
+              <button
+                type="button"
+                onClick={() => onSelectHistoryOperation(null)}
+                className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-3 py-1 text-[11px] font-semibold text-cyan-200 transition-colors hover:border-cyan-400/60 hover:bg-cyan-500/20 hover:text-white"
+              >
+                Back to latest
+              </button>
+            ) : null}
+            <p className="text-xs text-slate-500">
+              {selectedHistoryEntries.length} item{selectedHistoryEntries.length === 1 ? '' : 's'}
+            </p>
+          </div>
         </div>
 
         <div className="mt-3 space-y-2">
           {selectedHistoryEntries.length > 0 ? (
-            selectedHistoryEntries.map((entry) => (
-              <div key={entry.operationId} className="rounded-md border border-slate-800 bg-slate-900/80 px-3 py-2">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="rounded-full border border-slate-700 bg-slate-950 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-300">
-                    {getHistoryOperationBadgeLabel(entry.operationType)}
-                  </span>
-                  <span className="text-[11px] text-slate-500">{formatDate(entry.createdAt)}</span>
+            selectedHistoryEntries.map((entry) => {
+              const isSelectedHistoryPoint = selectedHistoryOperationSeq === entry.operationSeq;
+              const canRevertToHistoryPoint = typeof entry.operationSeq === 'number' && Number.isFinite(entry.operationSeq);
+
+              return (
+                <div
+                  key={entry.operationId}
+                  className={[
+                    'rounded-md border px-3 py-2 transition-colors',
+                    isSelectedHistoryPoint
+                      ? 'border-cyan-400/60 bg-cyan-500/10'
+                      : 'border-slate-800 bg-slate-900/80',
+                  ].join(' ')}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="rounded-full border border-slate-700 bg-slate-950 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-300">
+                      {getHistoryOperationBadgeLabel(entry.operationType)}
+                    </span>
+                    <span className="text-[11px] text-slate-500">{formatDate(entry.createdAt)}</span>
+                  </div>
+                  <p className="mt-1 text-sm text-slate-100">{entry.summary}</p>
+                  <p className="mt-1 text-[11px] text-slate-500">
+                    by {shortId(entry.actorUserId)} · {shortId(entry.operationId)}
+                  </p>
+                  <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-[10px] uppercase tracking-[0.16em] text-slate-600">
+                      {typeof entry.operationSeq === 'number' ? `Seq ${entry.operationSeq}` : 'Older history'}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!canRevertToHistoryPoint) return;
+                        onSelectHistoryOperation(entry.operationSeq ?? null);
+                      }}
+                      disabled={!canRevertToHistoryPoint || isSelectedHistoryPoint}
+                      className="rounded-full border border-slate-700 bg-slate-950 px-3 py-1 text-[11px] font-semibold text-slate-200 transition-colors hover:border-cyan-400/60 hover:bg-cyan-500/10 hover:text-white disabled:cursor-not-allowed disabled:border-slate-800 disabled:bg-slate-950 disabled:text-slate-600"
+                    >
+                      {isSelectedHistoryPoint ? 'Viewing this point' : 'Revert to this point'}
+                    </button>
+                  </div>
                 </div>
-                <p className="mt-1 text-sm text-slate-100">{entry.summary}</p>
-                <p className="mt-1 text-[11px] text-slate-500">
-                  by {shortId(entry.actorUserId)} · {shortId(entry.operationId)}
-                </p>
-              </div>
-            ))
+              );
+            })
           ) : (
             <div className="rounded-md border border-dashed border-slate-800 bg-slate-950 px-3 py-4 text-sm text-slate-500">
               No recent activity for this version yet.
@@ -355,8 +464,8 @@ export function VersionHistoryTree({
       </div>
 
       {!isExpanded ? (
-        <div className="rounded-lg border border-slate-700 bg-slate-900 px-4 py-3">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Current version</p>
+          <div className="rounded-lg border border-slate-700 bg-slate-900 px-4 py-3">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Branch head</p>
             <p className="mt-2 text-sm font-semibold text-white">{currentVersionLabel}</p>
             <p className="mt-1 text-xs text-slate-400">{currentVersionSummary}</p>
             {currentVersion ? (
@@ -367,16 +476,96 @@ export function VersionHistoryTree({
         </div>
       ) : (
         <>
-          <div className="flex flex-wrap items-center gap-3 rounded-lg border border-slate-800 bg-slate-950/40 px-4 py-3 text-[11px] text-slate-400">
-            <span className="flex items-center gap-1.5">
+          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-800 bg-slate-950/40 px-4 py-3 text-[11px] text-slate-400">
+            <span className="flex items-center gap-1.5 rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2 py-1 text-cyan-200">
               <span className="h-2.5 w-2.5 rounded-full bg-cyan-400" />
-              current head
+              branch head
             </span>
-            <span className="flex items-center gap-1.5">
+            <span className="flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-emerald-200">
+              <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
+              my active version
+            </span>
+            <span className="flex items-center gap-1.5 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-amber-200">
               <span className="h-2.5 w-2.5 rounded-full bg-amber-400" />
-              selected version
+              selected node
             </span>
+            <span
+              className={`flex items-center gap-1.5 rounded-full border px-2 py-1 ${
+                isFollowingHead
+                  ? 'border-slate-700 bg-slate-900 text-slate-300'
+                  : 'border-violet-500/30 bg-violet-500/10 text-violet-200'
+              }`}
+            >
+              <span
+                className={`h-2.5 w-2.5 rounded-full ${isFollowingHead ? 'bg-slate-500' : 'bg-violet-400'}`}
+              />
+              {isFollowingHead ? 'following head' : 'pinned checkout'}
+            </span>
+            {selectedVersionId !== activeVersionId && !isHistoryViewActive ? (
+              <button
+                type="button"
+                onClick={onCheckoutSelectedVersion}
+                className="ml-auto rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-1 text-[11px] font-semibold text-emerald-200 transition-colors hover:bg-emerald-500/20 hover:text-emerald-100"
+              >
+                Checkout selected
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={branchState ? () => setBranchState(null) : openCreateBranch}
+              disabled={isHistoryViewActive || (!branchState && !branchSourceVersion)}
+              className="rounded-full border border-cyan-500/40 bg-cyan-500/10 px-3 py-1 text-[11px] font-semibold text-cyan-200 transition-colors hover:bg-cyan-500/20 hover:text-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {isHistoryViewActive ? 'Return to latest to edit' : branchState ? 'Cancel branch' : 'Create Branch'}
+            </button>
           </div>
+          {branchState ? (
+            <div className="mt-3 rounded-lg border border-cyan-500/20 bg-cyan-500/5 px-4 py-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-200/70">
+                    Create branch
+                  </p>
+                  <p className="mt-1 text-xs text-slate-300">
+                    Branching from <span className="font-semibold text-white">{branchState.sourceVersionLabel}</span>.
+                    Leave the name blank to use the default branch label.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setBranchState(null)}
+                  className="text-xs font-semibold text-slate-400 hover:text-slate-200"
+                >
+                  Close
+                </button>
+              </div>
+              <div className="mt-3 flex flex-col gap-2 md:flex-row md:items-center">
+                <input
+                  type="text"
+                  value={branchState.value}
+                  onChange={(e) =>
+                    setBranchState((prev) => (prev ? { ...prev, value: e.currentTarget.value } : prev))
+                  }
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') void commitBranchCreation();
+                    if (e.key === 'Escape') setBranchState(null);
+                  }}
+                  disabled={branchState.saving}
+                  className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none"
+                  placeholder="Branch name (optional)"
+                />
+                <button
+                  type="button"
+                  onClick={() => void commitBranchCreation()}
+                  disabled={branchState.saving}
+                  className="rounded-lg border border-cyan-500/40 bg-cyan-500/15 px-4 py-2 text-sm font-semibold text-cyan-100 transition-colors hover:bg-cyan-500/25 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {branchState.saving ? 'Creating…' : 'Create branch'}
+                </button>
+              </div>
+              {branchState.error ? <p className="mt-2 text-sm text-red-400">{branchState.error}</p> : null}
+            </div>
+          ) : null}
 
           <div className="overflow-auto">
             <div className="relative" style={{ minWidth: layout.width, minHeight: layout.height }}>
@@ -414,6 +603,7 @@ export function VersionHistoryTree({
 
               {layout.nodes.map((node) => {
                 const isCurrent = node.id === currentVersionId;
+                const isActive = node.id === activeVersionId;
                 const isSelected = node.id === selectedVersionId;
                 const isRenaming = renameState?.versionId === node.id;
                 const label = getVersionDisplayLabel(node.version, versionsById);
@@ -434,7 +624,9 @@ export function VersionHistoryTree({
                     className={`group absolute overflow-hidden rounded-full border-2 text-left transition-transform duration-150 ${
                       isSelected
                         ? 'border-amber-400 bg-slate-900 shadow-[0_10px_18px_rgba(251,191,36,0.12)]'
-                        : isCurrent
+                        : isActive
+                          ? 'border-emerald-400 bg-slate-900 shadow-[0_10px_18px_rgba(16,185,129,0.12)]'
+                          : isCurrent
                           ? 'border-cyan-400 bg-slate-900 shadow-[0_10px_18px_rgba(6,182,212,0.12)]'
                           : 'border-slate-700 bg-slate-900/95 shadow-[0_10px_16px_rgba(0,0,0,0.25)] hover:-translate-y-0.5'
                     }`}
@@ -445,6 +637,24 @@ export function VersionHistoryTree({
                       height: layout.nodeHeight,
                     }}
                   >
+                    <div className="absolute left-2 top-2 flex max-w-[70%] flex-wrap gap-1">
+                      {isCurrent ? (
+                        <span className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.16em] text-cyan-200">
+                          head
+                        </span>
+                      ) : null}
+                      {isActive ? (
+                        <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.16em] text-emerald-200">
+                          active
+                        </span>
+                      ) : null}
+                      {isSelected ? (
+                        <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.16em] text-amber-200">
+                          selected
+                        </span>
+                      ) : null}
+                    </div>
+
                     <div className="relative flex h-full flex-col items-center justify-center px-3 py-3 text-center">
                       {isRenaming ? (
                         <div
@@ -489,15 +699,16 @@ export function VersionHistoryTree({
                         </div>
                       ) : (
                         <>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              startRename(node.id, label);
-                            }}
-                            title="Rename version"
-                            className="absolute right-2 top-2 rounded-full p-1 text-slate-500 opacity-0 transition-opacity hover:bg-slate-800 hover:text-slate-200 group-hover:opacity-100"
-                          >
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                startRename(node.id, label);
+                              }}
+                              disabled={isHistoryViewActive}
+                              title="Rename version"
+                              className="absolute right-2 top-2 rounded-full p-1 text-slate-500 opacity-0 transition-opacity hover:bg-slate-800 hover:text-slate-200 group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-30"
+                            >
                             <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" aria-hidden>
                               <path d="M12.854.146a.5.5 0 0 0-.707 0L10.5 1.793 14.207 5.5l1.647-1.646a.5.5 0 0 0 0-.708zm.646 6.061L9.793 2.5 3.293 9H3.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.207zm-7.468 7.468A.5.5 0 0 1 6 13.5V13h-.5a.5.5 0 0 1-.5-.5V12h-.5a.5.5 0 0 1-.5-.5V11h-.5a.5.5 0 0 1-.5-.5V10h-.5a.499.499 0 0 1-.175-.032l-.179.178a.5.5 0 0 0-.11.168l-2 5a.5.5 0 0 0 .65.65l5-2a.5.5 0 0 0 .168-.11z" />
                             </svg>

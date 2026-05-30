@@ -1,16 +1,19 @@
 import { prisma } from '@git-for-music/db';
 import { NextResponse } from 'next/server';
-import type { ApiError } from '@git-for-music/shared';
+import type { ApiError, CreateVersionResponse } from '@git-for-music/shared';
 import type { DawProjectOperationRecord } from '@/features/daw/protocol';
 import {
   checkpointDemoDawSnapshot,
   recordDemoDawOperation,
 } from '@/features/daw/server/snapshot-builder';
 import type { DemoDawOperationInsertResult } from '@/features/daw/server/snapshot-builder';
+import {
+  loadOrCreateDemoUserActiveVersionState,
+  setDemoUserActiveVersion,
+} from '@/features/daw/server/demo-user-active-version';
 import { createDemoVersionWithCopiedTracks } from '@/features/daw/server/versions';
 import {
   emitAcceptedDawOperation,
-  emitDawProjectRebootstrapRequired,
   emitDawVersionTreeChanged,
 } from '@/features/daw/server/realtime-gateway';
 import { serializeCreatedDemoVersionTreeNode } from '@/features/daw/server/versioning';
@@ -61,7 +64,6 @@ export async function createDemoVersionCommand(input: {
     },
     select: {
       id: true,
-      currentVersionId: true,
       project: {
         select: {
           id: true,
@@ -74,8 +76,13 @@ export async function createDemoVersionCommand(input: {
     return NextResponse.json<ApiError>({ error: 'Demo not found' }, { status: 404 });
   }
 
-  const sourceVersionId = input.sourceVersionId ?? demo.currentVersionId;
-  const previousCurrentVersionId = demo.currentVersionId ?? null;
+  const activeVersionState = await loadOrCreateDemoUserActiveVersionState(prisma, {
+    projectId: demo.project.id,
+    demoId: demo.id,
+    userId: input.userId,
+  });
+
+  const sourceVersionId = input.sourceVersionId ?? activeVersionState.activeVersionId;
 
   if (!sourceVersionId) {
     return NextResponse.json<ApiError>(
@@ -102,10 +109,12 @@ export async function createDemoVersionCommand(input: {
     );
   }
 
+  // If the creator is extending the checkout they are currently on, treat it as
+  // a head-advancing commit; otherwise preserve the side-branch semantics.
+  const branchMode =
+    sourceVersion.id === activeVersionState.activeVersionId ? 'continue' : 'fork';
+
   let versionCreatedOperation:
-    | Awaited<ReturnType<typeof recordDemoDawOperation>>
-    | null = null;
-  let currentVersionChangedOperation:
     | Awaited<ReturnType<typeof recordDemoDawOperation>>
     | null = null;
 
@@ -118,16 +127,12 @@ export async function createDemoVersionCommand(input: {
       description: description || null,
     });
 
-    await tx.demo.update({
-      where: {
-        id: demo.id,
-      },
-      data: {
-        currentVersionId: version.id,
-      },
-      select: {
-        id: true,
-      },
+    await setDemoUserActiveVersion(tx, {
+      projectId: demo.project.id,
+      demoId: demo.id,
+      userId: input.userId,
+      versionId: version.id,
+      isFollowingHead: true,
     });
 
     versionCreatedOperation = await recordDemoDawOperation(
@@ -141,6 +146,7 @@ export async function createDemoVersionCommand(input: {
           versionId: version.id,
           parentVersionId: version.parentId,
           branchName: version.label,
+          branchMode,
           label: version.label,
           createdAt: version.createdAt.toISOString(),
           createdBy: input.userId,
@@ -152,6 +158,7 @@ export async function createDemoVersionCommand(input: {
             description: version.description,
             parentId: version.parentId,
             createdAt: version.createdAt,
+            branchMode,
             tempoBpm: version.tempoBpm,
             timeSignatureNum: version.timeSignatureNum,
             timeSignatureDen: version.timeSignatureDen,
@@ -159,24 +166,8 @@ export async function createDemoVersionCommand(input: {
             tempoSource: version.tempoSource,
             keySource: version.keySource,
             isCurrent: true,
+            tracks: version.tracks,
           }),
-        },
-      },
-      {
-        checkpointCreatedById: input.userId,
-      },
-    );
-
-    currentVersionChangedOperation = await recordDemoDawOperation(
-      tx,
-      {
-        projectId: demo.project.id,
-        demoId: demo.id,
-        actorUserId: input.userId,
-        operationType: 'CURRENT_VERSION_CHANGED',
-        payload: {
-          previousVersionId: previousCurrentVersionId,
-          currentVersionId: version.id,
         },
       },
       {
@@ -195,8 +186,6 @@ export async function createDemoVersionCommand(input: {
 
   const recordedVersionCreatedOperation =
     versionCreatedOperation as DemoDawOperationInsertResult | null;
-  const recordedCurrentVersionChangedOperation =
-    currentVersionChangedOperation as DemoDawOperationInsertResult | null;
 
   if (recordedVersionCreatedOperation?.created) {
     emitAcceptedDawOperation({
@@ -215,40 +204,20 @@ export async function createDemoVersionCommand(input: {
     });
   }
 
-  if (recordedCurrentVersionChangedOperation?.created) {
-    emitAcceptedDawOperation({
-      projectId: demo.project.id,
-      demoId: demo.id,
-      operationId: recordedCurrentVersionChangedOperation.id,
-      operationSeq: recordedCurrentVersionChangedOperation.operationSeq,
-      actorUserId: input.userId,
-      operationType:
-        recordedCurrentVersionChangedOperation.operationType ?? 'CURRENT_VERSION_CHANGED',
-      payload:
-        recordedCurrentVersionChangedOperation.payload as DawProjectOperationRecord['payload'],
-      createdAt: recordedCurrentVersionChangedOperation.createdAt ?? new Date().toISOString(),
-      idempotencyKey: recordedCurrentVersionChangedOperation.idempotencyKey ?? null,
-      clientOperationId: recordedCurrentVersionChangedOperation.clientOperationId ?? null,
-      baseSnapshotId: recordedCurrentVersionChangedOperation.baseSnapshotId ?? null,
-      baseOperationSeq: recordedCurrentVersionChangedOperation.baseOperationSeq ?? 0,
-    });
-  }
-
   emitDawVersionTreeChanged({
     projectId: demo.project.id,
     demoId: demo.id,
     actorUserId: input.userId,
   });
 
-  emitDawProjectRebootstrapRequired({
-    projectId: demo.project.id,
-    demoId: demo.id,
-    actorUserId: input.userId,
-    reason: 'Version tree mutation completed via server fallback path',
-  });
+  const response: CreateVersionResponse = {
+    id: createdVersion.id,
+    label: createdVersion.label,
+    demoId: input.demoId,
+    activeVersionId: createdVersion.id,
+    isFollowingHead: true,
+    activeBranchName: createdVersion.label,
+  };
 
-  return NextResponse.json(
-    { id: createdVersion.id, label: createdVersion.label, demoId: input.demoId },
-    { status: 201 },
-  );
+  return NextResponse.json(response, { status: 201 });
 }

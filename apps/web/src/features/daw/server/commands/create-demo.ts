@@ -7,6 +7,7 @@ import {
   recordDemoDawOperation,
 } from '@/features/daw/server/snapshot-builder';
 import type { DemoDawOperationInsertResult } from '@/features/daw/server/snapshot-builder';
+import { setDemoUserActiveVersion } from '@/features/daw/server/demo-user-active-version';
 import { isValidTempoBpm } from '@/features/daw/utils/timing';
 import { emitAcceptedDawOperation } from '@/features/daw/server/realtime-gateway';
 import { serializeCreatedDemoVersionTreeNode } from '@/features/daw/server/versioning';
@@ -78,9 +79,6 @@ export async function createDemoCommand(input: {
   let versionCreatedOperation:
     | Awaited<ReturnType<typeof recordDemoDawOperation>>
     | null = null;
-  let currentVersionChangedOperation:
-    | Awaited<ReturnType<typeof recordDemoDawOperation>>
-    | null = null;
 
   const demo = await prisma.$transaction(async (tx) => {
     const createdDemo = await tx.demo.create({
@@ -131,6 +129,14 @@ export async function createDemoCommand(input: {
       },
     });
 
+    await setDemoUserActiveVersion(tx, {
+      projectId: project.id,
+      demoId: createdDemo.id,
+      userId: input.userId,
+      versionId: initialVersion.id,
+      isFollowingHead: true,
+    });
+
     versionCreatedOperation = await recordDemoDawOperation(
       tx,
       {
@@ -142,6 +148,7 @@ export async function createDemoCommand(input: {
           versionId: initialVersion.id,
           parentVersionId: initialVersion.parentId,
           branchName: initialVersion.label,
+          branchMode: 'continue',
           label: initialVersion.label,
           createdAt: initialVersion.createdAt.toISOString(),
           createdBy: input.userId,
@@ -152,6 +159,7 @@ export async function createDemoCommand(input: {
             description: initialVersion.description,
             parentId: initialVersion.parentId,
             createdAt: initialVersion.createdAt,
+            branchMode: 'continue',
             tempoBpm: initialVersion.tempoBpm,
             timeSignatureNum: initialVersion.timeSignatureNum,
             timeSignatureDen: initialVersion.timeSignatureDen,
@@ -160,23 +168,6 @@ export async function createDemoCommand(input: {
             keySource: initialVersion.keySource,
             isCurrent: true,
           }),
-        },
-      },
-      {
-        checkpointCreatedById: input.userId,
-      },
-    );
-
-    currentVersionChangedOperation = await recordDemoDawOperation(
-      tx,
-      {
-        projectId: project.id,
-        demoId: createdDemo.id,
-        actorUserId: input.userId,
-        operationType: 'CURRENT_VERSION_CHANGED',
-        payload: {
-          previousVersionId: null,
-          currentVersionId: initialVersion.id,
         },
       },
       {
@@ -195,8 +186,6 @@ export async function createDemoCommand(input: {
 
   const recordedVersionCreatedOperation =
     versionCreatedOperation as DemoDawOperationInsertResult | null;
-  const recordedCurrentVersionChangedOperation =
-    currentVersionChangedOperation as DemoDawOperationInsertResult | null;
 
   if (recordedVersionCreatedOperation?.created) {
     emitAcceptedDawOperation({
@@ -212,25 +201,6 @@ export async function createDemoCommand(input: {
       clientOperationId: recordedVersionCreatedOperation.clientOperationId ?? null,
       baseSnapshotId: recordedVersionCreatedOperation.baseSnapshotId ?? null,
       baseOperationSeq: recordedVersionCreatedOperation.baseOperationSeq ?? 0,
-    });
-  }
-
-  if (recordedCurrentVersionChangedOperation?.created) {
-    emitAcceptedDawOperation({
-      projectId: project.id,
-      demoId: demo.id,
-      operationId: recordedCurrentVersionChangedOperation.id,
-      operationSeq: recordedCurrentVersionChangedOperation.operationSeq,
-      actorUserId: input.userId,
-      operationType:
-        recordedCurrentVersionChangedOperation.operationType ?? 'CURRENT_VERSION_CHANGED',
-      payload:
-        recordedCurrentVersionChangedOperation.payload as DawProjectOperationRecord['payload'],
-      createdAt: recordedCurrentVersionChangedOperation.createdAt ?? new Date().toISOString(),
-      idempotencyKey: recordedCurrentVersionChangedOperation.idempotencyKey ?? null,
-      clientOperationId: recordedCurrentVersionChangedOperation.clientOperationId ?? null,
-      baseSnapshotId: recordedCurrentVersionChangedOperation.baseSnapshotId ?? null,
-      baseOperationSeq: recordedCurrentVersionChangedOperation.baseOperationSeq ?? 0,
     });
   }
 

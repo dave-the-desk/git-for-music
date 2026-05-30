@@ -10,6 +10,17 @@ This note describes the current DAW realtime sync model as it is implemented in 
 - `LocalProjectState` is created through `createLocalProjectStateFromBootstrap(...)`
 - `operationTail` is applied through `applyAcceptedProjectOperations(...)`
 
+## Shared graph vs per-user checkout
+
+- The version DAG, tracks, takes, operations, and branch nodes are shared durable project data.
+- Each viewer also has a per-user active checkout in `DemoUserActiveVersion` with `activeVersionId` and `isFollowingHead`.
+- `selectedVersionId` in the client is only UI selection state.
+- `Demo.currentVersionId` is now a fallback/default seed for legacy demos and bootstrap gaps, not the live checkout pointer.
+- `snapshot.currentVersionId` and operation-history `currentVersionId` are shared-head metadata for replay and tree rendering only; they do not define the viewer checkout.
+- `VERSION_SELECTED` and `CURRENT_VERSION_CHANGED` are legacy compatibility operations only; new checkout changes go through the per-user active-version API.
+- Timeline edit commits branch the active checkout into a new `DemoVersion`, and the version tree refreshes so the new node appears immediately.
+- Only stale-base/conflict recovery and explicit branch flows use the other branch creation paths.
+
 ## 2. Local edit
 
 - The client creates an optimistic queue/preview entry immediately
@@ -33,6 +44,7 @@ This note describes the current DAW realtime sync model as it is implemented in 
 - If `rebootstrapRequired` is `true`, `ProjectSyncEngine` reboots from bootstrap
 - Otherwise, it applies the operation tail
 - Then it reopens SSE and resyncs pending operations
+- Rebootstrap should preserve the viewer's active checkout when bootstrap omits a replacement value
 
 ## 5. Design rule
 

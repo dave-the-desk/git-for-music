@@ -39,26 +39,10 @@ export type TrackLaneVisualProjection = {
   widthPx: number;
   isMuted: boolean;
   segments: TrackLaneVisualSegment[];
-  recordingTakes: TrackLaneRecordingTakeProjection[];
-  recording: RecordingTakeVisualProjection | null;
+  recording: RecordingPreviewVisualProjection | null;
 };
 
-export type TrackLaneRecordingTakeProjection = {
-  id: string;
-  trackId: string;
-  trackVersionId: string | null;
-  name: string;
-  storageKey: string;
-  status: 'preview' | 'uploading' | 'complete' | 'error';
-  syncStatus: 'idle' | 'uploading' | 'complete' | 'error';
-  leftPx: number;
-  widthPx: number;
-  hitAreaWidthPx: number;
-  waveformWidthPx: number;
-  segment: TrackTimelineSegment;
-};
-
-export type RecordingTakeVisualProjection = TemporaryRecordingTrack & {
+export type RecordingPreviewVisualProjection = TemporaryRecordingTrack & {
   leftPx: number;
   widthPx: number;
   hitAreaWidthPx: number;
@@ -93,32 +77,6 @@ export type BuildDawVisualProjectionInput = {
   offsetOverrides: Record<string, number>;
   segmentLayoutOverrides: Record<string, TrackTimelineSegment[]>;
   temporaryRecordingTrack: TemporaryRecordingTrack | null;
-  recordingTakesByTrackId?: Record<string, Array<{
-    id: string;
-    trackId: string;
-    trackVersionId: string | null;
-    name: string;
-    startOffsetMs: number;
-    durationMs: number;
-    sourceStartMs: number;
-    sourceEndMs: number;
-    timelineStartMs: number;
-    timelineEndMs: number;
-    gainDb: number;
-    fadeInMs: number;
-    fadeOutMs: number;
-    isMuted: boolean;
-    position: number;
-    storageKey: string;
-    assetId: string | null;
-    previewUrl: string | null;
-    recordedTempoBpm: number | null;
-    sourceTempoBpm: number | null;
-    status: 'preview' | 'uploading' | 'complete' | 'error';
-    syncStatus: 'idle' | 'uploading' | 'complete' | 'error';
-    error?: string;
-    createdAt: string;
-  }>>;
   waveformCache?: WaveformCache;
   minimumWidthPx?: number;
 };
@@ -129,7 +87,7 @@ export function buildDawVisualProjection(input: BuildDawVisualProjectionInput): 
   const recordingTrackEndPx = input.temporaryRecordingTrack
     ? msToPx(input.temporaryRecordingTrack.startOffsetMs + input.temporaryRecordingTrack.durationMs)
     : null;
-  const recordingProjection: RecordingTakeVisualProjection | null = input.temporaryRecordingTrack
+  const recordingProjection: RecordingPreviewVisualProjection | null = input.temporaryRecordingTrack
     ? {
         ...input.temporaryRecordingTrack,
         leftPx: msToPx(input.temporaryRecordingTrack.startOffsetMs),
@@ -179,53 +137,6 @@ export function buildDawVisualProjection(input: BuildDawVisualProjectionInput): 
     const lastSegmentEnd = segments.reduce((max, segment) => Math.max(max, segment.leftPx + segment.widthPx), leftPx);
     const widthPx = Math.max(msToPx(durationMs), lastSegmentEnd - leftPx);
 
-    const recordingTakes = [...(input.recordingTakesByTrackId?.[track.trackId] ?? [])]
-      .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
-      .map((take, index) => {
-      const sourceStartMs = Math.max(0, take.sourceStartMs ?? 0);
-      const sourceEndMs = Math.max(sourceStartMs, take.sourceEndMs ?? sourceStartMs + Math.max(0, take.durationMs));
-      const timelineStartMs = Math.max(0, take.timelineStartMs ?? take.startOffsetMs);
-      const timelineEndMs = Math.max(
-        timelineStartMs,
-        take.timelineEndMs ?? timelineStartMs + Math.max(0, take.durationMs),
-      );
-      const durationMs = Math.max(0, timelineEndMs - timelineStartMs);
-      const segment: TrackTimelineSegment = {
-        id: take.id,
-        trackVersionId: track.trackVersionId,
-        sourceStartMs,
-        sourceEndMs,
-        timelineStartMs,
-        timelineEndMs,
-        durationMs,
-        startMs: sourceStartMs,
-        endMs: sourceEndMs,
-        gainDb: take.gainDb ?? 0,
-        fadeInMs: take.fadeInMs ?? 0,
-        fadeOutMs: take.fadeOutMs ?? 0,
-        isMuted: take.isMuted ?? false,
-        position: take.position ?? index,
-        isImplicit: false,
-      };
-
-      maxEndPx = Math.max(maxEndPx, msToPx(timelineEndMs));
-
-        return {
-          id: take.id,
-          trackId: take.trackId,
-          trackVersionId: take.trackVersionId,
-          name: take.name,
-        storageKey: take.storageKey,
-        status: take.status,
-        syncStatus: take.syncStatus,
-        leftPx: msToPx(timelineStartMs),
-        widthPx: Math.max(msToPx(durationMs), 12),
-        hitAreaWidthPx: Math.max(msToPx(durationMs), 120),
-          waveformWidthPx: Math.max(msToPx(durationMs), 12),
-          segment,
-        };
-      });
-
     maxEndPx = Math.max(maxEndPx, lastSegmentEnd);
 
     trackLanesByTrackVersionId[track.trackVersionId] = {
@@ -237,7 +148,6 @@ export function buildDawVisualProjection(input: BuildDawVisualProjectionInput): 
       widthPx,
       isMuted: track.isMuted,
       segments,
-      recordingTakes,
       recording:
         recordingProjection &&
         (track.trackId === recordingProjection.targetTrackId ||

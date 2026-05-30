@@ -3,13 +3,13 @@ import assert from 'node:assert/strict';
 import type { DawProjectBootstrapResponse, DawProjectOperationRecord } from '@/features/daw/protocol';
 import {
   applyAcceptedProjectOperation,
+  applyAcceptedProjectOperationWithoutHistory,
   applyAcceptedProjectOperations,
   createLocalProjectStateFromBootstrap,
 } from '@/features/daw/state/operation-reducer';
 import type {
   DawTrack,
   DawVersion,
-  TrackRecordingTake,
   TrackTimelineSegment,
 } from '@/features/daw/state/local-project-state';
 
@@ -74,40 +74,7 @@ function makeTrack(trackVersionId: string, overrides: Partial<DawTrack> = {}): D
   };
 }
 
-function makeTake(
-  takeId: string,
-  trackId: string,
-  overrides: Partial<TrackRecordingTake> = {},
-) {
-  return {
-    id: takeId,
-    trackId,
-    trackVersionId: overrides.trackVersionId ?? null,
-    name: overrides.name ?? takeId,
-    startOffsetMs: overrides.startOffsetMs ?? 0,
-    durationMs: overrides.durationMs ?? 1000,
-    sourceStartMs: overrides.sourceStartMs ?? 0,
-    sourceEndMs: overrides.sourceEndMs ?? 1000,
-    timelineStartMs: overrides.timelineStartMs ?? 0,
-    timelineEndMs: overrides.timelineEndMs ?? 1000,
-    gainDb: overrides.gainDb ?? 0,
-    fadeInMs: overrides.fadeInMs ?? 0,
-    fadeOutMs: overrides.fadeOutMs ?? 0,
-    isMuted: overrides.isMuted ?? false,
-    position: overrides.position ?? 0,
-    storageKey: overrides.storageKey ?? `/assets/${takeId}.wav`,
-    assetId: overrides.assetId ?? null,
-    previewUrl: overrides.previewUrl ?? null,
-    recordedTempoBpm: overrides.recordedTempoBpm ?? null,
-    sourceTempoBpm: overrides.sourceTempoBpm ?? null,
-    status: overrides.status ?? 'complete',
-    syncStatus: overrides.syncStatus ?? 'complete',
-    error: overrides.error,
-    createdAt: overrides.createdAt ?? '2025-01-01T00:00:00.000Z',
-  };
-}
-
-function makeBootstrap(versions: DawVersion[], currentVersionId: string): DawProjectBootstrapResponse {
+function makeBootstrap(versions: DawVersion[], currentVersionId: string | null): DawProjectBootstrapResponse {
   return {
     project: {
       id: 'project-1',
@@ -132,11 +99,12 @@ function makeBootstrap(versions: DawVersion[], currentVersionId: string): DawPro
         comments: [],
         annotations: [],
         tempoMetadataByTrackVersionId: {},
-        recordingTakesByTrackId: {},
       },
       createdById: 'user-a',
       createdAt: '2025-01-01T00:00:00.000Z',
     },
+    activeVersionId: currentVersionId,
+    isFollowingHead: true,
     projectState: undefined,
     operationTail: [],
     assets: [],
@@ -174,7 +142,85 @@ function makeOperation(
   };
 }
 
-test('version operations update the live reducer state', () => {
+test('VERSION_CREATED from the active head advances the active checkout when following head is enabled', () => {
+  const root = makeVersion('version-root', { isCurrent: true });
+  const initial = createLocalProjectStateFromBootstrap(makeBootstrap([root], root.id));
+  assert.equal(initial.activeVersionId, root.id);
+  assert.equal(initial.isFollowingHead, true);
+
+  const childVersion = makeVersion('version-child', {
+    label: 'Child label',
+    name: 'Child label',
+    branchName: 'Child label',
+    parentId: root.id,
+    parentVersionId: root.id,
+    createdAt: '2025-01-02T00:00:00.000Z',
+    isCurrent: true,
+    operationSeq: 2,
+  });
+
+  const created = applyAcceptedProjectOperation(
+    initial,
+    makeOperation('VERSION_CREATED', 2, {
+      versionId: childVersion.id,
+      parentVersionId: root.id,
+      branchMode: 'continue',
+      branchName: childVersion.branchName,
+      label: childVersion.label,
+      createdAt: childVersion.createdAt,
+      createdBy: 'user-b',
+      operationSummary: 'Added audio track',
+      version: childVersion,
+      sourceVersionId: root.id,
+    }),
+  );
+
+  assert.equal(created.versions.length, 2);
+  assert.equal(created.currentVersionId, childVersion.id);
+  assert.equal(created.activeVersionId, childVersion.id);
+  assert.equal(created.versions[1]?.id, childVersion.id);
+  assert.equal(created.versions[1]?.parentId, root.id);
+  assert.equal(created.versions.find((version) => version.id === root.id)?.isCurrent, false);
+  assert.equal(created.versions.find((version) => version.id === childVersion.id)?.isCurrent, true);
+});
+
+test('createLocalProjectStateFromBootstrap defaults to the newest version when the shared current version is missing', () => {
+  const oldestVersion = makeVersion('version-oldest', {
+    createdAt: '2025-01-01T00:00:00.000Z',
+    operationSeq: 1,
+    isCurrent: false,
+  });
+  const newestVersion = makeVersion('version-newest', {
+    createdAt: '2025-01-02T00:00:00.000Z',
+    operationSeq: 2,
+    isCurrent: false,
+  });
+
+  const state = createLocalProjectStateFromBootstrap({
+    ...makeBootstrap([oldestVersion, newestVersion], null),
+    latestSnapshot: {
+      id: 'snapshot-1',
+      projectId: 'project-1',
+      demoId: 'demo-1',
+      operationSeq: 2,
+      snapshot: {
+        versions: [oldestVersion, newestVersion],
+        currentVersionId: null,
+        comments: [],
+        annotations: [],
+        tempoMetadataByTrackVersionId: {},
+      },
+      createdById: 'user-a',
+      createdAt: '2025-01-02T00:00:00.000Z',
+    },
+  });
+
+  assert.equal(state.currentVersionId, newestVersion.id);
+  assert.equal(state.versions.find((version) => version.id === oldestVersion.id)?.isCurrent, false);
+  assert.equal(state.versions.find((version) => version.id === newestVersion.id)?.isCurrent, true);
+});
+
+test('VERSION_BRANCH_CREATED from the active head adds the branch without moving the active checkout', () => {
   const root = makeVersion('version-root', { isCurrent: true });
   const initial = createLocalProjectStateFromBootstrap(makeBootstrap([root], root.id));
 
@@ -194,6 +240,7 @@ test('version operations update the live reducer state', () => {
     makeOperation('VERSION_BRANCH_CREATED', 2, {
       versionId: branchVersion.id,
       parentVersionId: root.id,
+      branchMode: 'fork',
       branchName: branchVersion.branchName,
       label: branchVersion.label,
       createdAt: branchVersion.createdAt,
@@ -206,32 +253,261 @@ test('version operations update the live reducer state', () => {
 
   assert.equal(created.versions.length, 2);
   assert.equal(created.currentVersionId, branchVersion.id);
+  assert.equal(created.activeVersionId, root.id);
   assert.equal(created.versions[1]?.id, branchVersion.id);
   assert.equal(created.versions[1]?.parentId, root.id);
+  assert.equal(created.versions.find((version) => version.id === root.id)?.isCurrent, false);
+  assert.equal(created.versions.find((version) => version.id === branchVersion.id)?.isCurrent, true);
+});
 
-  const renamed = applyAcceptedProjectOperation(
-    created,
-    makeOperation('VERSION_RENAMED', 3, {
+test('VERSION_BRANCH_CREATED from the active head advances the active checkout when branchMode is continue', () => {
+  const root = makeVersion('version-root', { isCurrent: true });
+  const initial = createLocalProjectStateFromBootstrap(makeBootstrap([root], root.id));
+
+  const branchVersion = makeVersion('version-branch', {
+    label: 'Branch label',
+    name: 'Branch label',
+    branchName: 'Branch label',
+    parentId: root.id,
+    parentVersionId: root.id,
+    createdAt: '2025-01-02T00:00:00.000Z',
+    isCurrent: true,
+    operationSeq: 2,
+  });
+
+  const created = applyAcceptedProjectOperation(
+    initial,
+    makeOperation('VERSION_BRANCH_CREATED', 2, {
       versionId: branchVersion.id,
-      label: 'Renamed branch',
+      parentVersionId: root.id,
+      branchMode: 'continue',
+      branchName: branchVersion.branchName,
+      label: branchVersion.label,
+      createdAt: branchVersion.createdAt,
+      createdBy: 'user-b',
+      operationSummary: 'Added audio track',
+      version: branchVersion,
+      sourceVersionId: root.id,
     }),
   );
 
-  assert.equal(renamed.versions.find((version) => version.id === branchVersion.id)?.label, 'Renamed branch');
-  assert.equal(renamed.versions.find((version) => version.id === branchVersion.id)?.name, 'Renamed branch');
-  assert.equal(renamed.versions.find((version) => version.id === branchVersion.id)?.branchName, 'Renamed branch');
+  assert.equal(created.versions.length, 2);
+  assert.equal(created.currentVersionId, branchVersion.id);
+  assert.equal(created.activeVersionId, branchVersion.id);
+  assert.equal(created.versions[1]?.id, branchVersion.id);
+  assert.equal(created.versions[1]?.parentId, root.id);
+  assert.equal(created.versions.find((version) => version.id === root.id)?.isCurrent, false);
+  assert.equal(created.versions.find((version) => version.id === branchVersion.id)?.isCurrent, true);
+});
+
+test('CURRENT_VERSION_CHANGED updates shared head metadata without moving the active checkout', () => {
+  const root = makeVersion('version-root', { isCurrent: true });
+  const branchVersion = makeVersion('version-branch', {
+    label: 'Branch label',
+    name: 'Branch label',
+    branchName: 'Branch label',
+    parentId: root.id,
+    parentVersionId: root.id,
+    createdAt: '2025-01-02T00:00:00.000Z',
+    isCurrent: false,
+    operationSeq: 2,
+  });
+  const initial = createLocalProjectStateFromBootstrap(makeBootstrap([root, branchVersion], root.id));
 
   const currentChanged = applyAcceptedProjectOperation(
-    renamed,
-    makeOperation('CURRENT_VERSION_CHANGED', 4, {
-      previousVersionId: branchVersion.id,
-      currentVersionId: root.id,
+    initial,
+    makeOperation('CURRENT_VERSION_CHANGED', 3, {
+      previousVersionId: root.id,
+      currentVersionId: branchVersion.id,
     }),
   );
 
-  assert.equal(currentChanged.currentVersionId, root.id);
-  assert.equal(currentChanged.versions.find((version) => version.id === root.id)?.isCurrent, true);
-  assert.equal(currentChanged.versions.find((version) => version.id === branchVersion.id)?.isCurrent, false);
+  assert.equal(currentChanged.currentVersionId, branchVersion.id);
+  assert.equal(currentChanged.activeVersionId, root.id);
+  assert.equal(currentChanged.versions.find((version) => version.id === root.id)?.isCurrent, false);
+  assert.equal(currentChanged.versions.find((version) => version.id === branchVersion.id)?.isCurrent, true);
+});
+
+test('VERSION_BRANCH_CREATED from the active head does not advance the active checkout when following head is disabled', () => {
+  const root = makeVersion('version-root', { isCurrent: true });
+  const initial = {
+    ...createLocalProjectStateFromBootstrap(makeBootstrap([root], root.id)),
+    isFollowingHead: false,
+  };
+
+  const branchVersion = makeVersion('version-branch', {
+    label: 'Branch label',
+    name: 'Branch label',
+    branchName: 'Branch label',
+    parentId: root.id,
+    parentVersionId: root.id,
+    createdAt: '2025-01-02T00:00:00.000Z',
+    isCurrent: true,
+    operationSeq: 2,
+  });
+
+  const created = applyAcceptedProjectOperation(
+    initial,
+    makeOperation('VERSION_BRANCH_CREATED', 2, {
+      versionId: branchVersion.id,
+      parentVersionId: root.id,
+      branchMode: 'fork',
+      branchName: branchVersion.branchName,
+      label: branchVersion.label,
+      createdAt: branchVersion.createdAt,
+      createdBy: 'user-b',
+      operationSummary: 'Added audio track',
+      version: branchVersion,
+      sourceVersionId: root.id,
+    }),
+  );
+
+  assert.equal(created.currentVersionId, branchVersion.id);
+  assert.equal(created.activeVersionId, root.id);
+  assert.equal(created.versions[1]?.id, branchVersion.id);
+  assert.equal(created.versions[1]?.parentId, root.id);
+});
+
+test('VERSION_NODE_ADDED on another branch updates the tree without moving the active checkout', () => {
+  const root = makeVersion('version-root', { isCurrent: true });
+  const activeBranch = makeVersion('version-active', {
+    label: 'Active branch',
+    name: 'Active branch',
+    branchName: 'Active branch',
+    parentId: root.id,
+    parentVersionId: root.id,
+    createdAt: '2025-01-02T00:00:00.000Z',
+    isCurrent: true,
+    operationSeq: 2,
+  });
+  const initial = createLocalProjectStateFromBootstrap(makeBootstrap([root, activeBranch], activeBranch.id));
+
+  const branchNode = makeVersion('version-other-branch', {
+    label: 'Other branch',
+    name: 'Other branch',
+    branchName: 'Other branch',
+    parentId: root.id,
+    parentVersionId: root.id,
+    createdAt: '2025-01-03T00:00:00.000Z',
+    isCurrent: false,
+    operationSeq: 3,
+  });
+
+  const updated = applyAcceptedProjectOperation(
+    initial,
+    makeOperation('VERSION_NODE_ADDED', 3, {
+      version: branchNode,
+    }),
+  );
+
+  assert.equal(updated.versions.length, 3);
+  assert.equal(updated.currentVersionId, activeBranch.id);
+  assert.equal(updated.activeVersionId, activeBranch.id);
+  assert.equal(updated.versions.find((version) => version.id === branchNode.id)?.parentId, root.id);
+});
+
+test('VERSION_BRANCH_CREATED on another branch updates the tree without moving the active checkout', () => {
+  const root = makeVersion('version-root', { isCurrent: true });
+  const activeBranch = makeVersion('version-active', {
+    label: 'Active branch',
+    name: 'Active branch',
+    branchName: 'Active branch',
+    parentId: root.id,
+    parentVersionId: root.id,
+    createdAt: '2025-01-02T00:00:00.000Z',
+    isCurrent: true,
+    operationSeq: 2,
+  });
+  const initial = createLocalProjectStateFromBootstrap(makeBootstrap([root, activeBranch], activeBranch.id));
+
+  const branchVersion = makeVersion('version-other-branch', {
+    label: 'Other branch',
+    name: 'Other branch',
+    branchName: 'Other branch',
+    parentId: root.id,
+    parentVersionId: root.id,
+    createdAt: '2025-01-03T00:00:00.000Z',
+    isCurrent: true,
+    operationSeq: 3,
+  });
+
+  const created = applyAcceptedProjectOperation(
+    initial,
+    makeOperation('VERSION_BRANCH_CREATED', 3, {
+      versionId: branchVersion.id,
+      parentVersionId: root.id,
+      branchMode: 'fork',
+      branchName: branchVersion.branchName,
+      label: branchVersion.label,
+      createdAt: branchVersion.createdAt,
+      createdBy: 'user-c',
+      operationSummary: 'Created a branch elsewhere',
+      version: branchVersion,
+      sourceVersionId: root.id,
+    }),
+  );
+
+  assert.equal(created.versions.length, 3);
+  assert.equal(created.currentVersionId, branchVersion.id);
+  assert.equal(created.activeVersionId, activeBranch.id);
+  assert.equal(created.versions.find((version) => version.id === branchVersion.id)?.parentId, root.id);
+});
+
+test('bootstrap keeps shared current version separate from active checkout', () => {
+  const root = makeVersion('version-root', { isCurrent: true });
+  const branch = makeVersion('version-branch', {
+    label: 'Branch label',
+    name: 'Branch label',
+    branchName: 'Branch label',
+    parentId: root.id,
+    parentVersionId: root.id,
+    createdAt: '2025-01-02T00:00:00.000Z',
+    operationSeq: 2,
+  });
+
+  const bootstrap = makeBootstrap([root, branch], root.id);
+  bootstrap.activeVersionId = branch.id;
+  bootstrap.isFollowingHead = false;
+
+  const initial = createLocalProjectStateFromBootstrap(bootstrap);
+
+  assert.equal(initial.currentVersionId, root.id);
+  assert.equal(initial.activeVersionId, branch.id);
+  assert.equal(initial.isFollowingHead, false);
+  assert.equal(initial.versions.find((version) => version.id === root.id)?.isCurrent, true);
+  assert.equal(initial.versions.find((version) => version.id === branch.id)?.isCurrent, false);
+});
+
+test('active version stays pinned when following head is disabled', () => {
+  const root = makeVersion('version-root', { isCurrent: true });
+  const branchVersion = makeVersion('version-branch', {
+    label: 'Branch label',
+    name: 'Branch label',
+    branchName: 'Branch label',
+    parentId: root.id,
+    parentVersionId: root.id,
+    createdAt: '2025-01-02T00:00:00.000Z',
+    isCurrent: false,
+    operationSeq: 2,
+  });
+  const initial = {
+    ...createLocalProjectStateFromBootstrap(makeBootstrap([root, branchVersion], root.id)),
+    isFollowingHead: false,
+    activeVersionId: root.id,
+  };
+
+  const updated = applyAcceptedProjectOperation(
+    initial,
+    makeOperation('CURRENT_VERSION_CHANGED', 2, {
+      previousVersionId: root.id,
+      currentVersionId: branchVersion.id,
+    }),
+  );
+
+  assert.equal(updated.currentVersionId, branchVersion.id);
+  assert.equal(updated.activeVersionId, root.id);
+  assert.equal(updated.versions.find((version) => version.id === branchVersion.id)?.isCurrent, true);
+  assert.equal(updated.versions.find((version) => version.id === root.id)?.isCurrent, false);
 });
 
 test('duplicate accepted version operations do not duplicate version nodes', () => {
@@ -250,6 +526,7 @@ test('duplicate accepted version operations do not duplicate version nodes', () 
   const createOp = makeOperation('VERSION_BRANCH_CREATED', 2, {
     versionId: branchVersion.id,
     parentVersionId: root.id,
+    branchMode: 'fork',
     branchName: branchVersion.branchName,
     label: branchVersion.label,
     createdAt: branchVersion.createdAt,
@@ -290,6 +567,7 @@ test('track versions remain attached when the version is created before the trac
   const versionCreated = makeOperation('VERSION_BRANCH_CREATED', 2, {
     versionId: branchVersion.id,
     parentVersionId: root.id,
+    branchMode: 'continue',
     branchName: branchVersion.branchName,
     label: branchVersion.label,
     createdAt: branchVersion.createdAt,
@@ -319,6 +597,70 @@ test('track versions remain attached when the version is created before the trac
   assert.equal(version?.tracks.length, 1);
   assert.equal(version?.tracks[0]?.trackVersionId, track.trackVersionId);
   assert.equal(applied.currentVersionId, branchVersion.id);
+});
+
+test('TRACK_VERSION_CREATED replaces the copied track entry when it targets an existing trackId', () => {
+  const root = makeVersion('version-root', {
+    isCurrent: true,
+    tracks: [
+      makeTrack('track-version-root', {
+        trackId: 'track-1',
+        trackName: 'Track 1',
+      }),
+    ],
+  });
+  const initial = createLocalProjectStateFromBootstrap(makeBootstrap([root], root.id));
+
+  const branchVersion = makeVersion('version-branch', {
+    label: 'Branch label',
+    name: 'Branch label',
+    branchName: 'Branch label',
+    parentId: root.id,
+    parentVersionId: root.id,
+    createdAt: '2025-01-02T00:00:00.000Z',
+    isCurrent: true,
+    operationSeq: 2,
+    tracks: [
+      makeTrack('track-version-root-clone', {
+        trackId: 'track-1',
+        trackName: 'Track 1',
+      }),
+    ],
+  });
+
+  const versionCreated = makeOperation('VERSION_BRANCH_CREATED', 2, {
+    versionId: branchVersion.id,
+    parentVersionId: root.id,
+    branchMode: 'continue',
+    branchName: branchVersion.branchName,
+    label: branchVersion.label,
+    createdAt: branchVersion.createdAt,
+    createdBy: 'user-b',
+    operationSummary: 'Added audio track',
+    version: branchVersion,
+    sourceVersionId: root.id,
+  });
+
+  const track = makeTrack('track-version-new', {
+    trackId: 'track-1',
+    trackName: 'Track 1',
+  });
+
+  const trackCreated = makeOperation('TRACK_VERSION_CREATED', 3, {
+    versionId: branchVersion.id,
+    trackId: track.trackId,
+    trackVersionId: track.trackVersionId,
+    operationSummary: 'Added audio track',
+    track,
+  });
+
+  const applied = applyAcceptedProjectOperations(initial, [versionCreated, trackCreated]);
+  const version = applied.versions.find((candidate) => candidate.id === branchVersion.id);
+
+  assert.ok(version);
+  assert.equal(version?.tracks.length, 1);
+  assert.equal(version?.tracks[0]?.trackId, 'track-1');
+  assert.equal(version?.tracks[0]?.trackVersionId, track.trackVersionId);
 });
 
 test('later VERSION_BRANCH_CREATED replay preserves an already attached track', () => {
@@ -353,6 +695,7 @@ test('later VERSION_BRANCH_CREATED replay preserves an already attached track', 
   const versionCreated = makeOperation('VERSION_BRANCH_CREATED', 3, {
     versionId: branchVersion.id,
     parentVersionId: root.id,
+    branchMode: 'continue',
     branchName: branchVersion.branchName,
     label: branchVersion.label,
     createdAt: branchVersion.createdAt,
@@ -362,7 +705,7 @@ test('later VERSION_BRANCH_CREATED replay preserves an already attached track', 
     sourceVersionId: root.id,
   });
 
-  const applied = applyAcceptedProjectOperations(initial, [trackCreated, versionCreated]);
+  const applied = applyAcceptedProjectOperations(initial, [versionCreated, trackCreated]);
   const version = applied.versions.find((candidate) => candidate.id === branchVersion.id);
 
   assert.ok(version);
@@ -370,338 +713,301 @@ test('later VERSION_BRANCH_CREATED replay preserves an already attached track', 
   assert.equal(version?.tracks[0]?.trackVersionId, track.trackVersionId);
 });
 
-test('TAKE_ADDED upserts a durable take without changing version state', () => {
-  const root = makeVersion('version-root', {
-    isCurrent: true,
-    tracks: [
-      makeTrack('track-version-1', {
-        trackId: 'track-1',
-        trackName: 'Track 1',
-      }),
-    ],
-  });
+test('TRACK_VERSION_CREATED preserves the recorded segment on the track version', () => {
+  const root = makeVersion('version-root', { isCurrent: true });
   const initial = createLocalProjectStateFromBootstrap(makeBootstrap([root], root.id));
-  const existingTake = makeTake('take-existing', 'track-1', {
-    name: 'Existing take',
-    position: 0,
-  });
-  const stateWithTakes = {
-    ...initial,
-    recordingTakesByTrackId: {
-      'track-1': [existingTake],
-    },
-  };
 
-  const takeAdded = makeOperation('TAKE_ADDED', 2, {
-    trackId: 'track-1',
-    takeId: 'take-new',
-    assetId: 'asset-1',
-    storageKey: '/assets/new.wav',
-    name: 'New take',
-    trackVersionId: null,
-    startOffsetMs: 250,
-    durationMs: 1750,
+  const recordedSegment: TrackTimelineSegment = {
+    id: 'segment-recorded',
+    trackVersionId: 'track-version-recorded',
     sourceStartMs: 0,
     sourceEndMs: 1750,
     timelineStartMs: 250,
     timelineEndMs: 2000,
+    durationMs: 1750,
+    startMs: 0,
+    endMs: 1750,
     gainDb: 0,
     fadeInMs: 0,
     fadeOutMs: 0,
     isMuted: false,
-    position: 1,
-    recordedTempoBpm: 120,
-    sourceTempoBpm: 120,
-    createdAt: '2025-01-02T00:00:00.000Z',
-  });
-
-  const applied = applyAcceptedProjectOperation(stateWithTakes, takeAdded);
-  const takes = applied.recordingTakesByTrackId['track-1'] ?? [];
-
-  assert.equal(applied.currentVersionId, root.id);
-  assert.equal(takes.length, 2);
-  assert.equal(takes[0]?.id, existingTake.id);
-  assert.equal(takes[1]?.id, 'take-new');
-  assert.equal(applied.operationHistory.length, 1);
-  assert.equal(applied.operationHistory[0]?.summary, 'Added recording to Track 1');
-
-  const appliedTwice = applyAcceptedProjectOperation(applied, takeAdded);
-  assert.equal(appliedTwice.recordingTakesByTrackId['track-1']?.length, 2);
-  assert.equal(appliedTwice.recordingTakesByTrackId['track-1']?.find((take) => take.id === 'take-new')?.storageKey, '/assets/new.wav');
-  assert.equal(appliedTwice.operationHistory.length, 1);
-});
-
-test('TAKE_ADDED merges same-id optimistic take state instead of duplicating it', () => {
-  const root = makeVersion('version-root', { isCurrent: true });
-  const initial = createLocalProjectStateFromBootstrap(makeBootstrap([root], root.id));
-  const optimisticTake = makeTake('take-shared', 'track-1', {
-    status: 'uploading',
-    syncStatus: 'uploading',
-    previewUrl: 'blob:preview',
     position: 0,
-  });
-  const stateWithOptimistic = {
-    ...initial,
-    recordingTakesByTrackId: {
-      'track-1': [optimisticTake],
-    },
+    isImplicit: false,
   };
-
-  const takeAdded = makeOperation('TAKE_ADDED', 2, {
-    trackId: 'track-1',
-    takeId: 'take-shared',
-    assetId: 'asset-2',
-    storageKey: '/assets/shared.wav',
-    name: 'Shared take',
-    trackVersionId: null,
-    startOffsetMs: 0,
-    durationMs: 1000,
-    sourceStartMs: 0,
-    sourceEndMs: 1000,
-    timelineStartMs: 0,
-    timelineEndMs: 1000,
-    gainDb: 0,
-    fadeInMs: 0,
-    fadeOutMs: 0,
-    isMuted: false,
-    position: 0,
-    recordedTempoBpm: 120,
-    sourceTempoBpm: 120,
-    createdAt: '2025-01-02T00:00:00.000Z',
+  const recordedTrack = makeTrack('track-version-recorded', {
+    trackId: 'track-recorded',
+    trackName: 'Recorded track',
+    segments: [recordedSegment],
   });
 
-  const applied = applyAcceptedProjectOperation(stateWithOptimistic, takeAdded);
-  const take = applied.recordingTakesByTrackId['track-1']?.find((entry) => entry.id === 'take-shared');
+  const trackCreated = makeOperation('TRACK_VERSION_CREATED', 2, {
+    versionId: root.id,
+    trackId: recordedTrack.trackId,
+    trackVersionId: recordedTrack.trackVersionId,
+    operationSummary: 'Added recording',
+    track: recordedTrack,
+  });
 
-  assert.equal(applied.recordingTakesByTrackId['track-1']?.length, 1);
-  assert.ok(take);
-  assert.equal(take?.storageKey, '/assets/shared.wav');
-  assert.equal(take?.status, 'complete');
-  assert.equal(take?.syncStatus, 'complete');
-  assert.equal(take?.previewUrl, null);
+  const applied = applyAcceptedProjectOperation(initial, trackCreated);
+  const version = applied.versions.find((candidate) => candidate.id === root.id);
+  const createdTrack = version?.tracks.find((candidate) => candidate.trackVersionId === recordedTrack.trackVersionId);
+
+  assert.ok(createdTrack);
+  assert.equal(createdTrack?.segments.length, 1);
+  assert.equal(createdTrack?.segments[0]?.id, recordedSegment.id);
+  assert.equal(createdTrack?.segments[0]?.timelineStartMs, recordedSegment.timelineStartMs);
+  assert.equal(createdTrack?.segments[0]?.sourceEndMs, recordedSegment.sourceEndMs);
 });
 
-test('TAKE_DELETED removes only the targeted take and is idempotent', () => {
+test('TRACK_OFFSET_UPDATED updates the track placement in place', () => {
   const root = makeVersion('version-root', {
     isCurrent: true,
     tracks: [
       makeTrack('track-version-1', {
         trackId: 'track-1',
         trackName: 'Track 1',
+        startOffsetMs: 0,
       }),
     ],
   });
   const initial = createLocalProjectStateFromBootstrap(makeBootstrap([root], root.id));
-  const keepTake = makeTake('take-keep', 'track-1', { position: 0 });
-  const deleteTake = makeTake('take-delete', 'track-1', { position: 1 });
-  const otherTrackTake = makeTake('take-other', 'track-2', { position: 0 });
-  const stateWithTakes = {
-    ...initial,
-    recordingTakesByTrackId: {
-      'track-1': [keepTake, deleteTake],
-      'track-2': [otherTrackTake],
-    },
-  };
-
-  const deleted = makeOperation('TAKE_DELETED', 2, {
-    trackId: 'track-1',
-    takeId: 'take-delete',
-    deletedAt: '2025-01-02T00:00:00.000Z',
-    deletedBy: 'user-b',
-    operationSummary: 'Removed recording from Track 1',
+  const update = makeOperation('TRACK_OFFSET_UPDATED', 2, {
+    trackVersionId: 'track-version-1',
+    startOffsetMs: 2450,
   });
 
-  const applied = applyAcceptedProjectOperation(stateWithTakes, deleted);
-  assert.equal(applied.currentVersionId, root.id);
-  assert.equal(applied.recordingTakesByTrackId['track-1']?.length, 1);
-  assert.equal(applied.recordingTakesByTrackId['track-1']?.[0]?.id, keepTake.id);
-  assert.equal(applied.recordingTakesByTrackId['track-2']?.length, 1);
-  assert.equal(applied.recordingTakesByTrackId['track-2']?.[0]?.id, otherTrackTake.id);
-  assert.equal(applied.operationHistory.length, 1);
-  assert.equal(applied.operationHistory[0]?.summary, 'Deleted recording from Track 1');
+  const applied = applyAcceptedProjectOperation(initial, update);
+  const updatedTrack = applied.versions[0]?.tracks[0];
 
-  const appliedTwice = applyAcceptedProjectOperation(applied, deleted);
-  assert.equal(appliedTwice.recordingTakesByTrackId['track-1']?.length, 1);
-  assert.equal(appliedTwice.recordingTakesByTrackId['track-1']?.[0]?.id, keepTake.id);
-  assert.equal(appliedTwice.operationHistory.length, 1);
+  assert.ok(updatedTrack);
+  assert.equal(updatedTrack?.trackVersionId, 'track-version-1');
+  assert.equal(updatedTrack?.startOffsetMs, 2450);
+  assert.equal(applied.versions.length, 1);
+  assert.equal(applied.operationHistory.length, 0);
+
+  const appliedTwice = applyAcceptedProjectOperation(applied, update);
+  assert.equal(appliedTwice.versions[0]?.tracks[0]?.startOffsetMs, 2450);
+  assert.equal(appliedTwice.operationHistory.length, 0);
 });
 
-test('TAKE_RESTORED restores a deleted take without duplicating it', () => {
+test('SEGMENT_MOVED within the same track persists the exact timeline placement', () => {
   const root = makeVersion('version-root', {
     isCurrent: true,
     tracks: [
       makeTrack('track-version-1', {
         trackId: 'track-1',
         trackName: 'Track 1',
+        segments: [
+          {
+            id: 'segment-1',
+            trackVersionId: 'track-version-1',
+            sourceStartMs: 100,
+            sourceEndMs: 900,
+            timelineStartMs: 1200,
+            timelineEndMs: 2000,
+            durationMs: 800,
+            startMs: 100,
+            endMs: 900,
+            gainDb: 0,
+            fadeInMs: 0,
+            fadeOutMs: 0,
+            isMuted: false,
+            position: 0,
+            isImplicit: false,
+          },
+        ],
       }),
     ],
   });
   const initial = createLocalProjectStateFromBootstrap(makeBootstrap([root], root.id));
-  const deletedTake = makeTake('take-restore', 'track-1', { position: 0 });
-  const stateWithoutTake = {
-    ...initial,
-    recordingTakesByTrackId: {
-      'track-1': [],
-    },
-  };
-
-  const restored = makeOperation('TAKE_RESTORED', 3, {
-    trackId: 'track-1',
-    takeId: deletedTake.id,
-    assetId: 'asset-restore',
-    storageKey: deletedTake.storageKey,
-    name: deletedTake.name,
-    trackVersionId: deletedTake.trackVersionId,
-    startOffsetMs: deletedTake.startOffsetMs,
-    durationMs: deletedTake.durationMs,
-    sourceStartMs: deletedTake.sourceStartMs,
-    sourceEndMs: deletedTake.sourceEndMs,
-    timelineStartMs: deletedTake.timelineStartMs,
-    timelineEndMs: deletedTake.timelineEndMs,
-    gainDb: deletedTake.gainDb,
-    fadeInMs: deletedTake.fadeInMs,
-    fadeOutMs: deletedTake.fadeOutMs,
-    isMuted: deletedTake.isMuted,
-    position: deletedTake.position,
-    recordedTempoBpm: deletedTake.recordedTempoBpm,
-    sourceTempoBpm: deletedTake.sourceTempoBpm,
-    createdAt: deletedTake.createdAt,
-    restoredAt: '2025-01-03T00:00:00.000Z',
-    restoredBy: 'user-c',
-    operationSummary: 'Restored recording',
+  const move = makeOperation('SEGMENT_MOVED', 2, {
+    segmentId: 'segment-1',
+    fromTrackVersionId: 'track-version-1',
+    toTrackVersionId: 'track-version-1',
+    fromTimelineStartMs: 1200,
+    fromTimelineEndMs: 2000,
+    toTimelineStartMs: 2450,
+    toTimelineEndMs: 3250,
   });
 
-  const applied = applyAcceptedProjectOperation(stateWithoutTake, restored);
-  const takes = applied.recordingTakesByTrackId['track-1'] ?? [];
+  const applied = applyAcceptedProjectOperation(initial, move);
+  const segment = applied.versions[0]?.tracks[0]?.segments[0];
 
-  assert.equal(applied.currentVersionId, root.id);
-  assert.equal(takes.length, 1);
-  assert.equal(takes[0]?.id, deletedTake.id);
+  assert.ok(segment);
+  assert.equal(segment?.trackVersionId, 'track-version-1');
+  assert.equal(segment?.timelineStartMs, 2450);
+  assert.equal(segment?.timelineEndMs, 3250);
+  assert.equal(segment?.startMs, 100);
+  assert.equal(segment?.endMs, 900);
   assert.equal(applied.operationHistory.length, 1);
-  assert.equal(applied.operationHistory[0]?.summary, 'Restored recording on Track 1');
 
-  const appliedTwice = applyAcceptedProjectOperation(applied, restored);
-  assert.equal(appliedTwice.recordingTakesByTrackId['track-1']?.length, 1);
-  assert.equal(appliedTwice.recordingTakesByTrackId['track-1']?.[0]?.id, deletedTake.id);
+  const appliedTwice = applyAcceptedProjectOperation(applied, move);
+  const movedAgain = appliedTwice.versions[0]?.tracks[0]?.segments[0];
+  assert.ok(movedAgain);
+  assert.equal(movedAgain?.timelineStartMs, 2450);
+  assert.equal(movedAgain?.timelineEndMs, 3250);
   assert.equal(appliedTwice.operationHistory.length, 1);
 });
 
-test('TAKE_ADDED then TAKE_DELETED then TAKE_RESTORED leaves the take present', () => {
+test('SEGMENT_MOVED across tracks rehomes the segment without changing its source audio region', () => {
   const root = makeVersion('version-root', {
     isCurrent: true,
     tracks: [
-      makeTrack('track-version-1', {
-        trackId: 'track-1',
-        trackName: 'Track 1',
+      makeTrack('track-version-a', {
+        trackId: 'track-a',
+        trackName: 'Track A',
+        segments: [
+          {
+            id: 'segment-1',
+            trackVersionId: 'track-version-a',
+            sourceStartMs: 100,
+            sourceEndMs: 900,
+            timelineStartMs: 1200,
+            timelineEndMs: 2000,
+            durationMs: 800,
+            startMs: 100,
+            endMs: 900,
+            gainDb: 0,
+            fadeInMs: 0,
+            fadeOutMs: 0,
+            isMuted: false,
+            position: 0,
+            isImplicit: false,
+          },
+          {
+            id: 'segment-2',
+            trackVersionId: 'track-version-a',
+            sourceStartMs: 900,
+            sourceEndMs: 1600,
+            timelineStartMs: 2050,
+            timelineEndMs: 2750,
+            durationMs: 700,
+            startMs: 900,
+            endMs: 1600,
+            gainDb: 0,
+            fadeInMs: 0,
+            fadeOutMs: 0,
+            isMuted: false,
+            position: 1,
+            isImplicit: false,
+          },
+        ],
+      }),
+      makeTrack('track-version-b', {
+        trackId: 'track-b',
+        trackName: 'Track B',
+        segments: [],
       }),
     ],
   });
   const initial = createLocalProjectStateFromBootstrap(makeBootstrap([root], root.id));
-  const takeAdded = makeOperation('TAKE_ADDED', 2, {
-    trackId: 'track-1',
-    takeId: 'take-flow',
-    assetId: 'asset-flow',
-    storageKey: '/assets/flow.wav',
-    name: 'Flow take',
-    trackVersionId: null,
-    startOffsetMs: 0,
-    durationMs: 1000,
-    sourceStartMs: 0,
-    sourceEndMs: 1000,
-    timelineStartMs: 0,
-    timelineEndMs: 1000,
-    gainDb: 0,
-    fadeInMs: 0,
-    fadeOutMs: 0,
-    isMuted: false,
-    position: 0,
-    recordedTempoBpm: 120,
-    sourceTempoBpm: 120,
-    createdAt: '2025-01-02T00:00:00.000Z',
-  });
-  const takeDeleted = makeOperation('TAKE_DELETED', 3, {
-    trackId: 'track-1',
-    takeId: 'take-flow',
-    deletedAt: '2025-01-03T00:00:00.000Z',
-    deletedBy: 'user-b',
-    operationSummary: 'Removed recording from Track 1',
-  });
-  const takeRestored = makeOperation('TAKE_RESTORED', 4, {
-    trackId: 'track-1',
-    takeId: 'take-flow',
-    assetId: 'asset-flow',
-    storageKey: '/assets/flow.wav',
-    name: 'Flow take',
-    trackVersionId: null,
-    startOffsetMs: 0,
-    durationMs: 1000,
-    sourceStartMs: 0,
-    sourceEndMs: 1000,
-    timelineStartMs: 0,
-    timelineEndMs: 1000,
-    gainDb: 0,
-    fadeInMs: 0,
-    fadeOutMs: 0,
-    isMuted: false,
-    position: 0,
-    recordedTempoBpm: 120,
-    sourceTempoBpm: 120,
-    createdAt: '2025-01-02T00:00:00.000Z',
-    restoredAt: '2025-01-03T00:00:00.000Z',
-    restoredBy: 'user-b',
-    operationSummary: 'Restored recording',
+  const move = makeOperation('SEGMENT_MOVED', 2, {
+    segmentId: 'segment-1',
+    fromTrackVersionId: 'track-version-a',
+    toTrackVersionId: 'track-version-b',
+    fromTimelineStartMs: 1200,
+    fromTimelineEndMs: 2000,
+    toTimelineStartMs: 3500,
+    toTimelineEndMs: 4300,
   });
 
-  const applied = applyAcceptedProjectOperations(initial, [takeAdded, takeDeleted, takeRestored]);
-  const takes = applied.recordingTakesByTrackId['track-1'] ?? [];
+  const applied = applyAcceptedProjectOperation(initial, move);
+  const sourceTrack = applied.versions[0]?.tracks.find((track) => track.trackVersionId === 'track-version-a');
+  const targetTrack = applied.versions[0]?.tracks.find((track) => track.trackVersionId === 'track-version-b');
+  const movedSegment = targetTrack?.segments.find((segment) => segment.id === 'segment-1');
 
-  assert.equal(takes.length, 1);
-  assert.equal(takes[0]?.id, 'take-flow');
+  assert.ok(sourceTrack);
+  assert.ok(targetTrack);
+  assert.equal(sourceTrack?.segments.some((segment) => segment.id === 'segment-1'), false);
+  assert.equal(sourceTrack?.segments[0]?.id, 'segment-2');
+  assert.equal(sourceTrack?.segments[0]?.position, 0);
+  assert.ok(movedSegment);
+  assert.equal(movedSegment?.trackVersionId, 'track-version-b');
+  assert.equal(movedSegment?.timelineStartMs, 3500);
+  assert.equal(movedSegment?.timelineEndMs, 4300);
+  assert.equal(movedSegment?.startMs, 100);
+  assert.equal(movedSegment?.endMs, 900);
+  assert.equal(movedSegment?.position, 0);
+  assert.equal(applied.operationHistory.length, 1);
+
+  const appliedTwice = applyAcceptedProjectOperation(applied, move);
+  const movedAgain = appliedTwice.versions[0]?.tracks
+    .find((track) => track.trackVersionId === 'track-version-b')
+    ?.segments.find((segment) => segment.id === 'segment-1');
+  assert.ok(movedAgain);
+  assert.equal(movedAgain?.trackVersionId, 'track-version-b');
+  assert.equal(movedAgain?.timelineStartMs, 3500);
+  assert.equal(appliedTwice.operationHistory.length, 1);
 });
 
-test('createLocalProjectStateFromBootstrap reconstructs durable takes into local state', () => {
-  const root = makeVersion('version-root', { isCurrent: true });
-  const bootstrap = makeBootstrap([root], root.id);
-  bootstrap.projectState = {
-    versions: [root],
-    currentVersionId: root.id,
-    comments: [],
-    annotations: [],
-    tempoMetadataByTrackVersionId: {},
-    recordingTakesByTrackId: {
-      'track-1': [
-        {
-          id: 'take-1',
-          trackId: 'track-1',
-          trackVersionId: null,
-          name: 'Recovered take',
-          startOffsetMs: 120,
-          durationMs: 980,
-          sourceStartMs: 0,
-          sourceEndMs: 980,
-          timelineStartMs: 120,
-          timelineEndMs: 1100,
-          gainDb: 0,
-          fadeInMs: 0,
-          fadeOutMs: 0,
-          isMuted: false,
-          position: 0,
-          storageKey: '/assets/take-1.wav',
-          assetId: 'asset-1',
-          recordedTempoBpm: 120,
-          sourceTempoBpm: 120,
-          createdAt: '2025-01-02T00:00:00.000Z',
-        },
-      ],
-    },
-  };
+test('SEGMENT_MOVED optimistic replay and accepted operation do not duplicate the clip', () => {
+  const root = makeVersion('version-root', {
+    isCurrent: true,
+    tracks: [
+      makeTrack('track-version-a', {
+        trackId: 'track-a',
+        trackName: 'Track A',
+        segments: [
+          {
+            id: 'segment-1',
+            trackVersionId: 'track-version-a',
+            sourceStartMs: 100,
+            sourceEndMs: 900,
+            timelineStartMs: 1200,
+            timelineEndMs: 2000,
+            durationMs: 800,
+            startMs: 100,
+            endMs: 900,
+            gainDb: 0,
+            fadeInMs: 0,
+            fadeOutMs: 0,
+            isMuted: false,
+            position: 0,
+            isImplicit: false,
+          },
+        ],
+      }),
+      makeTrack('track-version-b', {
+        trackId: 'track-b',
+        trackName: 'Track B',
+        segments: [],
+      }),
+    ],
+  });
+  const initial = createLocalProjectStateFromBootstrap(makeBootstrap([root], root.id));
+  const optimisticMove = makeOperation('SEGMENT_MOVED', 0, {
+    segmentId: 'segment-1',
+    fromTrackVersionId: 'track-version-a',
+    toTrackVersionId: 'track-version-b',
+    fromTimelineStartMs: 1200,
+    fromTimelineEndMs: 2000,
+    toTimelineStartMs: 3500,
+    toTimelineEndMs: 4300,
+  });
+  const optimistic = applyAcceptedProjectOperationWithoutHistory(initial, optimisticMove);
+  const acceptedMove = makeOperation('SEGMENT_MOVED', 2, {
+    segmentId: 'segment-1',
+    fromTrackVersionId: 'track-version-a',
+    toTrackVersionId: 'track-version-b',
+    fromTimelineStartMs: 1200,
+    fromTimelineEndMs: 2000,
+    toTimelineStartMs: 3500,
+    toTimelineEndMs: 4300,
+  });
 
-  const state = createLocalProjectStateFromBootstrap(bootstrap);
-  const take = state.recordingTakesByTrackId['track-1']?.[0];
+  const applied = applyAcceptedProjectOperation(optimistic, acceptedMove);
+  const sourceTrack = applied.versions[0]?.tracks.find((track) => track.trackVersionId === 'track-version-a');
+  const targetTrack = applied.versions[0]?.tracks.find((track) => track.trackVersionId === 'track-version-b');
+  const movedSegment = targetTrack?.segments.find((segment) => segment.id === 'segment-1');
 
-  assert.ok(take);
-  assert.equal(take?.id, 'take-1');
-  assert.equal(take?.status, 'complete');
-  assert.equal(take?.syncStatus, 'complete');
-  assert.equal(take?.previewUrl, null);
+  assert.ok(sourceTrack);
+  assert.ok(targetTrack);
+  assert.equal(sourceTrack?.segments.some((segment) => segment.id === 'segment-1'), false);
+  assert.equal(targetTrack?.segments.filter((segment) => segment.id === 'segment-1').length, 1);
+  assert.ok(movedSegment);
+  assert.equal(movedSegment?.sourceStartMs, 100);
+  assert.equal(movedSegment?.sourceEndMs, 900);
+  assert.equal(movedSegment?.startMs, 100);
+  assert.equal(movedSegment?.endMs, 900);
+  assert.equal(applied.operationHistory.length, 1);
 });

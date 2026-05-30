@@ -39,33 +39,6 @@ export type DawTrack = {
   segments: TrackTimelineSegment[];
 };
 
-export type TrackRecordingTake = {
-  id: string;
-  trackId: string;
-  trackVersionId: string | null;
-  name: string;
-  startOffsetMs: number;
-  durationMs: number;
-  sourceStartMs: number;
-  sourceEndMs: number;
-  timelineStartMs: number;
-  timelineEndMs: number;
-  gainDb: number;
-  fadeInMs: number;
-  fadeOutMs: number;
-  isMuted: boolean;
-  position: number;
-  storageKey: string;
-  assetId: string | null;
-  previewUrl: string | null;
-  recordedTempoBpm: number | null;
-  sourceTempoBpm: number | null;
-  status: 'preview' | 'uploading' | 'complete' | 'error';
-  syncStatus: 'idle' | 'uploading' | 'complete' | 'error';
-  error?: string;
-  createdAt: string;
-};
-
 export type DawVersion = {
   id: string;
   label: string;
@@ -95,11 +68,11 @@ export type TempoMetadataEntry = {
 
 export type ProjectOperationHistoryEntry = {
   operationId: string;
+  operationSeq?: number;
   operationType: DawOperationType;
   versionId: string | null;
   currentVersionId: string | null;
   trackId: string | null;
-  takeId: string | null;
   segmentId: string | null;
   summary: string;
   actorUserId: string;
@@ -109,12 +82,13 @@ export type ProjectOperationHistoryEntry = {
 export type LocalProjectState = {
   versions: DawVersion[];
   currentVersionId: string;
+  activeVersionId?: string | null;
+  isFollowingHead?: boolean;
   versionTreeUpdatedAt?: string | null;
   lastVersionOperationSeq?: number;
   lastSeenOperationSeq?: number;
   comments: DemoComment[];
   annotations: DemoAnnotation[];
   tempoMetadataByTrackVersionId: Record<string, TempoMetadataEntry>;
-  recordingTakesByTrackId: Record<string, TrackRecordingTake[]>;
   operationHistory: ProjectOperationHistoryEntry[];
 };

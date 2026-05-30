@@ -34,7 +34,6 @@ import { AudioPlaybackEngine } from '@/features/daw/engine/playback-engine';
 import {
   buildDawVisualProjection,
   PX_PER_SECOND,
-  type TrackLaneRecordingTakeProjection,
   type WaveformCache,
 } from '@/features/daw/rendering/visual-renderer';
 import { EMPTY_TRACK_MIME_TYPE, isValidSplitTime } from '@/features/daw/utils/segments';
@@ -57,20 +56,27 @@ import {
   type UploadModalState,
   formatTimeMs,
 } from '@/features/daw/state/ui-state';
-import { buildRecordedTakeBounds, type RecordingTakeBounds } from '@/features/daw/utils/recording-bounds';
+import { buildRecordingBounds, type RecordingBounds } from '@/features/daw/utils/recording-bounds';
 import type {
   DawTrack,
   DawVersion,
-  TrackRecordingTake,
+  LocalProjectState,
   TrackTimelineSegment,
 } from '@/features/daw/state/local-project-state';
 import type { TimelineHistoryEntry } from '@/features/daw/state/operation-reducer';
+import {
+  getSegmentDragCommitTimelineStartMs,
+  getTrackDragCommitOffset,
+  type TimelineDragState,
+  updateSegmentDragState,
+  updateTrackDragState,
+} from '@/features/daw/state/timeline-drag';
 import {
   getDisplayedTrackSegments as selectDisplayedTrackSegments,
   getRenderableTrackSegments as selectRenderableTrackSegments,
   getTrackDurationMs as selectTrackDurationMs,
   getTrackStartOffsetMs as selectTrackStartOffsetMs,
-  isTrackAudioOccupied,
+  isBlankTrack,
   groupCommentsByTrackId,
   selectTracks,
   selectVersionById,
@@ -78,6 +84,11 @@ import {
 } from '@/features/daw/state/selectors';
 
 const DEMO_PAGE_TRACK_HEIGHT = TRACK_HEIGHT;
+
+type OperationDebugEntry = {
+  id: string;
+  operationType: DawOperationCommitRequest['operationType'];
+};
 
 function createBlankTrackBytes(sampleRate = 44100, durationMs = 1, channels = 1) {
   const bitsPerSample = 16;
@@ -160,30 +171,6 @@ function getEffectiveTrackMimeType(
     : track.mimeType;
 }
 
-type TimelineDragState =
-  | {
-      kind: 'track';
-      trackVersionId: string;
-      originalStartOffsetMs: number;
-      startX: number;
-    }
-  | {
-      kind: 'segment';
-      trackVersionId: string;
-      segmentId: string;
-      originalTimelineStartMs: number;
-      startX: number;
-    }
-  | {
-      kind: 'recording-take';
-      trackId: string;
-      trackVersionId: string;
-      takeId: string;
-      originalTakes: TrackRecordingTake[];
-      originalTake: TrackRecordingTake;
-      startX: number;
-    };
-
 type SplitHoverState = {
   trackVersionId: string;
   timeMs: number;
@@ -198,6 +185,8 @@ type DemoDawClientProps = {
   demoName: string;
   demoDescription: string | null;
   initialCurrentVersionId: string;
+  initialActiveVersionId: string | null;
+  initialIsFollowingHead: boolean;
   initialVersions: DawVersion[];
 };
 
@@ -256,11 +245,14 @@ export function DemoDawClient({
   demoName,
   demoDescription,
   initialCurrentVersionId,
+  initialActiveVersionId,
+  initialIsFollowingHead,
   initialVersions,
 }: DemoDawClientProps) {
   const router = useRouter();
 
-  const [selectedVersionId, setSelectedVersionId] = useState(initialCurrentVersionId);
+  const [selectedVersionId, setSelectedVersionId] = useState(initialActiveVersionId ?? initialCurrentVersionId);
+  const previousActiveVersionIdRef = useRef(initialActiveVersionId ?? initialCurrentVersionId);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTimeMs, setCurrentTimeMs] = useState(0);
   const [durationByTrackVersionId, setDurationByTrackVersionId] = useState<Record<string, number>>({});
@@ -324,6 +316,7 @@ export function DemoDawClient({
   const [offsetOverrides, setOffsetOverrides] = useState<Record<string, number>>({});
   const [segmentLayoutOverrides, setSegmentLayoutOverrides] = useState<Record<string, TrackTimelineSegment[]>>({});
   const [timelineHistory, setTimelineHistory] = useState<TimelineHistoryEntry[]>([]);
+  const [operationDebugEntries, setOperationDebugEntries] = useState<OperationDebugEntry[]>([]);
   const [dragError, setDragError] = useState<string | null>(null);
   const dragRef = useRef<TimelineDragState | null>(null);
   const [timelineTool, setTimelineTool] = useState<'select' | 'split'>('select');
@@ -332,6 +325,10 @@ export function DemoDawClient({
   const [splitError, setSplitError] = useState<string | null>(null);
 
   const [renameState, setRenameState] = useState<RenameState | null>(null);
+  const [historyProjectState, setHistoryProjectState] = useState<LocalProjectState | null>(null);
+  const [historyOperationSeq, setHistoryOperationSeq] = useState<number | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const clockRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startWallTimeRef = useRef<number>(0);
   const startPlayheadMsRef = useRef<number>(0);
@@ -404,17 +401,23 @@ export function DemoDawClient({
   const playbackEngine = useMemo(() => new AudioPlaybackEngine(), []);
   const projectSyncEngine = useMemo(() => new ProjectSyncEngine(), []);
   const [projectSyncState, setProjectSyncState] = useState(() => projectSyncEngine.getState());
-  const recordingTakesByTrackId = useMemo(
-    () => projectSyncState.projectState?.recordingTakesByTrackId ?? {},
-    [projectSyncState.projectState?.recordingTakesByTrackId],
-  );
   const liveProjectState = projectSyncState.projectState;
   const liveVersions = liveProjectState?.versions ?? initialVersions;
-  const liveCurrentVersionId = liveProjectState?.currentVersionId ?? initialCurrentVersionId;
+  const liveBranchHeadVersionId = liveProjectState?.currentVersionId ?? initialCurrentVersionId;
+  const liveActiveVersionId =
+    liveProjectState?.activeVersionId ?? initialActiveVersionId ?? liveBranchHeadVersionId;
+  const isFollowingHead = liveProjectState?.isFollowingHead ?? initialIsFollowingHead;
+  const displayProjectState = historyProjectState ?? liveProjectState;
+  const displayVersions = displayProjectState?.versions ?? liveVersions;
+  const displayBranchHeadVersionId = displayProjectState?.currentVersionId ?? liveBranchHeadVersionId;
+  const isHistoryViewActive = historyOperationSeq !== null;
+  const isLocalOnlySync = !projectSyncState.isOnline;
+  const localOnlyStatusText =
+    projectSyncState.lastError ?? 'Changes stay in this browser until syncing resumes.';
 
   const selectedVersion = useMemo(
-    () => selectVersionById(liveVersions, selectedVersionId),
-    [liveVersions, selectedVersionId],
+    () => selectVersionById(displayVersions, selectedVersionId),
+    [displayVersions, selectedVersionId],
   );
   const sharedDemoTempoBpm = useMemo(
     () => normalizeTempoBpm(selectedVersion?.tempoBpm, DEFAULT_DEMO_TEMPO_BPM),
@@ -433,6 +436,14 @@ export function DemoDawClient({
     () => selectedTracks.find((track) => track.trackVersionId === selectedTrackVersionId) ?? selectedTracks[0] ?? null,
     [selectedTrackVersionId, selectedTracks],
   );
+  useEffect(() => {
+    console.log('[DemoDawClient] mounted', {
+      projectId,
+      demoId,
+      initialCurrentVersionId,
+      initialActiveVersionId,
+    });
+  }, [demoId, initialActiveVersionId, initialCurrentVersionId, projectId]);
   useEffect(() => {
     if (recordArmedTrackVersionId && selectedTracks.some((track) => track.trackVersionId === recordArmedTrackVersionId)) {
       recordArmInitializedRef.current = true;
@@ -458,7 +469,7 @@ export function DemoDawClient({
     });
   }, [projectSyncEngine]);
 
-  const tempoMetadataByTrackVersionId = projectSyncState.projectState?.tempoMetadataByTrackVersionId;
+  const tempoMetadataByTrackVersionId = displayProjectState?.tempoMetadataByTrackVersionId;
   useEffect(() => {
     setRecordedTempoByTrackVersionId(tempoMetadataByTrackVersionId ?? {});
   }, [tempoMetadataByTrackVersionId]);
@@ -545,6 +556,46 @@ export function DemoDawClient({
   useEffect(() => {
     let cancelled = false;
 
+    async function loadHistoryPoint() {
+      if (historyOperationSeq === null) {
+        setHistoryProjectState(null);
+        setHistoryLoading(false);
+        return;
+      }
+
+      setHistoryLoading(true);
+      setHistoryError(null);
+
+      try {
+        const nextHistoryState = await projectSyncEngine.loadHistoricalProjectState(historyOperationSeq);
+        if (cancelled) return;
+
+        setHistoryProjectState(nextHistoryState);
+        if (nextHistoryState) {
+          setSelectedVersionId((currentSelectedVersionId) =>
+            nextHistoryState.currentVersionId ?? currentSelectedVersionId,
+          );
+        }
+      } catch (error) {
+        if (cancelled) return;
+        setHistoryError(error instanceof Error ? error.message : 'Could not load version history');
+        setHistoryProjectState(null);
+      } finally {
+        if (!cancelled) {
+          setHistoryLoading(false);
+        }
+      }
+    }
+
+    void loadHistoryPoint();
+    return () => {
+      cancelled = true;
+    };
+  }, [historyOperationSeq, projectSyncEngine]);
+
+  useEffect(() => {
+    let cancelled = false;
+
     async function loadPresence() {
       try {
         const response = await fetch(`/api/daw/projects/${projectId}/presence?demoId=${demoId}`);
@@ -607,7 +658,7 @@ export function DemoDawClient({
     };
   }, [sharedDemoTempoBpm, selectedVersion]);
 
-  const comments = projectSyncState.projectState?.comments ?? [];
+  const comments = displayProjectState?.comments ?? [];
 
   const commentsByTrackId = useMemo(() => {
     const grouped = groupCommentsByTrackId(comments);
@@ -772,69 +823,6 @@ export function DemoDawClient({
       projectedGainByTrackVersionId[previewTrackVersionId] = previewGain;
     }
 
-    for (const [trackId, takes] of Object.entries(recordingTakesByTrackId)) {
-      const hostTrack = selectedTracks.find((track) => track.trackId === trackId);
-      if (!hostTrack) continue;
-
-      const hostMuted = mutedTrackVersionIds.has(hostTrack.trackVersionId);
-      const hostSolo = soloTrackVersionIds.has(hostTrack.trackVersionId);
-      const hostGain = gainByTrackVersionId[hostTrack.trackVersionId] ?? 1;
-
-      for (const take of takes) {
-        if (take.status !== 'complete' || !take.storageKey) continue;
-
-        const syntheticTrackVersionId = `recording:${take.id}`;
-        const sourceStartMs = Math.max(0, take.sourceStartMs ?? 0);
-        const sourceEndMs = Math.max(sourceStartMs, take.sourceEndMs ?? sourceStartMs + Math.max(0, take.durationMs));
-        const timelineStartMs = Math.max(0, take.timelineStartMs ?? take.startOffsetMs);
-        const timelineEndMs = Math.max(
-          timelineStartMs,
-          take.timelineEndMs ?? timelineStartMs + Math.max(0, take.durationMs),
-        );
-        const durationMs = Math.max(0, timelineEndMs - timelineStartMs);
-        tracks.push({
-          trackId: `recording:${take.id}`,
-          trackName: take.name || hostTrack.trackName,
-          trackVersionId: syntheticTrackVersionId,
-          storageKey: take.storageKey,
-          mimeType: null,
-          startOffsetMs: timelineStartMs,
-          durationMs,
-          isMuted: hostMuted,
-          segments: [
-            {
-              id: `recording-segment:${take.id}`,
-              trackVersionId: syntheticTrackVersionId,
-              sourceStartMs,
-              sourceEndMs,
-              timelineStartMs,
-              timelineEndMs,
-              durationMs,
-              startMs: sourceStartMs,
-              endMs: sourceEndMs,
-              gainDb: take.gainDb ?? 0,
-              fadeInMs: take.fadeInMs ?? 0,
-              fadeOutMs: take.fadeOutMs ?? 0,
-              isMuted: take.isMuted ?? false,
-              position: take.position,
-              isImplicit: false,
-            },
-          ],
-          recordedTempoBpm:
-            take.recordedTempoBpm ?? hostTrack.recordedTempoBpm ?? sharedDemoTempoBpm,
-          sourceTempoBpm: take.sourceTempoBpm ?? hostTrack.sourceTempoBpm ?? sharedDemoTempoBpm,
-        });
-
-        if (hostMuted) {
-          projectedMutedTrackVersionIds.add(syntheticTrackVersionId);
-        }
-        if (hostSolo) {
-          projectedSoloTrackVersionIds.add(syntheticTrackVersionId);
-        }
-        projectedGainByTrackVersionId[syntheticTrackVersionId] = hostGain;
-      }
-    }
-
     return {
       tracks,
       mutedTrackVersionIds: projectedMutedTrackVersionIds,
@@ -845,7 +833,6 @@ export function DemoDawClient({
     gainByTrackVersionId,
     mutedTrackVersionIds,
     playbackTracks,
-    recordingTakesByTrackId,
     temporaryRecordingTrack,
     selectedTracks,
     sharedDemoTempoBpm,
@@ -876,7 +863,6 @@ export function DemoDawClient({
         offsetOverrides,
         segmentLayoutOverrides,
         temporaryRecordingTrack: visualTemporaryRecordingTrack,
-        recordingTakesByTrackId,
         waveformCache,
         minimumWidthPx: 400,
       }),
@@ -887,7 +873,6 @@ export function DemoDawClient({
       playbackTracks,
       segmentLayoutOverrides,
       splitHover,
-      recordingTakesByTrackId,
       visualTemporaryRecordingTrack,
       waveformCache,
     ],
@@ -895,14 +880,6 @@ export function DemoDawClient({
 
   const totalDurationMs = useMemo(
     () => {
-      const recordingTakeEndsMs = Object.values(recordingTakesByTrackId).flatMap((takes) =>
-        takes.map((take) => take.startOffsetMs + take.durationMs),
-      );
-
-      if (temporaryRecordingTrack) {
-        recordingTakeEndsMs.push(temporaryRecordingTrack.startOffsetMs + temporaryRecordingTrack.durationMs);
-      }
-
       return Math.max(
         selectTotalDurationMs({
           tracks: selectedTracks,
@@ -911,13 +888,11 @@ export function DemoDawClient({
           segmentLayoutOverrides,
           temporaryRecordingTrack: visualTemporaryRecordingTrack,
         }),
-        ...recordingTakeEndsMs,
       );
     },
     [
       durationByTrackVersionId,
       offsetOverrides,
-      recordingTakesByTrackId,
       segmentLayoutOverrides,
       selectedTracks,
       temporaryRecordingTrack,
@@ -991,15 +966,25 @@ export function DemoDawClient({
       initialProjectState: {
         versions: initialVersions,
         currentVersionId: initialCurrentVersionId,
+        activeVersionId: initialActiveVersionId ?? initialCurrentVersionId,
+        isFollowingHead: initialIsFollowingHead,
         versionTreeUpdatedAt: null,
         lastVersionOperationSeq: 0,
         comments: [],
         annotations: [],
         tempoMetadataByTrackVersionId: {},
-        recordingTakesByTrackId: {},
+        operationHistory: [],
       },
     });
-  }, [demoId, initialCurrentVersionId, initialVersions, projectId, projectSyncEngine]);
+  }, [
+    demoId,
+    initialActiveVersionId,
+    initialCurrentVersionId,
+    initialIsFollowingHead,
+    initialVersions,
+    projectId,
+    projectSyncEngine,
+  ]);
 
   useEffect(() => {
     function handleOnline() {
@@ -1294,70 +1279,19 @@ export function DemoDawClient({
     }));
   }
 
-  function getTrackRecordingTakes(trackId: string) {
-    return [...(recordingTakesByTrackId[trackId] ?? [])].sort(
-      (a, b) => (a.position ?? 0) - (b.position ?? 0),
-    );
-  }
-
-  function getTrackRecordingTake(trackId: string, takeId: string) {
-    return recordingTakesByTrackId[trackId]?.find((take) => take.id === takeId) ?? null;
-  }
-
-  function normalizeRecordingTakeOrder(takes: TrackRecordingTake[]) {
-    return takes.map((take, index) => ({
-      ...take,
-      position: index,
-    }));
-  }
-
-  async function replaceTrackRecordingTakes(trackId: string, takes: TrackRecordingTake[]) {
-    await projectSyncEngine.setTrackRecordingTakes(trackId, normalizeRecordingTakeOrder(takes));
-  }
-
-  function buildTakeRestorePayload(take: TrackRecordingTake) {
-    if (!take.assetId) {
-      throw new Error('Cannot restore a take without an assetId');
-    }
-
-    return {
-      trackId: take.trackId,
-      takeId: take.id,
-      assetId: take.assetId,
-      storageKey: take.storageKey,
-      name: take.name,
-      trackVersionId: take.trackVersionId,
-      startOffsetMs: take.startOffsetMs,
-      durationMs: take.durationMs,
-      sourceStartMs: take.sourceStartMs,
-      sourceEndMs: take.sourceEndMs,
-      timelineStartMs: take.timelineStartMs,
-      timelineEndMs: take.timelineEndMs,
-      gainDb: take.gainDb,
-      fadeInMs: take.fadeInMs,
-      fadeOutMs: take.fadeOutMs,
-      isMuted: take.isMuted,
-      position: take.position,
-      recordedTempoBpm: take.recordedTempoBpm,
-      sourceTempoBpm: take.sourceTempoBpm,
-      createdAt: take.createdAt,
-      restoredAt: new Date().toISOString(),
-      restoredBy: currentUserId,
-      operationSummary: 'Restored recording',
-    } satisfies Extract<
-      DawCommandPayload,
-      {
-        trackId: string;
-        takeId: string;
-        restoredAt: string;
-        restoredBy: string;
-        operationSummary: string;
-      }
-    >;
-  }
-
   function pushTimelineHistory(entry: TimelineHistoryEntry) {
     setTimelineHistory((prev) => [...prev, entry]);
+  }
+
+  function pushOperationDebugEntry(operationType: DawOperationCommitRequest['operationType']) {
+    setOperationDebugEntries((prev) => {
+      const nextEntry = {
+        id: crypto.randomUUID(),
+        operationType,
+      };
+
+      return [...prev, nextEntry].slice(-8);
+    });
   }
 
   async function undoLatestTimelineEdit() {
@@ -1391,42 +1325,48 @@ export function DemoDawClient({
         );
         setTrackSegmentLayout(lastEntry.trackVersionId, nextSegments);
         await commitEditingOperation(
-          audioEditingEngine.moveSegment(
-            lastEntry.trackVersionId,
-            lastEntry.segmentId,
-            lastEntry.previousTimelineStartMs,
-          ),
+          audioEditingEngine.moveSegment({
+            segmentId: lastEntry.segmentId,
+            fromTrackVersionId: lastEntry.trackVersionId,
+            toTrackVersionId: lastEntry.trackVersionId,
+            fromTimelineStartMs: lastEntry.previousTimelineStartMs,
+            fromTimelineEndMs:
+              lastEntry.previousTimelineStartMs +
+              (currentSegments.find((segment) => segment.id === lastEntry.segmentId)?.durationMs ?? 0),
+            toTimelineStartMs: lastEntry.previousTimelineStartMs,
+            toTimelineEndMs: lastEntry.previousTimelineStartMs + (currentSegments.find((segment) => segment.id === lastEntry.segmentId)?.durationMs ?? 0),
+          }),
         );
       } else if (lastEntry.kind === 'move-segment-track') {
+        const movedSegment =
+          lastEntry.nextTargetSegments.find((candidate) => candidate.id === lastEntry.segmentId) ??
+          lastEntry.previousSourceSegments.find((candidate) => candidate.id === lastEntry.segmentId) ??
+          null;
+        const sourceSegment =
+          lastEntry.previousSourceSegments.find((candidate) => candidate.id === lastEntry.segmentId) ??
+          null;
         setTrackSegmentLayout(lastEntry.sourceTrackVersionId, lastEntry.previousSourceSegments);
         setTrackSegmentLayout(lastEntry.targetTrackVersionId, lastEntry.previousTargetSegments);
         setSelectedTrackVersionId(lastEntry.previousSelectedTrackVersionId);
         setSelectedSegmentId(lastEntry.previousSelectedSegmentId);
+        if (movedSegment && sourceSegment) {
+          await commitEditingOperation(
+          audioEditingEngine.moveSegment({
+            segmentId: lastEntry.segmentId,
+            fromTrackVersionId: lastEntry.targetTrackVersionId,
+            toTrackVersionId: lastEntry.sourceTrackVersionId,
+            fromTimelineStartMs: movedSegment.timelineStartMs,
+            fromTimelineEndMs: movedSegment.timelineEndMs,
+            toTimelineStartMs: sourceSegment.timelineStartMs,
+            toTimelineEndMs: sourceSegment.timelineEndMs ?? sourceSegment.timelineStartMs + sourceSegment.durationMs,
+          }),
+        );
+        }
       } else if (lastEntry.kind === 'cut') {
         setTrackSegmentLayout(lastEntry.trackVersionId, lastEntry.previousSegments);
         setSelectedSegmentId(lastEntry.previousSelectedSegmentId);
       } else if (lastEntry.kind === 'delete-segment') {
         setTrackSegmentLayout(lastEntry.trackVersionId, lastEntry.previousSegments);
-        setSelectedSegmentId(lastEntry.previousSelectedSegmentId);
-      } else if (lastEntry.kind === 'recording-takes' && lastEntry.deletedTake) {
-        await commitEditingOperation({
-          demoId,
-          operationType: 'TAKE_RESTORED',
-          payload: buildTakeRestorePayload(lastEntry.deletedTake),
-          targetTrackId: lastEntry.deletedTake.trackId,
-          affectedTimeRange: {
-            startMs: lastEntry.deletedTake.timelineStartMs,
-            endMs: lastEntry.deletedTake.timelineEndMs,
-          },
-        });
-        setSelectedTrackVersionId(lastEntry.previousSelectedTrackVersionId);
-        setSelectedSegmentId(lastEntry.deletedTake.id);
-      } else if (lastEntry.kind === 'recording-takes') {
-        await replaceTrackRecordingTakes(lastEntry.trackId, lastEntry.previousTakes);
-        if (lastEntry.targetTrackId && lastEntry.targetPreviousTakes) {
-          await replaceTrackRecordingTakes(lastEntry.targetTrackId, lastEntry.targetPreviousTakes);
-        }
-        setSelectedTrackVersionId(lastEntry.previousSelectedTrackVersionId);
         setSelectedSegmentId(lastEntry.previousSelectedSegmentId);
       }
 
@@ -1445,70 +1385,15 @@ export function DemoDawClient({
 
     const selectedTrack = selectedTracks.find((track) =>
       getRenderableTrackSegments(track).some((segment) => segment.id === selectedSegmentId) ||
-      getTrackRecordingTakes(track.trackId).some((take) => take.id === selectedSegmentId),
+      getDisplayedTrackSegments(track).some((segment) => segment.id === selectedSegmentId),
     );
     if (!selectedTrack) return false;
 
     const renderedSegments = getRenderableTrackSegments(selectedTrack);
     const currentSegments = getDisplayedTrackSegments(selectedTrack);
-    const currentRecordingTakes = getTrackRecordingTakes(selectedTrack.trackId);
     const selectedSegment =
       currentSegments.find((segment) => segment.id === selectedSegmentId) ??
       renderedSegments.find((segment) => segment.id === selectedSegmentId);
-    const selectedRecordingTake = currentRecordingTakes.find((take) => take.id === selectedSegmentId);
-    if (!selectedSegment && !selectedRecordingTake) return false;
-
-    if (selectedRecordingTake) {
-      const selectedRecordingTakeIndex = currentRecordingTakes.findIndex((take) => take.id === selectedRecordingTake.id);
-      const nextRecordingTakes = currentRecordingTakes
-        .filter((take) => take.id !== selectedRecordingTake.id)
-        .map((take, index) => ({ ...take, position: index }));
-      const deletedAt = new Date().toISOString();
-      const operationSummary = `Removed recording from ${selectedTrack.trackName}`;
-      await replaceTrackRecordingTakes(selectedTrack.trackId, nextRecordingTakes);
-      setSelectedSegmentId(
-        nextRecordingTakes[selectedRecordingTakeIndex]?.id ??
-          nextRecordingTakes[selectedRecordingTakeIndex - 1]?.id ??
-          nextRecordingTakes[0]?.id ??
-          null,
-      );
-      try {
-        await commitEditingOperation({
-          demoId,
-          operationType: 'TAKE_DELETED',
-          payload: {
-            trackId: selectedTrack.trackId,
-            takeId: selectedRecordingTake.id,
-            deletedAt,
-            deletedBy: currentUserId,
-            operationSummary,
-          },
-          targetTrackId: selectedTrack.trackId,
-          affectedTimeRange: {
-            startMs: selectedRecordingTake.timelineStartMs,
-            endMs: selectedRecordingTake.timelineEndMs,
-          },
-        });
-        setSplitError(null);
-        setDragError(null);
-        pushTimelineHistory({
-          kind: 'recording-takes',
-          trackId: selectedTrack.trackId,
-          previousTakes: currentRecordingTakes,
-          nextTakes: nextRecordingTakes,
-          previousSelectedTrackVersionId: selectedTrackVersionId,
-          previousSelectedSegmentId: selectedSegmentId,
-          deletedTake: { ...selectedRecordingTake },
-        });
-        return true;
-      } catch (error) {
-        await replaceTrackRecordingTakes(selectedTrack.trackId, currentRecordingTakes);
-        setSelectedSegmentId(selectedSegmentId);
-        setDragError(error instanceof Error ? error.message : 'Could not delete take');
-        return false;
-      }
-    }
-
     if (!selectedSegment) return false;
 
     const nextSegments = currentSegments
@@ -1623,11 +1508,6 @@ export function DemoDawClient({
     void publishPresence('idle');
   }, [playbackEngine, publishPresence, stopMetronomeSchedule]);
 
-  useEffect(() => {
-    setSelectedVersionId(liveCurrentVersionId);
-    stopTransport();
-  }, [liveCurrentVersionId, stopTransport]);
-
   function pauseTransport() {
     if (clockRef.current) {
       clearInterval(clockRef.current);
@@ -1648,6 +1528,63 @@ export function DemoDawClient({
 
     stopTransport();
   }
+
+  useEffect(() => {
+    const previousActiveVersionId = previousActiveVersionIdRef.current;
+    const activeVersionChanged = previousActiveVersionId !== liveActiveVersionId;
+
+    if (activeVersionChanged && isFollowingHead && !isHistoryViewActive) {
+      setSelectedVersionId(liveActiveVersionId);
+    }
+
+    if (activeVersionChanged && !isHistoryViewActive) {
+      stopTransport();
+    }
+
+    previousActiveVersionIdRef.current = liveActiveVersionId;
+  }, [isFollowingHead, isHistoryViewActive, liveActiveVersionId, stopTransport]);
+
+  const selectedCheckoutVersionId = liveVersions.find((version) => version.id === selectedVersionId)?.id ?? null;
+  const jumpToHistoryOperation = useCallback(
+    (operationSeq: number | null) => {
+      stopTransport();
+      if (operationSeq === null) {
+        setHistoryError(null);
+        setHistoryProjectState(null);
+        setHistoryOperationSeq(null);
+        setSelectedVersionId(liveActiveVersionId);
+        return;
+      }
+
+      setHistoryOperationSeq(operationSeq);
+    },
+    [liveActiveVersionId, stopTransport],
+  );
+  const checkoutSelectedVersion = useCallback(() => {
+    const nextVersionId = selectedCheckoutVersionId;
+    if (!nextVersionId) return;
+    stopTransport();
+    void projectSyncEngine.setActiveVersion(nextVersionId, {
+      isFollowingHead: true,
+    });
+  }, [projectSyncEngine, selectedCheckoutVersionId, stopTransport]);
+
+  const createBranchFromSelectedVersion = useCallback(
+    async (sourceVersionId: string, label: string) => {
+      stopTransport();
+      const result = await projectSyncEngine.createVersionBranch({
+        sourceVersionId,
+        label,
+      });
+      return result
+        ? {
+            versionId: result.id,
+            label: result.label,
+          }
+        : null;
+    },
+    [projectSyncEngine, stopTransport],
+  );
 
   function seekAllTracks(timeMs: number) {
     playbackEngine.seek(timeMs);
@@ -1728,6 +1665,9 @@ export function DemoDawClient({
           (payload as Extract<DawCommandPayload, { trackVersionId: string }>).trackVersionId,
         )?.trackId ?? null;
       case 'SEGMENT_MOVED':
+        return findTrackByVersionId(
+          (payload as Extract<DawCommandPayload, { toTrackVersionId: string }>).toTrackVersionId,
+        )?.trackId ?? null;
       case 'SEGMENT_DELETED':
       case 'SEGMENT_TRIMMED':
       case 'SEGMENT_MERGED':
@@ -1735,9 +1675,6 @@ export function DemoDawClient({
         return findTrackByVersionId(
           (payload as Extract<DawCommandPayload, { trackVersionId: string }>).trackVersionId,
         )?.trackId ?? null;
-      case 'TAKE_DELETED':
-      case 'TAKE_RESTORED':
-        return (payload as Extract<DawCommandPayload, { trackId: string }>).trackId;
       case 'VERSION_TIMING_UPDATED':
         return null;
       case 'COMMENT_ADDED':
@@ -1773,9 +1710,6 @@ export function DemoDawClient({
           >;
           return crossfade.leftSegmentId ?? crossfade.rightSegmentId ?? null;
         }
-      case 'TAKE_DELETED':
-      case 'TAKE_RESTORED':
-        return null;
       case 'COMMENT_ADDED':
       case 'COMMENT_UPDATED':
       case 'COMMENT_DELETED':
@@ -1804,30 +1738,27 @@ export function DemoDawClient({
           return { startMs: split.segmentStartMs, endMs: split.segmentEndMs };
         }
       case 'SEGMENT_MOVED': {
-        const moved = payload as Extract<DawCommandPayload, { trackVersionId: string; segmentId: string }>;
-        const segment = findSegmentById(moved.trackVersionId, moved.segmentId);
-        return segment ? { startMs: segment.timelineStartMs, endMs: segment.timelineEndMs } : null;
+        const moved = payload as Extract<
+          DawCommandPayload,
+          {
+            fromTrackVersionId: string;
+            toTrackVersionId: string;
+            segmentId: string;
+            fromTimelineStartMs: number;
+            toTimelineStartMs: number;
+            toTimelineEndMs: number;
+          }
+        >;
+        const durationMs = Math.max(0, moved.toTimelineEndMs - moved.toTimelineStartMs);
+        return {
+          startMs: Math.min(moved.fromTimelineStartMs, moved.toTimelineStartMs),
+          endMs: Math.max(moved.fromTimelineStartMs + durationMs, moved.toTimelineEndMs),
+        };
       }
       case 'SEGMENT_DELETED': {
         const deleted = payload as Extract<DawCommandPayload, { trackVersionId: string; segmentId: string }>;
         const segment = findSegmentById(deleted.trackVersionId, deleted.segmentId);
         return segment ? { startMs: segment.timelineStartMs, endMs: segment.timelineEndMs } : null;
-      }
-      case 'TAKE_DELETED': {
-        const deleted = payload as Extract<DawCommandPayload, { trackId: string; takeId: string }>;
-        const take = getTrackRecordingTake(deleted.trackId, deleted.takeId);
-        return take ? { startMs: take.timelineStartMs, endMs: take.timelineEndMs } : null;
-      }
-      case 'TAKE_RESTORED': {
-        const restored = payload as Extract<
-          DawCommandPayload,
-          { trackId: string; takeId: string; timelineStartMs: number; timelineEndMs: number }
-        >;
-        const take = getTrackRecordingTake(restored.trackId, restored.takeId);
-        if (take) {
-          return { startMs: take.timelineStartMs, endMs: take.timelineEndMs };
-        }
-        return { startMs: restored.timelineStartMs, endMs: restored.timelineEndMs };
       }
       case 'SEGMENT_TRIMMED':
         {
@@ -1888,7 +1819,7 @@ export function DemoDawClient({
       demoId,
       operationType,
       payload,
-      baseSnapshotId: overrides.baseSnapshotId ?? selectedVersionId,
+      baseSnapshotId: overrides.baseSnapshotId ?? projectSyncState.baseSnapshotId ?? null,
       baseOperationSeq: overrides.baseOperationSeq ?? projectSyncState.lastSyncedOperationSeq,
       targetTrackId: overrides.targetTrackId ?? resolveCommitTargetTrackId(operationType, payload),
       targetSegmentId: overrides.targetSegmentId ?? resolveCommitTargetSegmentId(operationType, payload),
@@ -1903,12 +1834,14 @@ export function DemoDawClient({
     operationType: Exclude<DawOperationType, 'ASSET_ADDED'>,
     payload: DawCommandPayload,
   ): Promise<DawProjectOperationRecord> {
+    pushOperationDebugEntry(operationType);
     return projectSyncEngine.commitOperation(buildCommitRequest(operationType, payload));
   }
 
   async function commitEditingOperation(
     request: DawOperationCommitRequest,
   ) {
+    pushOperationDebugEntry(request.operationType);
     return projectSyncEngine.commitOperation(
       buildCommitRequest(request.operationType, request.payload, request),
     );
@@ -2026,104 +1959,6 @@ export function DemoDawClient({
     });
   }
 
-  async function moveRecordingTakeWithinTrack(track: DawTrack, take: TrackRecordingTake, nextTimelineStartMs: number) {
-    const currentTakes = getTrackRecordingTakes(track.trackId);
-    const nextTakes = currentTakes.map((entry) =>
-      entry.id === take.id
-        ? {
-            ...entry,
-            startOffsetMs: nextTimelineStartMs,
-            timelineStartMs: nextTimelineStartMs,
-            timelineEndMs: nextTimelineStartMs + entry.durationMs,
-          }
-        : entry,
-    );
-
-    await replaceTrackRecordingTakes(track.trackId, nextTakes);
-  }
-
-  async function moveRecordingTakeAcrossTracks(
-    sourceTrack: DawTrack,
-    targetTrack: DawTrack,
-    take: TrackRecordingTake,
-    nextTimelineStartMs: number,
-  ) {
-    const sourceTakes = getTrackRecordingTakes(sourceTrack.trackId).filter((entry) => entry.id !== take.id);
-    const targetTakes = getTrackRecordingTakes(targetTrack.trackId).filter((entry) => entry.id !== take.id);
-    const movedTake: TrackRecordingTake = {
-      ...take,
-      trackId: targetTrack.trackId,
-      startOffsetMs: nextTimelineStartMs,
-      timelineStartMs: nextTimelineStartMs,
-      timelineEndMs: nextTimelineStartMs + take.durationMs,
-    };
-
-    await replaceTrackRecordingTakes(sourceTrack.trackId, sourceTakes);
-    await replaceTrackRecordingTakes(targetTrack.trackId, [...targetTakes, movedTake]);
-  }
-
-  async function splitRecordingTakeOnTrack(
-    track: DawTrack,
-    take: TrackRecordingTake,
-    splitTimeWithinSegmentMs: number,
-  ) {
-    const sourceStartMs = Math.max(0, take.sourceStartMs);
-    const sourceEndMs = Math.max(sourceStartMs, take.sourceEndMs);
-    if (!isValidSplitTime({ startMs: sourceStartMs, endMs: sourceEndMs }, splitTimeWithinSegmentMs)) {
-      setSplitError('Split point is too close to the clip boundary');
-      return;
-    }
-
-    const currentTakes = getTrackRecordingTakes(track.trackId);
-    const currentIndex = currentTakes.findIndex((entry) => entry.id === take.id);
-    if (currentIndex < 0) return;
-
-    const leftDurationMs = splitTimeWithinSegmentMs - sourceStartMs;
-    const rightDurationMs = sourceEndMs - splitTimeWithinSegmentMs;
-    const baseTimelineStartMs = take.timelineStartMs;
-
-    const leftTake: TrackRecordingTake = {
-      ...take,
-      durationMs: leftDurationMs,
-      sourceStartMs,
-      sourceEndMs: splitTimeWithinSegmentMs,
-      startOffsetMs: baseTimelineStartMs,
-      timelineStartMs: baseTimelineStartMs,
-      timelineEndMs: baseTimelineStartMs + leftDurationMs,
-    };
-    const rightTake: TrackRecordingTake = {
-      ...take,
-      id: crypto.randomUUID(),
-      durationMs: rightDurationMs,
-      sourceStartMs: splitTimeWithinSegmentMs,
-      sourceEndMs,
-      startOffsetMs: baseTimelineStartMs + leftDurationMs,
-      timelineStartMs: baseTimelineStartMs + leftDurationMs,
-      timelineEndMs: baseTimelineStartMs + leftDurationMs + rightDurationMs,
-      position: take.position + 1,
-    };
-
-    const nextTakes = currentTakes
-      .filter((entry) => entry.id !== take.id)
-      .flatMap((entry) => (entry.position > take.position ? [{ ...entry, position: entry.position + 1 }] : [entry]))
-      .concat([leftTake, rightTake])
-      .sort((a, b) => a.position - b.position)
-      .map((entry, index) => ({ ...entry, position: index }));
-
-    await replaceTrackRecordingTakes(track.trackId, nextTakes);
-    setSelectedSegmentId(leftTake.id);
-    setSplitError(null);
-    setDragError(null);
-    pushTimelineHistory({
-      kind: 'recording-takes',
-      trackId: track.trackId,
-      previousTakes: currentTakes,
-      nextTakes,
-      previousSelectedTrackVersionId: selectedTrackVersionId,
-      previousSelectedSegmentId: selectedSegmentId,
-    });
-  }
-
   function toggleMute(trackVersionId: string) {
     const willMute = !mutedTrackVersionIds.has(trackVersionId);
     playbackEngine.setTrackMuted(trackVersionId, willMute);
@@ -2161,6 +1996,7 @@ export function DemoDawClient({
       kind: 'track',
       trackVersionId: track.trackVersionId,
       originalStartOffsetMs: getTrackStartOffsetMs(track),
+      currentStartOffsetMs: getTrackStartOffsetMs(track),
       startX,
     };
   }
@@ -2172,11 +2008,17 @@ export function DemoDawClient({
       trackVersionId: track.trackVersionId,
       segmentId: segment.id,
       originalTimelineStartMs: segment.timelineStartMs,
+      originalTimelineEndMs: segment.timelineEndMs,
+      currentTimelineStartMs: segment.timelineStartMs,
+      originalSegments: getDisplayedTrackSegments(track),
       startX,
     };
   }
 
   function updateTrackDrag(trackVersionId: string, nextStartOffsetMs: number) {
+    if (dragRef.current?.kind === 'track' && dragRef.current.trackVersionId === trackVersionId) {
+      dragRef.current = updateTrackDragState(dragRef.current, nextStartOffsetMs);
+    }
     setOffsetOverrides((prev) => ({ ...prev, [trackVersionId]: nextStartOffsetMs }));
   }
 
@@ -2193,61 +2035,27 @@ export function DemoDawClient({
           }
         : segment,
     );
+    if (dragRef.current?.kind === 'segment' && dragRef.current.trackVersionId === trackVersionId && dragRef.current.segmentId === segmentId) {
+      dragRef.current = updateSegmentDragState(dragRef.current, nextTimelineStartMs);
+    }
     setTrackSegmentLayout(trackVersionId, nextSegments);
   }
 
-  function moveSegmentAcrossTracksLocally(
-    sourceTrack: DawTrack,
-    targetTrack: DawTrack,
-    segment: TrackTimelineSegment,
-    timelineStartMs: number,
-  ) {
-    const sourceSegments = getDisplayedTrackSegments(sourceTrack);
-    const targetSegments = getDisplayedTrackSegments(targetTrack);
-    const nextSourceSegments = sourceSegments
-      .filter((current) => current.id !== segment.id)
-      .map((current, index) => ({
-        ...current,
-        position: index,
-      }));
-    const nextTargetSegments = [
-      ...targetSegments.filter((current) => current.id !== segment.id),
-      {
-        ...segment,
-        trackVersionId: targetTrack.trackVersionId,
-        timelineStartMs,
-        timelineEndMs: timelineStartMs + segment.durationMs,
-        position: targetSegments.length,
-      },
-    ].map((current, index) => ({
-      ...current,
-      position: index,
-    }));
-
-    setTrackSegmentLayout(sourceTrack.trackVersionId, nextSourceSegments.length > 0 ? nextSourceSegments : []);
-    setTrackSegmentLayout(targetTrack.trackVersionId, nextTargetSegments);
-    setSelectedTrackVersionId(targetTrack.trackVersionId);
-    setSelectedSegmentId(segment.id);
-    setDragError(null);
-    setSplitError(null);
-    pushTimelineHistory({
-      kind: 'move-segment-track',
-      sourceTrackVersionId: sourceTrack.trackVersionId,
-      targetTrackVersionId: targetTrack.trackVersionId,
-      segmentId: segment.id,
-      previousSourceSegments: sourceSegments,
-      previousTargetSegments: targetSegments,
-      nextSourceSegments,
-      nextTargetSegments,
-      previousSelectedTrackVersionId: selectedTrackVersionId,
-      previousSelectedSegmentId: selectedSegmentId,
-    });
+  function getTrackRowFromPoint(clientX: number, clientY: number) {
+    const element = document.elementFromPoint(clientX, clientY);
+    return element?.closest<HTMLElement>('[data-track-version-id]') ?? null;
   }
 
-  function getTrackVersionIdFromPoint(clientX: number, clientY: number) {
-    const element = document.elementFromPoint(clientX, clientY);
-    const trackRow = element?.closest<HTMLElement>('[data-track-version-id]');
-    return trackRow?.dataset.trackVersionId ?? null;
+  function clearSegmentDragPreview(drag: Extract<TimelineDragState, { kind: 'segment' }>) {
+    setSegmentLayoutOverrides((prev) => {
+      if (!Object.prototype.hasOwnProperty.call(prev, drag.trackVersionId)) {
+        return prev;
+      }
+
+      const next = { ...prev };
+      delete next[drag.trackVersionId];
+      return next;
+    });
   }
 
   async function commitTrackDrag(track: DawTrack) {
@@ -2255,7 +2063,7 @@ export function DemoDawClient({
     if (!drag || drag.kind !== 'track' || drag.trackVersionId !== track.trackVersionId) return;
 
     dragRef.current = null;
-    const finalOffset = getTrackStartOffsetMs(track);
+    const finalOffset = getTrackDragCommitOffset(drag);
 
     if (finalOffset === drag.originalStartOffsetMs) return;
 
@@ -2274,46 +2082,94 @@ export function DemoDawClient({
     }
   }
 
-  async function commitSegmentDrag(track: DawTrack) {
+  async function commitSegmentDrag(track: DawTrack, dropTrackVersionId: string) {
+    console.log('[DemoDawClient] commitSegmentDrag', {
+      sourceTrackVersionId: track.trackVersionId,
+      dropTrackVersionId,
+      dragKind: dragRef.current?.kind ?? null,
+      dragTrackVersionId: dragRef.current?.trackVersionId ?? null,
+      dragSegmentId: dragRef.current?.kind === 'segment' ? dragRef.current.segmentId : null,
+    });
     const drag = dragRef.current;
     if (!drag || drag.trackVersionId !== track.trackVersionId || drag.kind !== 'segment') return;
 
+    const durationMs = Math.max(0, drag.originalTimelineEndMs - drag.originalTimelineStartMs);
+    const previewTimelineStartMs = getSegmentDragCommitTimelineStartMs(drag);
+    const previousSelectedTrackVersionId = selectedTrackVersionId;
+    const previousSelectedSegmentId = selectedSegmentId;
+    const previousSourceSegments = drag.originalSegments;
+    const previousVersion =
+      projectSyncEngine.getState().projectState?.versions.find((version) => version.id === selectedVersionId) ?? null;
+    const targetTrack =
+      previousVersion?.tracks.find((candidate) => candidate.trackVersionId === dropTrackVersionId) ??
+      selectedTracks.find((candidate) => candidate.trackVersionId === dropTrackVersionId) ??
+      null;
+    const previousTargetSegments = targetTrack ? getDisplayedTrackSegments(targetTrack) : [];
+    const isCrossTrackMove = dropTrackVersionId !== drag.trackVersionId;
+
     dragRef.current = null;
-    const currentSegments = getDisplayedTrackSegments(track);
-    const currentSegment = currentSegments.find((segment) => segment.id === drag.segmentId);
-    const finalTimelineStartMs = currentSegment?.timelineStartMs ?? drag.originalTimelineStartMs;
+    clearSegmentDragPreview(drag);
+    setSelectedTrackVersionId(dropTrackVersionId);
+    setSelectedSegmentId(drag.segmentId);
 
-    if (finalTimelineStartMs === drag.originalTimelineStartMs) return;
-
-    if (currentSegment?.isImplicit) {
-      try {
-        await commitEditingOperation(audioEditingEngine.moveTrack(track.trackVersionId, finalTimelineStartMs));
-        pushTimelineHistory({
-          kind: 'move-track',
-          trackVersionId: track.trackVersionId,
-          previousStartOffsetMs: drag.originalTimelineStartMs,
-          nextStartOffsetMs: finalTimelineStartMs,
-        });
-      } catch (error) {
-        updateTrackDrag(track.trackVersionId, drag.originalTimelineStartMs);
-        setDragError(error instanceof Error ? error.message : 'Something went wrong saving track position');
-      }
-      return;
-    }
+    if (!isCrossTrackMove && previewTimelineStartMs === drag.originalTimelineStartMs) return;
 
     try {
       await commitEditingOperation(
-        audioEditingEngine.moveSegment(track.trackVersionId, drag.segmentId, finalTimelineStartMs),
+        audioEditingEngine.moveSegment({
+          segmentId: drag.segmentId,
+          fromTrackVersionId: track.trackVersionId,
+          toTrackVersionId: dropTrackVersionId,
+          fromTimelineStartMs: drag.originalTimelineStartMs,
+          fromTimelineEndMs: drag.originalTimelineEndMs,
+          toTimelineStartMs: previewTimelineStartMs,
+          toTimelineEndMs: previewTimelineStartMs + durationMs,
+        }),
       );
-      pushTimelineHistory({
-        kind: 'move-segment',
-        trackVersionId: track.trackVersionId,
-        segmentId: drag.segmentId,
-        previousTimelineStartMs: drag.originalTimelineStartMs,
-        nextTimelineStartMs: finalTimelineStartMs,
-      });
+
+      if (isCrossTrackMove) {
+        const movedSegment = previousSourceSegments.find((candidate) => candidate.id === drag.segmentId) ?? null;
+        if (movedSegment) {
+          const nextSourceSegments = previousSourceSegments
+            .filter((candidate) => candidate.id !== drag.segmentId)
+            .map((candidate, index) => ({ ...candidate, position: index }));
+          const nextTargetSegments = [
+            ...previousTargetSegments.filter((candidate) => candidate.id !== drag.segmentId),
+            {
+              ...movedSegment,
+              trackVersionId: dropTrackVersionId,
+              timelineStartMs: previewTimelineStartMs,
+              timelineEndMs: previewTimelineStartMs + durationMs,
+              position: previousTargetSegments.length,
+            },
+          ].map((candidate, index) => ({ ...candidate, position: index }));
+
+          pushTimelineHistory({
+            kind: 'move-segment-track',
+            sourceTrackVersionId: drag.trackVersionId,
+            targetTrackVersionId: dropTrackVersionId,
+            segmentId: drag.segmentId,
+            previousSourceSegments,
+            previousTargetSegments,
+            nextSourceSegments,
+            nextTargetSegments,
+            previousSelectedTrackVersionId,
+            previousSelectedSegmentId,
+          });
+        }
+      } else {
+        pushTimelineHistory({
+          kind: 'move-segment',
+          trackVersionId: track.trackVersionId,
+          segmentId: drag.segmentId,
+          previousTimelineStartMs: drag.originalTimelineStartMs,
+          nextTimelineStartMs: previewTimelineStartMs,
+        });
+      }
     } catch (error) {
-      updateSegmentDrag(track.trackVersionId, drag.segmentId, drag.originalTimelineStartMs);
+      clearSegmentDragPreview(drag);
+      setSelectedTrackVersionId(previousSelectedTrackVersionId);
+      setSelectedSegmentId(previousSelectedSegmentId);
       setDragError(error instanceof Error ? error.message : 'Something went wrong saving segment position');
     }
   }
@@ -2324,10 +2180,8 @@ export function DemoDawClient({
 
     if (drag.kind === 'track') {
       updateTrackDrag(drag.trackVersionId, drag.originalStartOffsetMs);
-    } else if (drag.kind === 'recording-take') {
-      void replaceTrackRecordingTakes(drag.trackId, drag.originalTakes);
     } else {
-      updateSegmentDrag(drag.trackVersionId, drag.segmentId, drag.originalTimelineStartMs);
+      clearSegmentDragPreview(drag);
     }
 
     dragRef.current = null;
@@ -2437,8 +2291,17 @@ export function DemoDawClient({
     track: DawTrack,
     segment: TrackTimelineSegment,
   ) {
-    if (timelineTool !== 'select') return;
     const drag = dragRef.current;
+    console.log('[DemoDawClient] handleSegmentPointerUp', {
+      trackVersionId: track.trackVersionId,
+      segmentId: segment.id,
+      dragKind: drag?.kind ?? null,
+      dragTrackVersionId: drag?.trackVersionId ?? null,
+      dragSegmentId: drag?.kind === 'segment' ? drag.segmentId : null,
+      timelineTool,
+      pointerId: e.pointerId,
+    });
+    if (timelineTool !== 'select') return;
     if (!drag || drag.trackVersionId !== track.trackVersionId) return;
     e.currentTarget.releasePointerCapture?.(e.pointerId);
 
@@ -2450,151 +2313,24 @@ export function DemoDawClient({
     if (drag.kind !== 'segment') return;
     if (drag.segmentId !== segment.id) return;
 
-    const currentSegments = getDisplayedTrackSegments(track);
-    const currentSegment = currentSegments.find((current) => current.id === drag.segmentId) ?? segment;
-    const finalTimelineStartMs = currentSegment?.timelineStartMs ?? drag.originalTimelineStartMs;
-    const dropTrackVersionId = getTrackVersionIdFromPoint(e.clientX, e.clientY) ?? track.trackVersionId;
+    const dropTrackRow = getTrackRowFromPoint(e.clientX, e.clientY);
+    const dropTrackVersionId = dropTrackRow?.dataset.trackVersionId ?? track.trackVersionId;
 
-    if (dropTrackVersionId !== track.trackVersionId) {
-      const targetTrack = selectedTracks.find((candidate) => candidate.trackVersionId === dropTrackVersionId);
-      if (targetTrack) {
-        moveSegmentAcrossTracksLocally(track, targetTrack, currentSegment, finalTimelineStartMs);
-      }
-      dragRef.current = null;
-      return;
-    }
-
-    await commitSegmentDrag(track);
+    await commitSegmentDrag(track, dropTrackVersionId);
   }
 
   function handleSegmentPointerCancel(track: DawTrack, segment: TrackTimelineSegment) {
     const drag = dragRef.current;
+    console.log('[DemoDawClient] handleSegmentPointerCancel', {
+      trackVersionId: track.trackVersionId,
+      segmentId: segment.id,
+      dragKind: drag?.kind ?? null,
+      dragTrackVersionId: drag?.trackVersionId ?? null,
+      dragSegmentId: drag?.kind === 'segment' ? drag.segmentId : null,
+    });
     if (!drag || drag.trackVersionId !== track.trackVersionId) return;
     if (drag.kind === 'segment' && drag.segmentId !== segment.id) return;
     cancelTimelineDrag();
-  }
-
-  function handleRecordingTakePointerDown(
-    e: React.PointerEvent<HTMLButtonElement>,
-    track: DawTrack,
-    take: TrackLaneRecordingTakeProjection,
-  ) {
-    setSelectedTrackVersionId(track.trackVersionId);
-    if (timelineTool !== 'select') return;
-
-    const rawTake = getTrackRecordingTake(track.trackId, take.id);
-    if (!rawTake) return;
-
-    e.stopPropagation();
-    e.currentTarget.setPointerCapture(e.pointerId);
-    setSelectedSegmentId(take.id);
-    setSplitError(null);
-    setDragError(null);
-    dragRef.current = {
-      kind: 'recording-take',
-      trackId: track.trackId,
-      trackVersionId: track.trackVersionId,
-      takeId: take.id,
-      originalTakes: getTrackRecordingTakes(track.trackId),
-      originalTake: rawTake,
-      startX: e.clientX,
-    };
-  }
-
-  function handleRecordingTakePointerMove(
-    e: React.PointerEvent<HTMLButtonElement>,
-    track: DawTrack,
-    take: TrackLaneRecordingTakeProjection,
-  ) {
-    if (timelineTool !== 'select') return;
-    const drag = dragRef.current;
-    if (!drag || drag.kind !== 'recording-take' || drag.takeId !== take.id) return;
-
-    const deltaX = e.clientX - drag.startX;
-    const deltaMs = (deltaX / PX_PER_SECOND) * 1000;
-    const rawMs = drag.originalTake.startOffsetMs + deltaMs;
-    const snapped = Math.max(0, snapMsToGrid(rawMs, getActiveTiming(), snapResolution));
-    void moveRecordingTakeWithinTrack(track, drag.originalTake, snapped);
-  }
-
-  async function handleRecordingTakePointerUp(
-    e: React.PointerEvent<HTMLButtonElement>,
-    track: DawTrack,
-    take: TrackLaneRecordingTakeProjection,
-  ) {
-    if (timelineTool !== 'select') return;
-    const drag = dragRef.current;
-    if (!drag || drag.kind !== 'recording-take' || drag.takeId !== take.id) return;
-
-    e.currentTarget.releasePointerCapture?.(e.pointerId);
-    dragRef.current = null;
-
-    const currentTakes = getTrackRecordingTakes(track.trackId);
-    const currentTake = currentTakes.find((entry) => entry.id === take.id) ?? drag.originalTake;
-    const dropTrackVersionId = getTrackVersionIdFromPoint(e.clientX, e.clientY) ?? track.trackVersionId;
-    const targetTrack = selectedTracks.find((candidate) => candidate.trackVersionId === dropTrackVersionId);
-    const finalTimelineStartMs = currentTake.timelineStartMs ?? currentTake.startOffsetMs;
-
-    if (targetTrack && targetTrack.trackId !== track.trackId) {
-      const targetPreviousTakes = getTrackRecordingTakes(targetTrack.trackId);
-      await moveRecordingTakeAcrossTracks(track, targetTrack, currentTake, finalTimelineStartMs);
-      pushTimelineHistory({
-        kind: 'recording-takes',
-        trackId: track.trackId,
-        previousTakes: drag.originalTakes,
-        nextTakes: currentTakes.filter((entry) => entry.id !== take.id),
-        previousSelectedTrackVersionId: selectedTrackVersionId,
-        previousSelectedSegmentId: selectedSegmentId,
-        targetTrackId: targetTrack.trackId,
-        targetPreviousTakes,
-        targetNextTakes: getTrackRecordingTakes(targetTrack.trackId),
-      });
-      setSelectedTrackVersionId(targetTrack.trackVersionId);
-      setSelectedSegmentId(currentTake.id);
-      return;
-    }
-
-    const normalizedTakes = normalizeRecordingTakeOrder(currentTakes);
-    await replaceTrackRecordingTakes(track.trackId, normalizedTakes);
-    if (finalTimelineStartMs !== drag.originalTake.startOffsetMs) {
-      pushTimelineHistory({
-        kind: 'recording-takes',
-        trackId: track.trackId,
-        previousTakes: drag.originalTakes,
-        nextTakes: normalizedTakes,
-        previousSelectedTrackVersionId: selectedTrackVersionId,
-        previousSelectedSegmentId: selectedSegmentId,
-      });
-    }
-  }
-
-  function handleRecordingTakePointerCancel(track: DawTrack, take: TrackLaneRecordingTakeProjection) {
-    const drag = dragRef.current;
-    if (!drag || drag.kind !== 'recording-take' || drag.takeId !== take.id) return;
-    void replaceTrackRecordingTakes(track.trackId, drag.originalTakes);
-    dragRef.current = null;
-  }
-
-  async function handleRecordingTakeClick(
-    e: React.MouseEvent<HTMLButtonElement>,
-    track: DawTrack,
-    take: TrackLaneRecordingTakeProjection,
-  ) {
-    if (timelineTool === 'split') {
-      e.stopPropagation();
-      const rawTake = getTrackRecordingTake(track.trackId, take.id);
-      if (!rawTake) return;
-      const clickedTimelineMs = getTimelineTimeFromPointer(e.currentTarget, e.clientX, take.segment.timelineStartMs);
-      const splitTimeWithinSegmentMs =
-        take.segment.sourceStartMs + Math.max(0, clickedTimelineMs - take.segment.timelineStartMs);
-
-      await splitRecordingTakeOnTrack(track, rawTake, splitTimeWithinSegmentMs);
-      return;
-    }
-
-    e.stopPropagation();
-    setSelectedSegmentId(take.id);
-    setSplitError(null);
   }
 
   function handleSplitHoverMove(
@@ -2944,7 +2680,7 @@ export function DemoDawClient({
         durationDecodeError,
       );
     }
-    const recordingBounds = buildRecordedTakeBounds({
+    const recordingBounds = buildRecordingBounds({
       timelineStartMs: recordingSession.timelineStartMs,
       measuredDurationMs,
       fallbackDurationMs: wallClockDurationMs,
@@ -3010,7 +2746,7 @@ export function DemoDawClient({
 
   async function handleSaveRecording(
     recording: TemporaryRecordingTrack | null = temporaryRecordingTrack,
-    bounds: RecordingTakeBounds | null = null,
+    bounds: RecordingBounds | null = null,
   ) {
     const track = recording ?? temporaryRecordingTrack;
     if (!track?.blob || !track.targetTrackId) {
@@ -3037,7 +2773,7 @@ export function DemoDawClient({
 
     const effectiveBounds =
       bounds ??
-      buildRecordedTakeBounds({
+      buildRecordingBounds({
         timelineStartMs: recordingSession.timelineStartMs,
         measuredDurationMs: track.durationMs,
         fallbackDurationMs: track.durationMs,
@@ -3051,75 +2787,14 @@ export function DemoDawClient({
 
     try {
       const armedTrack = selectedTracks.find((candidate) => candidate.trackVersionId === track.targetTrackVersionId);
-      const shouldCreateNewTrack = !isTrackAudioOccupied(armedTrack);
-
-      if (!shouldCreateNewTrack) {
-        const data = await ingestEngine.uploadRecordedClipBlob({
-          demoId,
-          projectId,
-          name: track.name,
-          sourceVersionId: selectedVersionId,
-          trackId: track.targetTrackId,
-          trackVersionId: track.targetTrackVersionId,
-          takeId: track.id,
-          startOffsetMs: effectiveBounds.startOffsetMs,
-          sourceStartMs: effectiveBounds.sourceStartMs,
-          sourceEndMs: effectiveBounds.sourceEndMs,
-          timelineStartMs: effectiveBounds.timelineStartMs,
-          timelineEndMs: effectiveBounds.timelineEndMs,
-          gainDb: 0,
-          fadeInMs: 0,
-          fadeOutMs: 0,
-          isMuted: false,
-          position: getTrackRecordingTakes(track.targetTrackId).length,
-          recordedTempoBpm: track.recordedTempoBpm,
-          sourceTempoBpm: track.sourceTempoBpm,
-          timingChoice: 'uploadUnchanged',
-          blob: track.blob,
-        });
-
-        await projectSyncEngine.upsertTrackRecordingTake(track.targetTrackId, {
-          id: track.id,
-          trackId: track.targetTrackId,
-          trackVersionId: null,
-          name: track.name,
-          startOffsetMs: effectiveBounds.startOffsetMs,
-          durationMs: effectiveBounds.durationMs,
-          sourceStartMs: effectiveBounds.sourceStartMs,
-          sourceEndMs: effectiveBounds.sourceEndMs,
-          timelineStartMs: effectiveBounds.timelineStartMs,
-          timelineEndMs: effectiveBounds.timelineEndMs,
-          gainDb: 0,
-          fadeInMs: 0,
-          fadeOutMs: 0,
-          isMuted: false,
-          position: getTrackRecordingTakes(track.targetTrackId).length,
-          storageKey: `/${data.objectKey}`,
-          assetId: data.assetId,
-          previewUrl: null,
-          recordedTempoBpm: track.recordedTempoBpm,
-          sourceTempoBpm: track.sourceTempoBpm,
-          status: 'complete',
-          syncStatus: 'complete',
-          createdAt: new Date().toISOString(),
-        });
-
-        if (recordingPreviewUrlRef.current) {
-          ingestEngine.revokeObjectUrl(recordingPreviewUrlRef.current);
-          recordingPreviewUrlRef.current = null;
-        }
-
-        recordingSessionRef.current = null;
-        setTemporaryRecordingTrack(null);
-        return;
-      }
+      const shouldReuseArmedTrack = Boolean(armedTrack && isBlankTrack(armedTrack));
 
       const data = await ingestEngine.uploadRecordedBlob({
         demoId,
         projectId,
         name: track.name,
-        sourceVersionId: selectedVersionId,
-        trackId: shouldCreateNewTrack ? undefined : track.targetTrackId,
+        sourceVersionId: liveActiveVersionId,
+        trackId: shouldReuseArmedTrack ? track.targetTrackId : undefined,
         startOffsetMs: effectiveBounds.startOffsetMs,
         recordedTempoBpm: track.recordedTempoBpm,
         sourceTempoBpm: track.sourceTempoBpm,
@@ -3182,7 +2857,7 @@ export function DemoDawClient({
         demoId,
         projectId,
         name,
-        sourceVersionId: selectedVersionId,
+        sourceVersionId: liveActiveVersionId,
         recordedTempoBpm: uploadTempoBpm,
         sourceTempoBpm: uploadTempoBpm,
         timingChoice,
@@ -3202,6 +2877,7 @@ export function DemoDawClient({
       setUploadName('');
       setUploadFile(null);
       setSelectedVersionId(data.demoVersionId);
+      void projectSyncEngine.setActiveVersion(data.demoVersionId, { isFollowingHead: true });
       if ('processingJobIds' in data && data.processingJobIds.length > 0) {
         setProcessingStartedAt(Date.now());
         setProcessingJobIds(data.processingJobIds);
@@ -3230,7 +2906,7 @@ export function DemoDawClient({
           trackVersionId: track.trackVersionId,
           payload: {
             demoId,
-            demoVersionId: selectedVersionId,
+            demoVersionId: liveActiveVersionId,
             trackVersionId: track.trackVersionId,
             updateDemoTiming: false,
           },
@@ -3552,18 +3228,49 @@ export function DemoDawClient({
 
               {toolbarTab === 'tree' ? (
                 <div>
+                  {historyOperationSeq !== null ? (
+                    <div className="mb-3 rounded-lg border border-cyan-400/30 bg-cyan-500/10 px-4 py-3 text-sm text-cyan-50">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <p className="font-semibold">
+                            {historyLoading ? 'Loading history point' : 'Viewing history point'}
+                          </p>
+                          <p className="text-xs text-cyan-100/80">
+                            {historyLoading
+                              ? 'Rewinding the project to the selected activity.'
+                              : `Rewound to operation sequence ${historyOperationSeq}.`}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => jumpToHistoryOperation(null)}
+                          className="rounded-full border border-cyan-300/30 bg-cyan-950/40 px-3 py-1 text-[11px] font-semibold text-cyan-50 transition-colors hover:border-cyan-200/70 hover:bg-cyan-900/60 hover:text-white"
+                        >
+                          Back to latest
+                        </button>
+                      </div>
+                      {historyError ? <p className="mt-2 text-xs text-rose-200">{historyError}</p> : null}
+                    </div>
+                  ) : null}
                   <VersionHistoryTree
                     projectId={projectId}
                     demoId={demoId}
-                    baseOperationSeq={projectSyncState.lastSyncedOperationSeq}
-                    versions={liveVersions}
-                    operationHistory={projectSyncState.projectState?.operationHistory ?? []}
-                    currentVersionId={liveCurrentVersionId}
+                    baseOperationSeq={displayProjectState?.lastVersionOperationSeq ?? projectSyncState.lastSyncedOperationSeq}
+                    versions={displayVersions}
+                    operationHistory={displayProjectState?.operationHistory ?? []}
+                    currentVersionId={displayBranchHeadVersionId}
+                    activeVersionId={liveActiveVersionId}
                     selectedVersionId={selectedVersionId}
+                    selectedHistoryOperationSeq={historyOperationSeq}
+                    isFollowingHead={isFollowingHead}
+                    isHistoryViewActive={isHistoryViewActive}
                     onSelectVersion={(id) => {
                       setSelectedVersionId(id);
                       stopTransport();
                     }}
+                    onCheckoutSelectedVersion={checkoutSelectedVersion}
+                    onSelectHistoryOperation={jumpToHistoryOperation}
+                    onCreateBranch={createBranchFromSelectedVersion}
                   />
                 </div>
               ) : null}
@@ -4001,8 +3708,8 @@ export function DemoDawClient({
                     : null;
                 const isRenaming = renameState?.trackId === track.trackId;
                 const trackComments = commentsByTrackId[track.trackId] ?? [];
-                const isBlankTrack = trackSegments.length === 0 && trackRecording === null;
-                const blankTrackTicks = isBlankTrack ? getTimelineTicks(totalDurationMs, selectedTiming) : [];
+                const trackIsBlank = trackSegments.length === 0 && trackRecording === null;
+                const blankTrackTicks = trackIsBlank ? getTimelineTicks(totalDurationMs, selectedTiming) : [];
 
                 return (
                   <div
@@ -4177,7 +3884,7 @@ export function DemoDawClient({
                         style={{ left: visualProjection.currentTimeLeftPx }}
                       />
 
-                      {isBlankTrack && blankTrackTicks.length > 0 ? (
+                      {trackIsBlank && blankTrackTicks.length > 0 ? (
                         <div
                           className="pointer-events-none absolute left-0 top-0 z-0 overflow-hidden opacity-60"
                           style={{ width: timelineRulerWidthPx, height: '100%' }}
@@ -4209,31 +3916,6 @@ export function DemoDawClient({
                           onNameChange={handleRecordingNameChange}
                         />
                       ) : null}
-
-                      {trackLane?.recordingTakes?.map((take) => {
-                        const isSelected = selectedSegmentId === take.id;
-                        const isDraggingRecordingTake =
-                          dragRef.current?.kind === 'recording-take' && dragRef.current.takeId === take.id;
-
-                        return (
-                          <TrackSegmentClip
-                            key={take.id}
-                            trackVersionId={track.trackVersionId}
-                            segment={take.segment}
-                            storageKey={take.storageKey}
-                            isSelected={isSelected}
-                            isMuted={isMuted}
-                            isDragging={isDraggingRecordingTake}
-                            timelineTool={timelineTool}
-                            currentTimeMs={currentTimeMs}
-                            onPointerDown={(event) => handleRecordingTakePointerDown(event, track, take)}
-                            onPointerMove={(event) => handleRecordingTakePointerMove(event, track, take)}
-                            onPointerUp={(event) => void handleRecordingTakePointerUp(event, track, take)}
-                            onPointerCancel={() => handleRecordingTakePointerCancel(track, take)}
-                            onClick={(event) => void handleRecordingTakeClick(event, track, take)}
-                          />
-                        );
-                      })}
 
                       {trackComments.length > 0 ? (
                         <div className="pointer-events-none absolute inset-x-0 top-0 z-30 h-10 overflow-visible">
@@ -4368,6 +4050,27 @@ export function DemoDawClient({
             </div>
           )}
         </section>
+        <div className="fixed bottom-4 left-4 z-[60] flex max-w-xs flex-col gap-2 pointer-events-none">
+          {isLocalOnlySync ? (
+            <div className="rounded-md border border-amber-500/40 bg-amber-950/90 px-3 py-2 text-[10px] uppercase tracking-[0.18em] text-amber-100 shadow-lg shadow-black/40 backdrop-blur">
+              <p className="text-[9px] text-amber-300">Sync status</p>
+              <div className="mt-1 text-[11px] font-medium tracking-normal text-amber-50">Offline / local-only</div>
+              <p className="mt-1 text-[10px] normal-case tracking-normal text-amber-200/80">{localOnlyStatusText}</p>
+            </div>
+          ) : null}
+          {operationDebugEntries.length > 0 ? (
+            <div className="rounded-md border border-slate-700 bg-slate-950/90 px-3 py-2 text-[10px] uppercase tracking-[0.18em] text-slate-300 shadow-lg shadow-black/40 backdrop-blur">
+              <p className="text-[9px] text-slate-500">Detected operations</p>
+              <div className="mt-2 flex flex-col gap-1 text-[11px] tracking-normal text-slate-100">
+                {operationDebugEntries.slice().reverse().map((entry) => (
+                  <div key={entry.id} className="truncate rounded bg-slate-900/80 px-2 py-1 font-mono">
+                    {entry.operationType}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
       </div>
       </div>
       </div>

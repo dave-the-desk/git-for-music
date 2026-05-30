@@ -343,10 +343,12 @@ export interface SegmentSplitOperationPayload {
 }
 
 export interface SegmentMovedOperationPayload {
-  trackVersionId: string;
   segmentId: string;
+  fromTrackVersionId: string;
+  toTrackVersionId: string;
   fromTimelineStartMs: number;
   toTimelineStartMs: number;
+  toTimelineEndMs: number;
 }
 
 export interface SegmentTrimmedOperationPayload {
@@ -603,4 +605,3 @@ export type RealtimeMessage =
   | RealtimeTransportMessage
   | RealtimeAssetStatusEnvelope
   | RealtimeBootstrapMessage;
-

@@ -21,6 +21,12 @@ const TRACK_VERSION_FIELDS = {
   isDerived: true,
   operationType: true,
   parentTrackVersionId: true,
+  track: {
+    select: {
+      name: true,
+      position: true,
+    },
+  },
   segments: {
     select: {
       id: true,
@@ -52,6 +58,7 @@ const DEMO_VERSION_FIELDS = {
 export type DemoVersionCloneMap = {
   trackVersionIdMap: Map<string, string>;
   segmentIdMap: Map<string, string>;
+  tracks: DawVersionTreeTrackSnapshot[];
 };
 
 export async function cloneTrackVersionsToDemoVersion(
@@ -73,6 +80,7 @@ export async function cloneTrackVersionsToDemoVersion(
 
   const trackVersionIdMap = new Map<string, string>();
   const segmentIdMap = new Map<string, string>();
+  const tracks: DawVersionTreeTrackSnapshot[] = [];
 
   for (const sourceTrackVersion of sourceTrackVersions) {
     const createdTrackVersion = await tx.trackVersion.create({
@@ -94,6 +102,7 @@ export async function cloneTrackVersionsToDemoVersion(
       },
       select: {
         id: true,
+        createdAt: true,
       },
     });
 
@@ -119,11 +128,44 @@ export async function cloneTrackVersionsToDemoVersion(
 
       segmentIdMap.set(segment.id, createdSegment.id);
     }
+
+    tracks.push(
+      serializeCreatedDemoTrackVersionTreeTrack({
+        trackId: sourceTrackVersion.trackId,
+        trackName: sourceTrackVersion.track.name,
+        trackPosition: sourceTrackVersion.track.position,
+        trackVersionId: createdTrackVersion.id,
+        storageKey: sourceTrackVersion.storageKey,
+        mimeType: sourceTrackVersion.mimeType,
+        durationMs: sourceTrackVersion.durationMs,
+        startOffsetMs: sourceTrackVersion.startOffsetMs,
+        createdAt: createdTrackVersion.createdAt,
+        isDerived: sourceTrackVersion.isDerived,
+        operationType: sourceTrackVersion.operationType,
+        parentTrackVersionId: sourceTrackVersion.parentTrackVersionId,
+        segments: sourceTrackVersion.segments.map((segment) => ({
+          id: segmentIdMap.get(segment.id) ?? segment.id,
+          trackVersionId: createdTrackVersion.id,
+          startMs: segment.startMs,
+          endMs: segment.endMs,
+          timelineStartMs: segment.timelineStartMs,
+          timelineEndMs:
+            (segment.timelineStartMs ?? sourceTrackVersion.startOffsetMs + segment.startMs) +
+            Math.max(0, segment.endMs - segment.startMs),
+          gainDb: segment.gainDb,
+          fadeInMs: segment.fadeInMs,
+          fadeOutMs: segment.fadeOutMs,
+          isMuted: segment.isMuted,
+          position: segment.position,
+        })),
+      }),
+    );
   }
 
   return {
     trackVersionIdMap,
     segmentIdMap,
+    tracks,
   };
 }
 
@@ -187,6 +229,7 @@ export async function createDemoVersionWithCopiedTracks(
     return {
       ...version,
       cloneMap,
+      tracks: cloneMap.tracks,
     };
   }
 
@@ -195,7 +238,9 @@ export async function createDemoVersionWithCopiedTracks(
     cloneMap: {
       trackVersionIdMap: new Map<string, string>(),
       segmentIdMap: new Map<string, string>(),
+      tracks: [],
     },
+    tracks: [],
   };
 }
 
@@ -205,6 +250,7 @@ export function serializeCreatedDemoVersionTreeNode(input: {
   description?: string | null;
   parentId?: string | null;
   createdAt: string | Date;
+  branchMode?: 'continue' | 'fork';
   tempoBpm?: number | null;
   timeSignatureNum?: number;
   timeSignatureDen?: number;
@@ -222,6 +268,7 @@ export function serializeCreatedDemoVersionTreeNode(input: {
     createdAt:
       typeof input.createdAt === 'string' ? input.createdAt : input.createdAt.toISOString(),
     isCurrent: input.isCurrent ?? false,
+    branchMode: input.branchMode,
     tempoBpm: input.tempoBpm ?? null,
     timeSignatureNum: input.timeSignatureNum ?? 4,
     timeSignatureDen: input.timeSignatureDen ?? 4,

@@ -25,6 +25,7 @@ model User {
   notifications    Notification[]
   projectOperationLogs ProjectOperationLog[]
   projectSnapshots     ProjectSnapshot[]
+  demoActiveVersions   DemoUserActiveVersion[]
 }
 
 // ─── Group ───────────────────────────────────────────────────────────────────
@@ -102,6 +103,7 @@ model Demo {
   operationLogs ProjectOperationLog[]
   snapshots     ProjectSnapshot[]
   audioAssets   AudioAssetMetadata[]
+  userActiveVersions DemoUserActiveVersion[]
 }
 
 // DemoVersion is the git-like snapshot/branch node.
@@ -123,6 +125,7 @@ model DemoVersion {
   demo   Demo   @relation("DemoVersions", fields: [demoId], references: [id], onDelete: Cascade)
   demoId String
   currentForDemos Demo[] @relation("CurrentDemoVersion")
+  activeVersionStates DemoUserActiveVersion[]
 
   parent   DemoVersion?  @relation("VersionTree", fields: [parentId], references: [id])
   children DemoVersion[] @relation("VersionTree")
@@ -257,6 +260,24 @@ model ProcessingJob {
 }
 
 // ─── Collaboration ───────────────────────────────────────────────────────────
+
+model DemoUserActiveVersion {
+  id String @id @default(cuid())
+
+  demo   Demo   @relation(fields: [demoId], references: [id], onDelete: Cascade)
+  demoId String
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String
+
+  activeVersion   DemoVersion @relation(fields: [activeVersionId], references: [id])
+  activeVersionId String
+
+  isFollowingHead Boolean   @default(true)
+  updatedAt       DateTime  @updatedAt
+
+  @@unique([demoId, userId])
+}
 
 model Comment {
   id        String   @id @default(cuid())

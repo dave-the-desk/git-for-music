@@ -7,8 +7,37 @@ import {
 import type { DawTrack, DawVersion } from './local-project-state';
 import type { TemporaryRecordingTrack } from './ui-state';
 
-export function selectVersionById(versions: DawVersion[], selectedVersionId: string) {
-  return versions.find((version) => version.id === selectedVersionId) ?? versions[0] ?? null;
+export function selectVersionOrNull(versions: DawVersion[], versionId: string | null | undefined) {
+  if (!versionId) return null;
+  return versions.find((version) => version.id === versionId) ?? null;
+}
+
+export function selectLatestVersionOrNull(versions: DawVersion[]) {
+  if (versions.length === 0) {
+    return null;
+  }
+
+  return versions.reduce<DawVersion | null>((latest, version) => {
+    if (!latest) return version;
+
+    const latestCreatedAt = Date.parse(latest.createdAt);
+    const nextCreatedAt = Date.parse(version.createdAt);
+    if (Number.isFinite(latestCreatedAt) && Number.isFinite(nextCreatedAt) && nextCreatedAt !== latestCreatedAt) {
+      return nextCreatedAt > latestCreatedAt ? version : latest;
+    }
+
+    const latestOperationSeq = latest.operationSeq ?? 0;
+    const nextOperationSeq = version.operationSeq ?? 0;
+    if (nextOperationSeq !== latestOperationSeq) {
+      return nextOperationSeq > latestOperationSeq ? version : latest;
+    }
+
+    return version.id.localeCompare(latest.id) > 0 ? version : latest;
+  }, null);
+}
+
+export function selectVersionById(versions: DawVersion[], selectedVersionId: string | null | undefined) {
+  return selectVersionOrNull(versions, selectedVersionId) ?? versions.find((version) => version.isCurrent) ?? selectLatestVersionOrNull(versions);
 }
 
 export function selectTracks(version: DawVersion | null | undefined) {

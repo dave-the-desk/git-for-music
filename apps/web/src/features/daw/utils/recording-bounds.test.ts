@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildRecordedTakeBounds } from '@/features/daw/utils/recording-bounds';
+import { buildRecordingBounds } from '@/features/daw/utils/recording-bounds';
 
-test('buildRecordedTakeBounds uses the measured blob duration when available', () => {
+test('buildRecordingBounds uses the measured blob duration when available', () => {
   assert.deepEqual(
-    buildRecordedTakeBounds({
+    buildRecordingBounds({
       timelineStartMs: 250,
       measuredDurationMs: 1499.6,
       fallbackDurationMs: 1000,
@@ -20,9 +20,9 @@ test('buildRecordedTakeBounds uses the measured blob duration when available', (
   );
 });
 
-test('buildRecordedTakeBounds falls back to wall-clock duration when measured duration is unavailable', () => {
+test('buildRecordingBounds falls back to wall-clock duration when measured duration is unavailable', () => {
   assert.deepEqual(
-    buildRecordedTakeBounds({
+    buildRecordingBounds({
       timelineStartMs: 0,
       measuredDurationMs: null,
       fallbackDurationMs: 987.2,

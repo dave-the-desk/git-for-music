@@ -75,6 +75,18 @@ function rangeFrom(startMs: number, endMs: number) {
   };
 }
 
+function rangeFromMovePayload(payload: {
+  fromTimelineStartMs: number;
+  fromTimelineEndMs: number;
+  toTimelineStartMs: number;
+  toTimelineEndMs: number;
+}) {
+  return rangeFrom(
+    Math.min(payload.fromTimelineStartMs, payload.toTimelineStartMs),
+    Math.max(payload.fromTimelineEndMs, payload.toTimelineEndMs),
+  );
+}
+
 function rangesOverlap(
   left: { startMs: number; endMs: number } | null,
   right: { startMs: number; endMs: number } | null,
@@ -228,14 +240,16 @@ async function resolveRequestScope(
       };
     }
     case 'SEGMENT_MOVED': {
+      const moveRange = rangeFromMovePayload(request.payload);
       const scope = await resolveSegmentScope(client, workspace, {
-        trackVersionId: request.payload.trackVersionId,
+        trackVersionId: request.payload.fromTrackVersionId,
         segmentId: request.payload.segmentId ?? request.targetSegmentId,
       });
       if (!scope) return null;
       return {
         kind: 'track-timeline',
         ...scope,
+        range: scope.range ? rangeFrom(Math.min(scope.range.startMs, moveRange.startMs), Math.max(scope.range.endMs, moveRange.endMs)) : moveRange,
         payloadSignature: stableSignature(request.payload),
       };
     }
@@ -401,15 +415,25 @@ async function resolveExistingOperationScope(
       };
     }
     case 'SEGMENT_MOVED': {
-      const payload = operation.payload as { trackVersionId: string; segmentId: string; timelineStartMs: number };
+      const payload = operation.payload as {
+        segmentId: string;
+        fromTrackVersionId: string;
+        toTrackVersionId: string;
+        fromTimelineStartMs: number;
+        fromTimelineEndMs: number;
+        toTimelineStartMs: number;
+        toTimelineEndMs: number;
+      };
+      const moveRange = rangeFromMovePayload(payload);
       const scope = await resolveSegmentScope(client, workspace, {
-        trackVersionId: payload.trackVersionId,
+        trackVersionId: payload.fromTrackVersionId,
         segmentId: payload.segmentId,
       });
       if (!scope) return null;
       return {
         kind: 'track-timeline',
         ...scope,
+        range: scope.range ? rangeFrom(Math.min(scope.range.startMs, moveRange.startMs), Math.max(scope.range.endMs, moveRange.endMs)) : moveRange,
         payloadSignature: stableSignature(payload),
       };
     }

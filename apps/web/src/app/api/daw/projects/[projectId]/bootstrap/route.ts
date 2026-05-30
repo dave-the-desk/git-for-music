@@ -15,14 +15,24 @@ export async function GET(
 
   const { projectId } = await params;
   const demoId = req.nextUrl.searchParams.get('demoId');
+  const operationSeqParam = req.nextUrl.searchParams.get('operationSeq');
+  const operationSeq =
+    operationSeqParam === null || operationSeqParam === ''
+      ? null
+      : Number(operationSeqParam);
   if (!demoId) {
     return NextResponse.json<ApiError>({ error: 'demoId is required' }, { status: 400 });
+  }
+
+  if (operationSeqParam !== null && (!Number.isFinite(operationSeq) || !Number.isInteger(operationSeq))) {
+    return NextResponse.json<ApiError>({ error: 'operationSeq must be a number' }, { status: 400 });
   }
 
   const bootstrap = await loadDawProjectBootstrap(prisma, {
     projectId,
     demoId,
     userId: user.id,
+    operationSeq,
   });
 
   if (!bootstrap) {

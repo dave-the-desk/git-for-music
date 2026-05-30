@@ -4,10 +4,10 @@ import type {
   DawVersion,
   LocalProjectState,
   ProjectOperationHistoryEntry,
-  TrackRecordingTake,
   TrackTimelineSegment,
 } from './local-project-state';
 import type { DawProjectOperationRecord, DawProjectBootstrapResponse, DawSegmentSnapshot } from '@/features/daw/protocol';
+import { selectLatestVersionOrNull } from './selectors';
 
 export type TimelineHistoryEntry =
   | {
@@ -48,18 +48,6 @@ export type TimelineHistoryEntry =
       previousSegments: TrackTimelineSegment[];
       nextSegments: TrackTimelineSegment[];
       previousSelectedSegmentId: string | null;
-    }
-  | {
-      kind: 'recording-takes';
-      trackId: string;
-      previousTakes: TrackRecordingTake[];
-      nextTakes: TrackRecordingTake[];
-      previousSelectedTrackVersionId: string | null;
-      previousSelectedSegmentId: string | null;
-      targetTrackId?: string;
-      targetPreviousTakes?: TrackRecordingTake[];
-      targetNextTakes?: TrackRecordingTake[];
-      deletedTake?: TrackRecordingTake;
     };
 
 type CommentLike = {
@@ -132,7 +120,9 @@ function updateSegments(
 function upsertVersionTrack(versions: DawVersion[], versionId: string, track: DawTrack) {
   return versions.map((version) => {
     if (version.id !== versionId) return version;
-    const existingIndex = version.tracks.findIndex((entry) => entry.trackVersionId === track.trackVersionId);
+    const existingIndex = version.tracks.findIndex(
+      (entry) => entry.trackVersionId === track.trackVersionId || entry.trackId === track.trackId,
+    );
     if (existingIndex === -1) {
       return {
         ...version,
@@ -142,7 +132,11 @@ function upsertVersionTrack(versions: DawVersion[], versionId: string, track: Da
 
     return {
       ...version,
-      tracks: version.tracks.map((entry) => (entry.trackVersionId === track.trackVersionId ? { ...entry, ...track } : entry)),
+      tracks: version.tracks.map((entry) =>
+        entry.trackVersionId === track.trackVersionId || entry.trackId === track.trackId
+          ? { ...entry, ...track }
+          : entry,
+      ),
     };
   });
 }
@@ -152,6 +146,48 @@ function touchVersionTree(state: LocalProjectState, operation: DawProjectOperati
     versionTreeUpdatedAt: operation.createdAt,
     lastVersionOperationSeq: operation.operationSeq,
   };
+}
+
+function getVersionParentId(
+  node: Pick<VersionTreeNodeLike, 'parentId' | 'parentVersionId'> | null | undefined,
+  payload:
+    | {
+        parentId?: string | null;
+        parentVersionId?: string | null;
+      }
+    | null
+    | undefined,
+) {
+  return node?.parentVersionId ?? node?.parentId ?? payload?.parentVersionId ?? payload?.parentId ?? null;
+}
+
+function getCurrentCheckoutVersionId(state: LocalProjectState) {
+  return state.activeVersionId ?? state.currentVersionId ?? null;
+}
+
+function shouldAutoAdvanceActiveVersion(state: LocalProjectState, versionParentId: string | null) {
+  if (state.isFollowingHead === false) {
+    return false;
+  }
+
+  const activeVersionId = getCurrentCheckoutVersionId(state);
+  if (!activeVersionId) {
+    return false;
+  }
+
+  return versionParentId === activeVersionId;
+}
+
+function shouldAutoAdvanceVersionOperation(
+  state: LocalProjectState,
+  versionParentId: string | null,
+  branchMode?: 'continue' | 'fork',
+) {
+  if (branchMode === 'fork') {
+    return false;
+  }
+
+  return shouldAutoAdvanceActiveVersion(state, versionParentId);
 }
 
 type VersionTreeNodeLike = {
@@ -223,6 +259,14 @@ function upsertVersionNode(
   }
 
   return versions.map((version) => (version.id === node.id ? { ...version, ...next } : version));
+}
+
+function setCurrentVersionFlags(versions: DawVersion[], currentVersionId: string, operationSeq?: number) {
+  return versions.map((version) => ({
+    ...version,
+    isCurrent: version.id === currentVersionId,
+    operationSeq: version.id === currentVersionId && operationSeq !== undefined ? operationSeq : version.operationSeq,
+  }));
 }
 
 function updateVersionNode(
@@ -372,126 +416,6 @@ function upsertAnnotation(annotations: DemoAnnotation[], nextAnnotation: Annotat
   );
 }
 
-type RecordingTakeLike = {
-  id?: string;
-  takeId?: string;
-  trackId?: string;
-  trackVersionId?: string | null;
-  name?: string;
-  startOffsetMs?: number;
-  durationMs?: number;
-  sourceStartMs?: number;
-  sourceEndMs?: number;
-  timelineStartMs?: number;
-  timelineEndMs?: number;
-  gainDb?: number;
-  fadeInMs?: number;
-  fadeOutMs?: number;
-  isMuted?: boolean;
-  position?: number;
-  storageKey?: string;
-  assetId?: string | null;
-  previewUrl?: string | null;
-  recordedTempoBpm?: number | null;
-  sourceTempoBpm?: number | null;
-  status?: TrackRecordingTake['status'];
-  syncStatus?: TrackRecordingTake['syncStatus'];
-  error?: string;
-  createdAt?: string;
-};
-
-function normalizeRecordingTake(
-  take: RecordingTakeLike,
-  defaults: Partial<TrackRecordingTake> = {},
-): TrackRecordingTake {
-  const id = take.id ?? take.takeId ?? defaults.id ?? '';
-  const trackId = take.trackId ?? defaults.trackId ?? '';
-  const startOffsetMs = take.startOffsetMs ?? defaults.startOffsetMs ?? 0;
-  const durationMs = take.durationMs ?? defaults.durationMs ?? 0;
-  const sourceStartMs = take.sourceStartMs ?? defaults.sourceStartMs ?? 0;
-  const sourceEndMs = take.sourceEndMs ?? defaults.sourceEndMs ?? sourceStartMs + durationMs;
-  const timelineStartMs = take.timelineStartMs ?? defaults.timelineStartMs ?? startOffsetMs;
-  const timelineEndMs = take.timelineEndMs ?? defaults.timelineEndMs ?? timelineStartMs + durationMs;
-  return {
-    id,
-    trackId,
-    trackVersionId: take.trackVersionId ?? defaults.trackVersionId ?? null,
-    name: take.name ?? defaults.name ?? '',
-    startOffsetMs,
-    durationMs,
-    sourceStartMs,
-    sourceEndMs,
-    timelineStartMs,
-    timelineEndMs,
-    gainDb: take.gainDb ?? defaults.gainDb ?? 0,
-    fadeInMs: take.fadeInMs ?? defaults.fadeInMs ?? 0,
-    fadeOutMs: take.fadeOutMs ?? defaults.fadeOutMs ?? 0,
-    isMuted: take.isMuted ?? defaults.isMuted ?? false,
-    position: take.position ?? defaults.position ?? 0,
-    storageKey: take.storageKey ?? defaults.storageKey ?? '',
-    assetId: take.assetId ?? defaults.assetId ?? null,
-    previewUrl: take.previewUrl ?? defaults.previewUrl ?? null,
-    recordedTempoBpm: take.recordedTempoBpm ?? defaults.recordedTempoBpm ?? null,
-    sourceTempoBpm: take.sourceTempoBpm ?? defaults.sourceTempoBpm ?? null,
-    status: take.status ?? defaults.status ?? 'complete',
-    syncStatus: take.syncStatus ?? defaults.syncStatus ?? 'complete',
-    error: take.error ?? defaults.error,
-    createdAt: take.createdAt ?? defaults.createdAt ?? new Date().toISOString(),
-  };
-}
-
-function normalizeRecordingTakesByTrackId(
-  input: unknown,
-): Record<string, TrackRecordingTake[]> {
-  if (!input || typeof input !== 'object') return {};
-
-  const entries = Object.entries(input as Record<string, unknown>).map(([trackId, takes]) => {
-    if (!Array.isArray(takes)) {
-      return [trackId, [] as TrackRecordingTake[]] as const;
-    }
-
-    return [
-      trackId,
-      takes.map((take) =>
-        normalizeRecordingTake(take as RecordingTakeLike, {
-          trackId,
-          status: 'complete',
-          syncStatus: 'complete',
-          previewUrl: null,
-        }),
-      ),
-    ] as const;
-  });
-
-  return Object.fromEntries(entries);
-}
-
-function upsertRecordingTake(
-  takesByTrackId: Record<string, TrackRecordingTake[]>,
-  trackId: string,
-  take: RecordingTakeLike,
-) {
-  const currentTakes = takesByTrackId[trackId] ?? [];
-  const nextTake = normalizeRecordingTake(take, {
-    trackId,
-    status: 'complete',
-    syncStatus: 'complete',
-    previewUrl: null,
-  });
-  const existingIndex = currentTakes.findIndex((entry) => entry.id === nextTake.id);
-  if (existingIndex === -1) {
-    return {
-      ...takesByTrackId,
-      [trackId]: [...currentTakes, nextTake],
-    };
-  }
-
-  return {
-    ...takesByTrackId,
-    [trackId]: currentTakes.map((entry) => (entry.id === nextTake.id ? { ...entry, ...nextTake } : entry)),
-  };
-}
-
 function ensureOperationHistory(state: LocalProjectState) {
   state.operationHistory ??= [];
   return state.operationHistory;
@@ -559,7 +483,6 @@ function buildOperationHistoryEntry(
     versionId: currentVersionId,
     currentVersionId,
     trackId: null,
-    takeId: null,
     segmentId: null,
     actorUserId: operation.actorUserId,
     createdAt: operation.createdAt,
@@ -594,8 +517,16 @@ function buildOperationHistoryEntry(
       };
     }
     case 'SEGMENT_MOVED': {
-      const payload = operation.payload as { trackVersionId: string; segmentId: string };
-      const track = findTrackByTrackVersionId(state, payload.trackVersionId);
+      const payload = operation.payload as {
+        fromTrackVersionId: string;
+        toTrackVersionId: string;
+        segmentId: string;
+        fromTimelineStartMs: number;
+        fromTimelineEndMs: number;
+        toTimelineStartMs: number;
+        toTimelineEndMs: number;
+      };
+      const track = findTrackByTrackVersionId(state, payload.toTrackVersionId);
       return {
         ...baseEntry,
         trackId: track?.trackId ?? null,
@@ -623,57 +554,9 @@ function buildOperationHistoryEntry(
         summary: track ? `Adjusted crossfade on ${track.trackName}` : 'Adjusted crossfade',
       };
     }
-    case 'TAKE_ADDED': {
-      const payload = operation.payload as { trackId: string; takeId: string; name: string };
-      const trackName = findTrackNameByTrackId(state, payload.trackId);
-      return {
-        ...baseEntry,
-        trackId: payload.trackId,
-        takeId: payload.takeId,
-        summary: trackName ? `Added recording to ${trackName}` : `Added take: ${payload.name}`,
-      };
-    }
-    case 'TAKE_RESTORED': {
-      const payload = operation.payload as { trackId: string; takeId: string; operationSummary?: string };
-      const trackName = findTrackNameByTrackId(state, payload.trackId);
-      return {
-        ...baseEntry,
-        trackId: payload.trackId,
-        takeId: payload.takeId,
-        summary:
-          trackName ? `Restored recording on ${trackName}` : payload.operationSummary ?? 'Restored recording',
-      };
-    }
-    case 'TAKE_DELETED': {
-      const payload = operation.payload as { trackId: string; takeId: string; operationSummary?: string };
-      const trackName = findTrackNameByTrackId(state, payload.trackId);
-      return {
-        ...baseEntry,
-        trackId: payload.trackId,
-        takeId: payload.takeId,
-        summary: trackName ? `Deleted recording from ${trackName}` : payload.operationSummary ?? 'Deleted recording',
-      };
-    }
     default:
       return null;
   }
-}
-
-function removeRecordingTake(
-  takesByTrackId: Record<string, TrackRecordingTake[]>,
-  trackId: string,
-  takeId: string,
-) {
-  const currentTakes = takesByTrackId[trackId] ?? [];
-  const nextTakes = currentTakes.filter((entry) => entry.id !== takeId);
-  if (nextTakes.length === currentTakes.length) {
-    return takesByTrackId;
-  }
-
-  return {
-    ...takesByTrackId,
-    [trackId]: nextTakes,
-  };
 }
 
 export function applyTrackOffsetUpdate(
@@ -690,58 +573,177 @@ export function applyTrackRename(tracks: DawTrack[], trackId: string, trackName:
   return tracks.map((track) => (track.trackId === trackId ? { ...track, trackName } : track));
 }
 
+function normalizeTrackSegments(segments: TrackTimelineSegment[]) {
+  return segments.map((segment, index) => ({
+    ...segment,
+    position: index,
+  }));
+}
+
+function moveSegmentBetweenTracks(
+  tracks: DawTrack[],
+  payload: {
+    segmentId: string;
+    fromTrackVersionId: string;
+    toTrackVersionId: string;
+    fromTimelineStartMs: number;
+    fromTimelineEndMs: number;
+    toTimelineStartMs: number;
+    toTimelineEndMs: number;
+  },
+) {
+  const sourceTrackIndex = tracks.findIndex((track) => track.trackVersionId === payload.fromTrackVersionId);
+  const targetTrackIndex = tracks.findIndex((track) => track.trackVersionId === payload.toTrackVersionId);
+
+  if (targetTrackIndex === -1) {
+    return tracks;
+  }
+
+  const sourceTrack = sourceTrackIndex >= 0 ? tracks[sourceTrackIndex] : null;
+  const targetTrack = tracks[targetTrackIndex] ?? null;
+  if (!targetTrack) {
+    return tracks;
+  }
+
+  const occurrences = tracks.flatMap((track) =>
+    track.segments
+      .filter((segment) => segment.id === payload.segmentId)
+      .map((segment) => ({
+        track,
+        segment,
+      })),
+  );
+
+  const sourceSegment = sourceTrack?.segments.find((segment) => segment.id === payload.segmentId) ?? null;
+  const targetSegment = targetTrack.segments.find((segment) => segment.id === payload.segmentId) ?? null;
+  const existingSegment = sourceSegment ?? targetSegment ?? occurrences[0]?.segment ?? null;
+
+  if (!existingSegment) {
+    return tracks;
+  }
+
+  if (
+    occurrences.length === 1 &&
+    targetSegment &&
+    targetSegment.trackVersionId === payload.toTrackVersionId &&
+    targetSegment.timelineStartMs === payload.toTimelineStartMs &&
+    targetSegment.timelineEndMs === payload.toTimelineEndMs
+  ) {
+    return tracks;
+  }
+
+  const cleanedTracks = tracks.map((track) => ({
+    ...track,
+    segments: normalizeTrackSegments(track.segments.filter((segment) => segment.id !== payload.segmentId)),
+  }));
+  const cleanedTargetTrack = cleanedTracks.find((track) => track.trackVersionId === payload.toTrackVersionId);
+  if (!cleanedTargetTrack) {
+    return tracks;
+  }
+
+  const insertionIndex =
+    payload.fromTrackVersionId === payload.toTrackVersionId
+      ? Math.min(existingSegment.position, cleanedTargetTrack.segments.length)
+      : cleanedTargetTrack.segments.length;
+
+  const movedSegment: TrackTimelineSegment = {
+    ...existingSegment,
+    trackVersionId: payload.toTrackVersionId,
+    timelineStartMs: payload.toTimelineStartMs,
+    timelineEndMs: payload.toTimelineEndMs,
+    position: insertionIndex,
+  };
+
+  const nextTargetSegments = normalizeTrackSegments(
+    [
+      ...cleanedTargetTrack.segments.slice(0, insertionIndex),
+      movedSegment,
+      ...cleanedTargetTrack.segments.slice(insertionIndex),
+    ].map((segment) => ({
+      ...segment,
+      trackVersionId: payload.toTrackVersionId,
+    })),
+  );
+
+  return cleanedTracks.map((track) =>
+    track.trackVersionId === payload.toTrackVersionId
+      ? {
+          ...track,
+          segments: nextTargetSegments,
+        }
+      : track,
+  );
+}
+
 export function applySegmentMove(
+  tracks: DawTrack[],
+  payload: {
+    segmentId: string;
+    fromTrackVersionId: string;
+    toTrackVersionId: string;
+    fromTimelineStartMs: number;
+    fromTimelineEndMs: number;
+    toTimelineStartMs: number;
+    toTimelineEndMs: number;
+  },
+) {
+  return moveSegmentBetweenTracks(tracks, payload);
+}
+
+export function applySegmentMoveLegacy(
   tracks: DawTrack[],
   trackVersionId: string,
   segmentId: string,
   timelineStartMs: number,
 ) {
-  return tracks.map((track) => {
-    if (track.trackVersionId !== trackVersionId) return track;
-    return updateSegments(track, (segments) =>
-      segments.map((segment) =>
-        segment.id === segmentId
-          ? {
-              ...segment,
-              timelineStartMs,
-              timelineEndMs: timelineStartMs + segment.durationMs,
-            }
-          : segment,
-      ),
-    );
+  const track = tracks.find((candidate) => candidate.trackVersionId === trackVersionId);
+  const segment = track?.segments.find((candidate) => candidate.id === segmentId);
+  if (!track || !segment) return tracks;
+
+  return applySegmentMove(tracks, {
+    segmentId,
+    fromTrackVersionId: trackVersionId,
+    toTrackVersionId: trackVersionId,
+    fromTimelineStartMs: segment.timelineStartMs,
+    fromTimelineEndMs: segment.timelineEndMs,
+    toTimelineStartMs: timelineStartMs,
+    toTimelineEndMs: timelineStartMs + (segment.timelineEndMs - segment.timelineStartMs),
   });
 }
 
 function normalizeOperationHistory(input: unknown): ProjectOperationHistoryEntry[] {
   if (!Array.isArray(input)) return [];
-  return input
-    .map((entry) => {
-      if (!entry || typeof entry !== 'object') return null;
-      const value = entry as Partial<ProjectOperationHistoryEntry>;
-      if (
-        typeof value.operationId !== 'string' ||
-        typeof value.operationType !== 'string' ||
-        typeof value.summary !== 'string' ||
-        typeof value.actorUserId !== 'string' ||
-        typeof value.createdAt !== 'string'
-      ) {
-        return null;
-      }
+  return input.flatMap((entry) => {
+    if (!entry || typeof entry !== 'object') return [];
+    const value = entry as Partial<ProjectOperationHistoryEntry>;
+    if (
+      typeof value.operationId !== 'string' ||
+      typeof value.operationType !== 'string' ||
+      typeof value.summary !== 'string' ||
+      typeof value.actorUserId !== 'string' ||
+      typeof value.createdAt !== 'string'
+    ) {
+      return [];
+    }
 
-      return {
+    return [
+      {
         operationId: value.operationId,
+        operationSeq:
+          typeof value.operationSeq === 'number' && Number.isFinite(value.operationSeq)
+            ? value.operationSeq
+            : undefined,
         operationType: value.operationType as ProjectOperationHistoryEntry['operationType'],
         versionId: typeof value.versionId === 'string' ? value.versionId : null,
         currentVersionId: typeof value.currentVersionId === 'string' ? value.currentVersionId : null,
         trackId: typeof value.trackId === 'string' ? value.trackId : null,
-        takeId: typeof value.takeId === 'string' ? value.takeId : null,
         segmentId: typeof value.segmentId === 'string' ? value.segmentId : null,
         summary: value.summary,
         actorUserId: value.actorUserId,
         createdAt: value.createdAt,
-      } satisfies ProjectOperationHistoryEntry;
-    })
-    .filter((entry): entry is ProjectOperationHistoryEntry => Boolean(entry));
+      } satisfies ProjectOperationHistoryEntry,
+    ];
+  });
 }
 
 export function applySegmentDelete(tracks: DawTrack[], trackVersionId: string, segmentId: string) {
@@ -845,22 +847,39 @@ function replaceOrAppendSegment(
 
 export function createLocalProjectStateFromBootstrap(
   bootstrap: DawProjectBootstrapResponse | null | undefined,
+  options: {
+    fallbackActiveVersionId?: string | null;
+    fallbackIsFollowingHead?: boolean | null;
+  } = {},
 ): LocalProjectState {
   const snapshot = (bootstrap?.projectState ?? bootstrap?.latestSnapshot?.snapshot) as
     | {
         versions?: DawVersion[];
         currentVersionId?: string;
+        activeVersionId?: string;
+        isFollowingHead?: boolean;
         comments?: DemoComment[];
         annotations?: DemoAnnotation[];
         tempoMetadataByTrackVersionId?: Record<string, { recordedTempoBpm?: number | null; sourceTempoBpm?: number | null }>;
-        recordingTakesByTrackId?: Record<string, unknown>;
         operationHistory?: ProjectOperationHistoryEntry[];
       }
     | undefined;
 
   const rawVersions = Array.isArray(snapshot?.versions) ? snapshot?.versions : [];
   const currentVersionId =
-    snapshot?.currentVersionId ?? bootstrap?.project.currentVersionId ?? rawVersions[0]?.id ?? '';
+    snapshot?.currentVersionId ??
+    bootstrap?.project.currentVersionId ??
+    rawVersions.find((version) => version.isCurrent)?.id ??
+    selectLatestVersionOrNull(rawVersions)?.id ??
+    '';
+  const activeVersionId =
+    snapshot?.activeVersionId ??
+    bootstrap?.activeVersionId ??
+    (currentVersionId || null) ??
+    options.fallbackActiveVersionId ??
+    null;
+  const isFollowingHead =
+    snapshot?.isFollowingHead ?? bootstrap?.isFollowingHead ?? options.fallbackIsFollowingHead ?? true;
   const versions = rawVersions.map((version) => ({
     ...version,
     name: version.name ?? version.label,
@@ -887,13 +906,14 @@ export function createLocalProjectStateFromBootstrap(
   return {
     versions,
     currentVersionId,
+    activeVersionId,
+    isFollowingHead,
     versionTreeUpdatedAt: bootstrap?.latestSnapshot?.createdAt ?? null,
     lastVersionOperationSeq: bootstrap?.latestSnapshot?.operationSeq ?? 0,
     lastSeenOperationSeq: bootstrap?.latestSnapshot?.operationSeq ?? 0,
     comments: normalizeComments(snapshot?.comments),
     annotations: normalizeAnnotations(snapshot?.annotations),
     tempoMetadataByTrackVersionId,
-    recordingTakesByTrackId: normalizeRecordingTakesByTrackId(snapshot?.recordingTakesByTrackId),
     operationHistory: normalizeOperationHistory(snapshot?.operationHistory),
   };
 }
@@ -930,27 +950,20 @@ export function applyAcceptedProjectOperation(
       }, operation);
     }
     case 'SEGMENT_MOVED': {
-      const payload = operation.payload as { trackVersionId: string; segmentId: string; timelineStartMs: number };
+      const payload = operation.payload as {
+        fromTrackVersionId: string;
+        toTrackVersionId: string;
+        segmentId: string;
+        fromTimelineStartMs: number;
+        fromTimelineEndMs: number;
+        toTimelineStartMs: number;
+        toTimelineEndMs: number;
+      };
       return appendOperationHistory({
         ...state,
         versions: state.versions.map((version) => ({
           ...version,
-          tracks: version.tracks.map((track) =>
-            track.trackVersionId !== payload.trackVersionId
-              ? track
-              : {
-                  ...track,
-                  segments: track.segments.map((segment) =>
-                    segment.id === payload.segmentId
-                      ? {
-                          ...segment,
-                          timelineStartMs: payload.timelineStartMs,
-                          timelineEndMs: payload.timelineStartMs + segment.durationMs,
-                        }
-                      : segment,
-                  ),
-                  },
-          ),
+          tracks: moveSegmentBetweenTracks(version.tracks, payload),
         })),
       }, operation);
     }
@@ -1152,49 +1165,6 @@ export function applyAcceptedProjectOperation(
         })),
       };
     }
-    case 'TAKE_ADDED': {
-      const payload = operation.payload as RecordingTakeLike & { trackId: string; takeId: string };
-      return appendOperationHistory({
-        ...state,
-        recordingTakesByTrackId: upsertRecordingTake(state.recordingTakesByTrackId ?? {}, payload.trackId, {
-          ...payload,
-          id: payload.takeId,
-          status: 'complete',
-          syncStatus: 'complete',
-          previewUrl: null,
-        }),
-      }, operation);
-    }
-    case 'TAKE_RESTORED': {
-      const payload = operation.payload as RecordingTakeLike & {
-        trackId: string;
-        takeId: string;
-        restoredAt: string;
-        restoredBy: string;
-        operationSummary: string;
-      };
-      return appendOperationHistory({
-        ...state,
-        recordingTakesByTrackId: upsertRecordingTake(state.recordingTakesByTrackId ?? {}, payload.trackId, {
-          ...payload,
-          id: payload.takeId,
-          status: 'complete',
-          syncStatus: 'complete',
-          previewUrl: null,
-        }),
-      }, operation);
-    }
-    case 'TAKE_DELETED': {
-      const payload = operation.payload as { trackId: string; takeId: string };
-      return appendOperationHistory({
-        ...state,
-        recordingTakesByTrackId: removeRecordingTake(
-          state.recordingTakesByTrackId ?? {},
-          payload.trackId,
-          payload.takeId,
-        ),
-      }, operation);
-    }
     case 'VERSION_CREATED':
     case 'VERSION_BRANCH_CREATED':
     case 'VERSION_NODE_ADDED': {
@@ -1204,6 +1174,7 @@ export function applyAcceptedProjectOperation(
         parentVersionId?: string | null;
         parentId?: string | null;
         branchName?: string | null;
+        branchMode?: 'continue' | 'fork';
         label?: string | null;
         name?: string | null;
         createdAt?: string;
@@ -1215,6 +1186,7 @@ export function applyAcceptedProjectOperation(
       if (!versionId) {
         return state;
       }
+      const versionParentId = getVersionParentId(version, payload);
       const versions = upsertVersionNode(
         state.versions,
         {
@@ -1240,14 +1212,24 @@ export function applyAcceptedProjectOperation(
         },
         state.currentVersionId,
       );
+      const nextCurrentVersionId =
+        version?.isCurrent || operation.type === 'VERSION_CREATED' || operation.type === 'VERSION_BRANCH_CREATED'
+          ? versionId
+          : state.currentVersionId;
+      const shouldAdvanceActiveVersion = shouldAutoAdvanceVersionOperation(
+        state,
+        versionParentId,
+        payload.branchMode,
+      );
+      const nextActiveVersionId = shouldAdvanceActiveVersion
+        ? versionId
+        : state.activeVersionId ?? state.currentVersionId;
       return {
         ...state,
         ...touchVersionTree(state, operation),
-        versions,
-        currentVersionId:
-          version?.isCurrent || operation.type === 'VERSION_CREATED' || operation.type === 'VERSION_BRANCH_CREATED'
-            ? versionId
-            : state.currentVersionId,
+        versions: setCurrentVersionFlags(versions, nextCurrentVersionId, operation.operationSeq),
+        currentVersionId: nextCurrentVersionId,
+        activeVersionId: nextActiveVersionId,
       };
     }
     case 'VERSION_RENAMED': {
@@ -1280,6 +1262,8 @@ export function applyAcceptedProjectOperation(
         ),
       };
     }
+    // Legacy compatibility for older operation logs. New checkout changes
+    // are persisted through DemoUserActiveVersion instead of shared ops.
     case 'VERSION_SELECTED':
     case 'CURRENT_VERSION_CHANGED':
     case 'VERSION_REVERTED_FROM': {
@@ -1292,6 +1276,7 @@ export function applyAcceptedProjectOperation(
         ...state,
         ...touchVersionTree(state, operation),
         currentVersionId,
+        activeVersionId: state.activeVersionId ?? currentVersionId,
         versions: state.versions.map((version) => ({
           ...version,
           isCurrent: version.id === currentVersionId,
@@ -1455,6 +1440,21 @@ export function applyAcceptedProjectOperation(
     default:
       return state;
   }
+}
+
+export function applyAcceptedProjectOperationWithoutHistory(
+  state: LocalProjectState,
+  operation: DawProjectOperationRecord,
+): LocalProjectState {
+  const next = applyAcceptedProjectOperation(state, operation);
+  if (next.operationHistory === state.operationHistory) {
+    return next;
+  }
+
+  return {
+    ...next,
+    operationHistory: state.operationHistory,
+  };
 }
 
 export function applyAcceptedProjectOperations(

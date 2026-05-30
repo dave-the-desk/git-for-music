@@ -161,12 +161,6 @@ function summarizeNotes(
 
 export function getHistoryOperationBadgeLabel(operationType: string) {
   switch (operationType) {
-    case 'TAKE_ADDED':
-      return 'Take added';
-    case 'TAKE_DELETED':
-      return 'Take deleted';
-    case 'TAKE_RESTORED':
-      return 'Take restored';
     case 'TRACK_VERSION_CREATED':
       return 'Track version';
     case 'TRACK_RENAMED':
