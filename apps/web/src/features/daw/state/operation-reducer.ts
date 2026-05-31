@@ -1101,6 +1101,9 @@ export function applyAcceptedProjectOperation(
               : {
                   ...track,
                   segments: track.segments
+                    // The merge is applied optimistically and then replayed again once the accepted op arrives.
+                    // Remove any previously inserted merged clip so the operation stays idempotent.
+                    .filter((segment) => segment.id !== payload.mergedSegment.id)
                     .filter((segment) => !payload.segmentIds.includes(segment.id))
                     .concat({
                       ...payload.mergedSegment,

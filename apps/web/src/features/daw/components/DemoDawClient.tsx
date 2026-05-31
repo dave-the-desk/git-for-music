@@ -3305,8 +3305,50 @@ export function DemoDawClient({
           </div>
         </header>
 
-        <div className="grid items-stretch gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
-          <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-slate-700 bg-slate-950/80 shadow-sm shadow-black/20 xl:col-start-1 xl:row-start-1 xl:self-stretch">
+        <div className="grid grid-cols-1 items-stretch gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
+          <div className="order-first flex h-full min-h-0 min-w-0 flex-col gap-4 xl:order-none xl:col-start-2 xl:row-start-1 xl:self-stretch">
+            <ProjectTimingControls
+              sharedDemoTempoBpm={sharedDemoTempoBpm}
+              localTempoBpm={localTempoBpmInput}
+              onLocalTempoChange={setLocalTempoBpmInput}
+            />
+            <TransportControls
+              isPlaying={isPlaying}
+              currentTimeMs={currentTimeMs}
+              onPlay={() => playTransport()}
+              onPause={pauseTransport}
+              onStop={handleTransportStop}
+              leadingSlot={
+                <RecordingControls
+                  ref={recordingControlsRef}
+                  currentTimeMs={currentTimeMs}
+                  recordedTempoBpm={resolvedLocalTempoBpm}
+                  isDisabled={temporaryRecordingTrack !== null || !audioInputReady || !selectedAudioInputDeviceId}
+                  recordingTarget={activeRecordingTarget}
+                  selectedAudioInputDeviceId={selectedAudioInputDeviceId}
+                  isAudioInputReady={audioInputReady}
+                  onNeedsAudioInput={() => {}}
+                  onStreamReady={handleRecordingStreamReady}
+                  onDurationUpdate={handleRecordingDurationUpdate}
+                  onStopped={handleRecordingStopped}
+                />
+              }
+              trailingSlot={
+                <button
+                  type="button"
+                  onClick={() => setMetronomeEnabled((prev) => !prev)}
+                  className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                    metronomeEnabled
+                      ? 'bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/40'
+                      : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+                  }`}
+                >
+                  Metronome {metronomeEnabled ? 'On' : 'Off'}
+                </button>
+              }
+            />
+          </div>
+          <div className="order-last flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-slate-700 bg-slate-950/80 shadow-sm shadow-black/20 xl:order-none xl:col-start-1 xl:row-start-1 xl:self-stretch">
             <DawToolbarTabs activeTab={toolbarTab} onTabChange={setToolbarTab} />
             <section className="flex-1 border-t border-slate-800 bg-transparent p-4">
               {toolbarTab === 'edit' ? (
@@ -3402,14 +3444,6 @@ export function DemoDawClient({
                       className="rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-slate-300 hover:bg-slate-800"
                     >
                       Undo
-                    </button>
-                    <button
-                      type="button"
-                      disabled
-                      title="Redo is not implemented in this demo yet"
-                      className="rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-slate-500 opacity-60"
-                    >
-                      Redo
                     </button>
                     <label className="ml-auto flex items-center gap-2 text-sm text-slate-300">
                       <span className="uppercase tracking-[0.18em] text-slate-500">Snap</span>
@@ -3700,48 +3734,6 @@ export function DemoDawClient({
                 </div>
               ) : null}
             </section>
-          </div>
-          <div className="flex h-full min-h-0 flex-col gap-4 xl:col-start-2 xl:row-start-1 xl:self-stretch">
-            <ProjectTimingControls
-              sharedDemoTempoBpm={sharedDemoTempoBpm}
-              localTempoBpm={localTempoBpmInput}
-              onLocalTempoChange={setLocalTempoBpmInput}
-            />
-            <TransportControls
-              isPlaying={isPlaying}
-              currentTimeMs={currentTimeMs}
-              onPlay={() => playTransport()}
-              onPause={pauseTransport}
-              onStop={handleTransportStop}
-              leadingSlot={
-                <RecordingControls
-                  ref={recordingControlsRef}
-                  currentTimeMs={currentTimeMs}
-                  recordedTempoBpm={resolvedLocalTempoBpm}
-                  isDisabled={temporaryRecordingTrack !== null || !audioInputReady || !selectedAudioInputDeviceId}
-                  recordingTarget={activeRecordingTarget}
-                  selectedAudioInputDeviceId={selectedAudioInputDeviceId}
-                  isAudioInputReady={audioInputReady}
-                  onNeedsAudioInput={() => {}}
-                  onStreamReady={handleRecordingStreamReady}
-                  onDurationUpdate={handleRecordingDurationUpdate}
-                  onStopped={handleRecordingStopped}
-                />
-              }
-              trailingSlot={
-                <button
-                  type="button"
-                  onClick={() => setMetronomeEnabled((prev) => !prev)}
-                  className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
-                    metronomeEnabled
-                      ? 'bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/40'
-                      : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
-                  }`}
-                >
-                  Metronome {metronomeEnabled ? 'On' : 'Off'}
-                </button>
-              }
-            />
           </div>
         </div>
 
