@@ -3,12 +3,13 @@ import assert from 'node:assert/strict';
 import {
   getTimelineEditBranchLabel,
   isTimelineEditOperation,
+  shouldBroadcastVersionTreeChanged,
   shouldCreateBranchForOperation,
   setUserActiveVersion,
   shouldBranchFromHistoricalBase,
 } from '@/features/daw/server/command-api';
 
-test('setUserActiveVersion resolves the viewer checkout to the branch head without moving the shared head', async () => {
+test('setUserActiveVersion preserves an explicit pinned checkout without moving the shared head', async () => {
   let demoUpdateCalled = false;
   let upsertArgs: unknown = null;
 
@@ -66,7 +67,7 @@ test('setUserActiveVersion resolves the viewer checkout to the branch head witho
         upsertArgs = args;
         return {
           activeVersionId: 'version-branch',
-          isFollowingHead: true,
+          isFollowingHead: false,
           activeVersion: {
             label: 'Branch label',
           },
@@ -85,7 +86,7 @@ test('setUserActiveVersion resolves the viewer checkout to the branch head witho
 
   assert.ok(result);
   assert.equal(result?.activeVersionId, 'version-branch');
-  assert.equal(result?.isFollowingHead, true);
+  assert.equal(result?.isFollowingHead, false);
   assert.equal(result?.activeBranchName, 'Branch label');
   assert.equal(demoUpdateCalled, false);
   assert.ok(upsertArgs);
@@ -93,11 +94,11 @@ test('setUserActiveVersion resolves the viewer checkout to the branch head witho
     demoId: 'demo-1',
     userId: 'user-1',
     activeVersionId: 'version-branch',
-    isFollowingHead: true,
+    isFollowingHead: false,
   });
   assert.deepEqual((upsertArgs as { update: Record<string, unknown> }).update, {
     activeVersionId: 'version-branch',
-    isFollowingHead: true,
+    isFollowingHead: false,
   });
 });
 
@@ -205,7 +206,7 @@ test('timeline edits that branch keep labels while placement moves stay in place
   ] as const) {
     assert.equal(isTimelineEditOperation(operationType), true, operationType);
     assert.equal(shouldCreateBranchForOperation(operationType), true, operationType);
-    assert.equal(getTimelineEditBranchLabel(operationType)?.length > 0, true, operationType);
+    assert.equal((getTimelineEditBranchLabel(operationType)?.length ?? 0) > 0, true, operationType);
   }
 
   for (const operationType of ['TRACK_OFFSET_UPDATED', 'SEGMENT_MOVED'] as const) {
@@ -215,4 +216,26 @@ test('timeline edits that branch keep labels while placement moves stay in place
   }
 
   assert.equal(isTimelineEditOperation('VERSION_RENAMED'), false);
+});
+
+test('version tree mutations broadcast a tree refresh while timeline edits do not', () => {
+  for (const operationType of [
+    'VERSION_CREATED',
+    'VERSION_BRANCH_CREATED',
+    'VERSION_RENAMED',
+    'VERSION_SELECTED',
+    'VERSION_REVERTED_FROM',
+    'CURRENT_VERSION_CHANGED',
+    'TRACK_VERSION_CREATED',
+    'VERSION_PARENT_SET',
+    'VERSION_OPERATION_SUMMARY_SET',
+    'VERSION_NODE_ADDED',
+    'VERSION_TIMING_UPDATED',
+  ] as const) {
+    assert.equal(shouldBroadcastVersionTreeChanged(operationType), true, operationType);
+  }
+
+  for (const operationType of ['TRACK_RENAMED', 'SEGMENT_SPLIT', 'SEGMENT_MOVED'] as const) {
+    assert.equal(shouldBroadcastVersionTreeChanged(operationType), false, operationType);
+  }
 });

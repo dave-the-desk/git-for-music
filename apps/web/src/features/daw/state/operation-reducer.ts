@@ -6,7 +6,11 @@ import type {
   ProjectOperationHistoryEntry,
   TrackTimelineSegment,
 } from './local-project-state';
-import type { DawProjectOperationRecord, DawProjectBootstrapResponse, DawSegmentSnapshot } from '@/features/daw/protocol';
+import type {
+  AcceptedDawProjectOperation,
+  DawProjectBootstrapResponse,
+  DawSegmentSnapshot,
+} from '@/features/daw/protocol';
 import { selectLatestVersionOrNull } from './selectors';
 
 export type TimelineHistoryEntry =
@@ -141,7 +145,7 @@ function upsertVersionTrack(versions: DawVersion[], versionId: string, track: Da
   });
 }
 
-function touchVersionTree(state: LocalProjectState, operation: DawProjectOperationRecord) {
+function touchVersionTree(state: LocalProjectState, operation: AcceptedDawProjectOperation) {
   return {
     versionTreeUpdatedAt: operation.createdAt,
     lastVersionOperationSeq: operation.operationSeq,
@@ -459,7 +463,7 @@ function findTrackByTrackVersionId(state: LocalProjectState, trackVersionId: str
 
 function appendOperationHistory(
   state: LocalProjectState,
-  operation: DawProjectOperationRecord,
+  operation: AcceptedDawProjectOperation,
 ): LocalProjectState {
   const entry = buildOperationHistoryEntry(state, operation);
   if (!entry) return state;
@@ -474,7 +478,7 @@ function appendOperationHistory(
 
 function buildOperationHistoryEntry(
   state: LocalProjectState,
-  operation: DawProjectOperationRecord,
+  operation: AcceptedDawProjectOperation,
 ): ProjectOperationHistoryEntry | null {
   const currentVersionId = state.currentVersionId ?? null;
   const baseEntry = {
@@ -837,12 +841,52 @@ export function applyCrossfadeSet(
   });
 }
 
-function replaceOrAppendSegment(
-  segments: TrackTimelineSegment[],
-  nextSegments: TrackTimelineSegment[],
-) {
-  const ids = new Set(nextSegments.map((segment) => segment.id));
-  return segments.filter((segment) => !ids.has(segment.id)).concat(nextSegments);
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function isAcceptedSegmentSnapshot(value: unknown): value is DawSegmentSnapshot {
+  if (!value || typeof value !== 'object') return false;
+
+  const candidate = value as Partial<DawSegmentSnapshot>;
+  return (
+    typeof candidate.id === 'string' &&
+    typeof candidate.trackVersionId === 'string' &&
+    isFiniteNumber(candidate.startMs) &&
+    isFiniteNumber(candidate.endMs) &&
+    (candidate.timelineStartMs === null || isFiniteNumber(candidate.timelineStartMs)) &&
+    (candidate.timelineEndMs === null || isFiniteNumber(candidate.timelineEndMs)) &&
+    isFiniteNumber(candidate.gainDb) &&
+    isFiniteNumber(candidate.fadeInMs) &&
+    isFiniteNumber(candidate.fadeOutMs) &&
+    typeof candidate.isMuted === 'boolean' &&
+    isFiniteNumber(candidate.position)
+  );
+}
+
+function isAcceptedSegmentSplitPayload(
+  payload: unknown,
+): payload is {
+  trackVersionId: string;
+  sourceSegmentId: string | null;
+  leftSegment: DawSegmentSnapshot;
+  rightSegment: DawSegmentSnapshot;
+} {
+  if (!payload || typeof payload !== 'object') return false;
+
+  const candidate = payload as Partial<{
+    trackVersionId: string;
+    sourceSegmentId: string | null;
+    leftSegment: DawSegmentSnapshot;
+    rightSegment: DawSegmentSnapshot;
+  }>;
+
+  return (
+    typeof candidate.trackVersionId === 'string' &&
+    (candidate.sourceSegmentId === null || typeof candidate.sourceSegmentId === 'string') &&
+    isAcceptedSegmentSnapshot(candidate.leftSegment) &&
+    isAcceptedSegmentSnapshot(candidate.rightSegment)
+  );
 }
 
 export function createLocalProjectStateFromBootstrap(
@@ -920,7 +964,7 @@ export function createLocalProjectStateFromBootstrap(
 
 export function applyAcceptedProjectOperation(
   state: LocalProjectState,
-  operation: DawProjectOperationRecord,
+  operation: AcceptedDawProjectOperation,
 ): LocalProjectState {
   switch (operation.type) {
     case 'TRACK_RENAMED': {
@@ -1097,73 +1141,74 @@ export function applyAcceptedProjectOperation(
       };
     }
     case 'SEGMENT_SPLIT': {
-      const payload = operation.payload as unknown as {
-        trackVersionId: string;
-        sourceSegmentId: string | null;
-        leftSegment: DawSegmentSnapshot;
-        rightSegment: DawSegmentSnapshot;
-      };
-      return {
-        ...state,
-        versions: state.versions.map((version) => ({
-          ...version,
-          tracks: version.tracks.map((track) =>
-            track.trackVersionId !== payload.trackVersionId
-              ? track
-              : {
-                  ...track,
-                  segments: replaceOrAppendSegment(track.segments, [
-                    {
-                      id: payload.leftSegment.id,
-                      trackVersionId: payload.trackVersionId,
-                      startMs: payload.leftSegment.startMs,
-                      endMs: payload.leftSegment.endMs,
-                      timelineStartMs:
-                        payload.leftSegment.timelineStartMs ?? track.startOffsetMs + payload.leftSegment.startMs,
-                      timelineEndMs:
-                        (payload.leftSegment.timelineStartMs ?? track.startOffsetMs + payload.leftSegment.startMs) +
-                        (payload.leftSegment.endMs - payload.leftSegment.startMs),
-                      durationMs: payload.leftSegment.endMs - payload.leftSegment.startMs,
-                      sourceStartMs: payload.leftSegment.startMs,
-                      sourceEndMs: payload.leftSegment.endMs,
-                      gainDb: payload.leftSegment.gainDb,
-                      fadeInMs: payload.leftSegment.fadeInMs,
-                      fadeOutMs: payload.leftSegment.fadeOutMs,
-                      isMuted: payload.leftSegment.isMuted,
-                      position: payload.leftSegment.position,
-                      isImplicit: false,
-                      crossfadeInMs: payload.leftSegment.crossfadeInMs ?? null,
-                      crossfadeOutMs: payload.leftSegment.crossfadeOutMs ?? null,
-                      crossfadeCurve: payload.leftSegment.crossfadeCurve ?? null,
-                    },
-                    {
-                      id: payload.rightSegment.id,
-                      trackVersionId: payload.trackVersionId,
-                      startMs: payload.rightSegment.startMs,
-                      endMs: payload.rightSegment.endMs,
-                      timelineStartMs:
-                        payload.rightSegment.timelineStartMs ?? track.startOffsetMs + payload.rightSegment.startMs,
-                      timelineEndMs:
-                        (payload.rightSegment.timelineStartMs ?? track.startOffsetMs + payload.rightSegment.startMs) +
-                        (payload.rightSegment.endMs - payload.rightSegment.startMs),
-                      durationMs: payload.rightSegment.endMs - payload.rightSegment.startMs,
-                      sourceStartMs: payload.rightSegment.startMs,
-                      sourceEndMs: payload.rightSegment.endMs,
-                      gainDb: payload.rightSegment.gainDb,
-                      fadeInMs: payload.rightSegment.fadeInMs,
-                      fadeOutMs: payload.rightSegment.fadeOutMs,
-                      isMuted: payload.rightSegment.isMuted,
-                      position: payload.rightSegment.position,
-                      isImplicit: false,
-                      crossfadeInMs: payload.rightSegment.crossfadeInMs ?? null,
-                      crossfadeOutMs: payload.rightSegment.crossfadeOutMs ?? null,
-                      crossfadeCurve: payload.rightSegment.crossfadeCurve ?? null,
-                    },
-                  ]).sort((left, right) => left.position - right.position),
-                },
-          ),
-        })),
-      };
+      if (!isAcceptedSegmentSplitPayload(operation.payload)) {
+        console.warn('[daw][operation-reducer] ignoring SEGMENT_SPLIT with non-accepted payload shape', {
+          operationId: operation.id,
+          operationSeq: operation.operationSeq,
+          idempotencyKey: operation.idempotencyKey,
+        });
+        return state;
+      }
+
+      const payload = operation.payload;
+      return appendOperationHistory(
+        {
+          ...state,
+          versions: state.versions.map((version) => ({
+            ...version,
+            tracks: version.tracks.map((track) => {
+              if (track.trackVersionId !== payload.trackVersionId) return track;
+
+              const leftSegment: TrackTimelineSegment = {
+                id: payload.leftSegment.id,
+                trackVersionId: payload.trackVersionId,
+                startMs: payload.leftSegment.startMs,
+                endMs: payload.leftSegment.endMs,
+                timelineStartMs:
+                  payload.leftSegment.timelineStartMs ?? track.startOffsetMs + payload.leftSegment.startMs,
+                timelineEndMs:
+                  payload.leftSegment.timelineEndMs ?? track.startOffsetMs + payload.leftSegment.endMs,
+                durationMs: payload.leftSegment.endMs - payload.leftSegment.startMs,
+                sourceStartMs: payload.leftSegment.startMs,
+                sourceEndMs: payload.leftSegment.endMs,
+                gainDb: payload.leftSegment.gainDb,
+                fadeInMs: payload.leftSegment.fadeInMs,
+                fadeOutMs: payload.leftSegment.fadeOutMs,
+                isMuted: payload.leftSegment.isMuted,
+                position: payload.leftSegment.position,
+                isImplicit: false,
+                crossfadeInMs: payload.leftSegment.crossfadeInMs ?? null,
+                crossfadeOutMs: payload.leftSegment.crossfadeOutMs ?? null,
+                crossfadeCurve: payload.leftSegment.crossfadeCurve ?? null,
+              };
+              const rightSegment: TrackTimelineSegment = {
+                id: payload.rightSegment.id,
+                trackVersionId: payload.trackVersionId,
+                startMs: payload.rightSegment.startMs,
+                endMs: payload.rightSegment.endMs,
+                timelineStartMs:
+                  payload.rightSegment.timelineStartMs ?? track.startOffsetMs + payload.rightSegment.startMs,
+                timelineEndMs:
+                  payload.rightSegment.timelineEndMs ?? track.startOffsetMs + payload.rightSegment.endMs,
+                durationMs: payload.rightSegment.endMs - payload.rightSegment.startMs,
+                sourceStartMs: payload.rightSegment.startMs,
+                sourceEndMs: payload.rightSegment.endMs,
+                gainDb: payload.rightSegment.gainDb,
+                fadeInMs: payload.rightSegment.fadeInMs,
+                fadeOutMs: payload.rightSegment.fadeOutMs,
+                isMuted: payload.rightSegment.isMuted,
+                position: payload.rightSegment.position,
+                isImplicit: false,
+                crossfadeInMs: payload.rightSegment.crossfadeInMs ?? null,
+                crossfadeOutMs: payload.rightSegment.crossfadeOutMs ?? null,
+                crossfadeCurve: payload.rightSegment.crossfadeCurve ?? null,
+              };
+              return applySegmentSplit([track], payload.trackVersionId, leftSegment, rightSegment, payload.sourceSegmentId)[0] ?? track;
+            }),
+          })),
+        },
+        operation,
+      );
     }
     case 'VERSION_CREATED':
     case 'VERSION_BRANCH_CREATED':
@@ -1444,7 +1489,7 @@ export function applyAcceptedProjectOperation(
 
 export function applyAcceptedProjectOperationWithoutHistory(
   state: LocalProjectState,
-  operation: DawProjectOperationRecord,
+  operation: AcceptedDawProjectOperation,
 ): LocalProjectState {
   const next = applyAcceptedProjectOperation(state, operation);
   if (next.operationHistory === state.operationHistory) {
@@ -1459,7 +1504,7 @@ export function applyAcceptedProjectOperationWithoutHistory(
 
 export function applyAcceptedProjectOperations(
   state: LocalProjectState,
-  operations: DawProjectOperationRecord[],
+  operations: AcceptedDawProjectOperation[],
 ) {
   return operations.reduce((next, operation) => applyAcceptedProjectOperation(next, operation), state);
 }

@@ -1,4 +1,5 @@
 import type {
+  AcceptedDawProjectOperation,
   DawOperationCommitRequest,
   DawOperationType,
   DawProjectBootstrapResponse,
@@ -44,6 +45,16 @@ const VERSION_TREE_REFRESH_OPERATION_TYPES = new Set<DawOperationType>([
   'SEGMENT_TRIMMED',
   'SEGMENT_MERGED',
   'CROSSFADE_SET',
+  'VERSION_CREATED',
+  'VERSION_BRANCH_CREATED',
+  'VERSION_RENAMED',
+  'VERSION_SELECTED',
+  'VERSION_REVERTED_FROM',
+  'CURRENT_VERSION_CHANGED',
+  'VERSION_PARENT_SET',
+  'VERSION_OPERATION_SUMMARY_SET',
+  'VERSION_NODE_ADDED',
+  'VERSION_TIMING_UPDATED',
 ]);
 
 type RealtimeAcceptedOperationEvent = {
@@ -157,7 +168,7 @@ function isBrowserOnline() {
 function toSyntheticOperation(
   request: DawOperationCommitRequest,
   projectId: string,
-): DawProjectOperationRecord {
+): AcceptedDawProjectOperation {
   return {
     id: generateId(),
     projectId,
@@ -174,7 +185,7 @@ function toSyntheticOperation(
   };
 }
 
-function isSyntheticOperationRecord(operation: DawProjectOperationRecord) {
+function isSyntheticOperationRecord(operation: AcceptedDawProjectOperation) {
   return operation.operationSeq === 0 && operation.actorUserId === 'local';
 }
 
@@ -202,12 +213,12 @@ function isReplayableQueuedOperationStatus(status: LocalOperationQueueEntry['sta
   return status === 'optimistic' || status === 'pending' || status === 'retrying' || status === 'failed';
 }
 
-function toQueuedOperationRecord(
+function toReplayableAcceptedOperationRecord(
   entry: LocalOperationQueueEntry,
   projectId: string,
   demoId: string,
   operationSeq: number,
-): DawProjectOperationRecord {
+): AcceptedDawProjectOperation {
   return {
     id: entry.id,
     projectId,
@@ -222,6 +233,11 @@ function toQueuedOperationRecord(
     idempotencyKey: entry.idempotencyKey,
     clientOperationId: entry.clientOperationId,
   };
+}
+
+function shouldReplayQueuedOperationEntry(entry: LocalOperationQueueEntry) {
+  // SEGMENT_SPLIT requests are queued in request shape and must wait for the server's accepted payload.
+  return isReplayableQueuedOperationStatus(entry.status) && entry.operationType !== 'SEGMENT_SPLIT';
 }
 
 function toPersistedPendingStatus(status: LocalOperationQueueEntry['status']) {
@@ -588,15 +604,27 @@ export class ProjectSyncEngine {
           : left.createdAt - right.createdAt,
       );
 
-    if (replayableEntries.length === 0) {
+    const skippedSplitEntries = replayableEntries.filter((entry) => !shouldReplayQueuedOperationEntry(entry));
+    if (skippedSplitEntries.length > 0) {
+      console.warn('[daw][project-sync-engine] skipping optimistic replay for queued SEGMENT_SPLIT operations', {
+        projectId: this.projectId,
+        demoId: this.demoId,
+        skippedOperationIds: skippedSplitEntries.map((entry) => entry.id),
+        skippedIdempotencyKeys: skippedSplitEntries.map((entry) => entry.idempotencyKey),
+      });
+    }
+
+    const optimisticReplayEntries = replayableEntries.filter((entry) => shouldReplayQueuedOperationEntry(entry));
+
+    if (optimisticReplayEntries.length === 0) {
       return false;
     }
 
     const baseOperationSeq = Math.max(this.getLastSeenOperationSeq(), this.state.lastSyncedOperationSeq);
     let nextProjectState = this.state.projectState;
 
-    for (const [index, entry] of replayableEntries.entries()) {
-      const replayOperation = toQueuedOperationRecord(entry, this.projectId, this.demoId, baseOperationSeq + index + 1);
+    for (const [index, entry] of optimisticReplayEntries.entries()) {
+      const replayOperation = toReplayableAcceptedOperationRecord(entry, this.projectId, this.demoId, baseOperationSeq + index + 1);
       nextProjectState = applyAcceptedProjectOperationWithoutHistory(nextProjectState, replayOperation);
     }
 
@@ -1082,10 +1110,18 @@ export class ProjectSyncEngine {
       clientOperationId,
     })
       .then(async (operation) => {
-        await this.receiveAcceptedRemoteOperations([operation]);
-        if (shouldRefreshVersionTreeAfterOperation(normalizedRequest.operationType)) {
-          await this.refreshTimelineEditStateFromServer();
+        const shouldApplyAcceptedOperation =
+          !(normalizedRequest.operationType === 'SEGMENT_SPLIT' && isSyntheticOperationRecord(operation));
+
+        if (shouldApplyAcceptedOperation) {
+          await this.receiveAcceptedRemoteOperations([operation]);
+          if (shouldRefreshVersionTreeAfterOperation(normalizedRequest.operationType)) {
+            await this.refreshTimelineEditStateFromServer();
+          }
+        } else {
+          await this.persistProjectState();
         }
+
         this.setState({
           isOnline: !isSyntheticOperationRecord(operation),
           lastError: null,
@@ -1184,10 +1220,18 @@ export class ProjectSyncEngine {
 
     const sendPromise = this.sendOperationToServer(request)
       .then(async (operation) => {
-        await this.receiveAcceptedRemoteOperations([operation]);
-        if (shouldRefreshVersionTreeAfterOperation(request.operationType)) {
-          await this.refreshTimelineEditStateFromServer();
+        const shouldApplyAcceptedOperation =
+          !(request.operationType === 'SEGMENT_SPLIT' && isSyntheticOperationRecord(operation));
+
+        if (shouldApplyAcceptedOperation) {
+          await this.receiveAcceptedRemoteOperations([operation]);
+          if (shouldRefreshVersionTreeAfterOperation(request.operationType)) {
+            await this.refreshTimelineEditStateFromServer();
+          }
+        } else {
+          await this.persistProjectState();
         }
+
         this.setState({
           isOnline: !isSyntheticOperationRecord(operation),
           lastError: null,

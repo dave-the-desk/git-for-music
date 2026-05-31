@@ -352,7 +352,9 @@ export type DawOperationLogPayload =
   | DawOperationPayloadAnnotationUpdated
   | DawOperationPayloadAnnotationDeleted;
 
-export interface DawProjectOperationRecord {
+export type DawAcceptedOperationPayload = DawOperationLogPayload;
+
+export interface AcceptedDawProjectOperation {
   id: string;
   projectId: string;
   demoId: string;
@@ -362,10 +364,12 @@ export interface DawProjectOperationRecord {
   baseSnapshotId: string | null;
   baseOperationSeq: number;
   operationSeq: number;
-  payload: JsonValue;
+  payload: DawAcceptedOperationPayload;
   idempotencyKey: string;
   clientOperationId: string;
 }
+
+export type DawProjectOperationRecord = AcceptedDawProjectOperation;
 
 export interface DawRealtimeAcceptedOperationPayload {
   projectId: string;
@@ -374,7 +378,7 @@ export interface DawRealtimeAcceptedOperationPayload {
   operationSeq: number;
   actorUserId: string;
   operationType: DawOperationType;
-  payload: JsonValue;
+  payload: DawAcceptedOperationPayload;
   createdAt: string;
   clientOperationId?: string | null;
   idempotencyKey?: string | null;
@@ -605,6 +609,8 @@ export type DawOperationCommitRequest =
       operationType: 'ANNOTATION_DELETED';
       payload: DawOperationPayloadAnnotationDeleted;
     });
+
+export type DawProjectOperationRequest = DawOperationCommitRequest;
 
 export interface DawOperationsResponse {
   operations: DawProjectOperationRecord[];

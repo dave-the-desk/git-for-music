@@ -19,6 +19,7 @@ import { enqueueTrackUploadProcessingJobs } from '@/features/daw/server/jobs/upl
 import {
   emitAcceptedDawOperation,
   emitDawAssetProcessingStatus,
+  emitDawVersionTreeChanged,
 } from '@/features/daw/server/realtime-gateway';
 import {
   serializeCreatedDemoTrackVersionTreeTrack,
@@ -391,6 +392,12 @@ export async function completeUploadedOriginalAsset(input: {
       clientOperationId: recordedTrackVersionOperation.clientOperationId ?? null,
       baseSnapshotId: recordedTrackVersionOperation.baseSnapshotId ?? null,
       baseOperationSeq: recordedTrackVersionOperation.baseOperationSeq ?? 0,
+    });
+
+    emitDawVersionTreeChanged({
+      projectId: demo.project.id,
+      demoId: demo.id,
+      actorUserId: input.userId,
     });
   }
 

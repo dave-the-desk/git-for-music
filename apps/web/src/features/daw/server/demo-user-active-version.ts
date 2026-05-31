@@ -176,6 +176,7 @@ export async function loadOrCreateDemoUserActiveVersionState(
     demoId: string;
     userId: string;
     currentActiveVersionId?: string | null;
+    isFollowingHead?: boolean | null;
   },
 ): Promise<DemoUserActiveVersionState> {
   const demo = await client.demo.findFirst({
@@ -213,9 +214,11 @@ export async function loadOrCreateDemoUserActiveVersionState(
   }
 
   const versionLookup = buildDemoVersionLookup(demo.versions);
+  // Prefer the freshest version row we can see. `Demo.currentVersionId` is a legacy fallback
+  // and can lag behind the actual branch head after new version nodes are created.
   const sharedHeadVersionId =
-    (demo.currentVersionId && versionLookup.has(demo.currentVersionId) ? demo.currentVersionId : null) ??
     demo.versions[0]?.id ??
+    (demo.currentVersionId && versionLookup.has(demo.currentVersionId) ? demo.currentVersionId : null) ??
     null;
   const existingActiveVersionState = await client.demoUserActiveVersion.findFirst({
     where: {
@@ -228,6 +231,7 @@ export async function loadOrCreateDemoUserActiveVersionState(
     },
   });
 
+  const shouldFollowHead = input.isFollowingHead ?? existingActiveVersionState?.isFollowingHead ?? true;
   const preferredActiveVersionId =
     (input.currentActiveVersionId && versionLookup.has(input.currentActiveVersionId)
       ? input.currentActiveVersionId
@@ -236,11 +240,9 @@ export async function loadOrCreateDemoUserActiveVersionState(
       ? existingActiveVersionState.activeVersionId
       : null) ??
     sharedHeadVersionId;
-  const resolvedActiveVersionId = resolveDemoBranchHeadVersionId(
-    versionLookup,
-    preferredActiveVersionId,
-    sharedHeadVersionId,
-  );
+  const resolvedActiveVersionId = shouldFollowHead
+    ? resolveDemoBranchHeadVersionId(versionLookup, preferredActiveVersionId, sharedHeadVersionId)
+    : preferredActiveVersionId;
 
   if (!resolvedActiveVersionId) {
     return {
@@ -254,26 +256,26 @@ export async function loadOrCreateDemoUserActiveVersionState(
   if (existingActiveVersionState) {
     if (
       existingActiveVersionState.activeVersionId !== resolvedActiveVersionId ||
-      existingActiveVersionState.isFollowingHead !== true
+      existingActiveVersionState.isFollowingHead !== shouldFollowHead
     ) {
       const repairedActiveVersionState = await setDemoUserActiveVersion(client, {
         projectId: input.projectId,
         demoId: input.demoId,
         userId: input.userId,
         versionId: resolvedActiveVersionId,
-        isFollowingHead: true,
+        isFollowingHead: shouldFollowHead,
       });
 
       return repairedActiveVersionState ?? {
         activeVersionId: resolvedActiveVersionId,
-        isFollowingHead: true,
+        isFollowingHead: shouldFollowHead,
         activeBranchName: resolvedActiveVersion?.label ?? null,
       };
     }
 
     return {
       activeVersionId: resolvedActiveVersionId,
-      isFollowingHead: true,
+      isFollowingHead: shouldFollowHead,
       activeBranchName: resolvedActiveVersion?.label ?? null,
     };
   }
@@ -283,12 +285,12 @@ export async function loadOrCreateDemoUserActiveVersionState(
     demoId: input.demoId,
     userId: input.userId,
     versionId: resolvedActiveVersionId,
-    isFollowingHead: true,
+    isFollowingHead: shouldFollowHead,
   });
 
   return activeVersionState ?? {
     activeVersionId: resolvedActiveVersionId,
-    isFollowingHead: true,
+    isFollowingHead: shouldFollowHead,
     activeBranchName: resolvedActiveVersion?.label ?? null,
   };
 }

@@ -1564,9 +1564,7 @@ export function DemoDawClient({
     const nextVersionId = selectedCheckoutVersionId;
     if (!nextVersionId) return;
     stopTransport();
-    void projectSyncEngine.setActiveVersion(nextVersionId, {
-      isFollowingHead: true,
-    });
+    void projectSyncEngine.setActiveVersion(nextVersionId);
   }, [projectSyncEngine, selectedCheckoutVersionId, stopTransport]);
 
   const createBranchFromSelectedVersion = useCallback(

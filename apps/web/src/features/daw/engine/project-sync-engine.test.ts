@@ -177,7 +177,7 @@ test('ProjectSyncEngine applies remote accepted_operation updates once', async (
   try {
     harness.projectId = 'project-1';
     harness.demoId = 'demo-1';
-    harness.bootstrapResponse = makeBootstrap([root], root.id);
+    harness.bootstrapResponse = null;
     harness.state = {
       ...engine.getState(),
       projectState: initial,
@@ -1355,6 +1355,249 @@ test('ProjectSyncEngine applies accepted track offset updates in place without c
   }
 });
 
+test('ProjectSyncEngine skips queued request-shaped segment splits during replay', () => {
+  const sourceSegment: TrackTimelineSegment = {
+    id: 'segment-source',
+    trackVersionId: 'track-version-a',
+    sourceStartMs: 0,
+    sourceEndMs: 1000,
+    timelineStartMs: 0,
+    timelineEndMs: 1000,
+    durationMs: 1000,
+    startMs: 0,
+    endMs: 1000,
+    gainDb: 0,
+    fadeInMs: 0,
+    fadeOutMs: 0,
+    isMuted: false,
+    position: 0,
+    isImplicit: false,
+  };
+  const root = makeVersion('version-root', {
+    isCurrent: true,
+    tracks: [
+      makeTrack('track-version-a', {
+        trackId: 'track-a',
+        trackName: 'Track A',
+        segments: [sourceSegment],
+      }),
+    ],
+  });
+  const initial = createLocalProjectStateFromBootstrap(makeBootstrap([root], root.id));
+  const engine = new ProjectSyncEngine();
+  const harness = engine as unknown as {
+    projectId: string | null;
+    demoId: string | null;
+    state: ReturnType<ProjectSyncEngine['getState']>;
+    replayQueuedOperationsIntoProjectState: () => boolean;
+  };
+  harness.projectId = 'project-1';
+  harness.demoId = 'demo-1';
+  harness.state = {
+    ...engine.getState(),
+    projectState: initial,
+    baseSnapshotId: 'snapshot-1',
+    lastSyncedOperationSeq: 1,
+    queue: {
+      entries: [
+        {
+          id: 'queued-split-1',
+          operationType: 'SEGMENT_SPLIT',
+          payload: {
+            trackVersionId: 'track-version-a',
+            segmentId: 'segment-source',
+            segmentStartMs: 0,
+            segmentEndMs: 1000,
+            splitTimeMs: 500,
+          },
+          baseSnapshotId: 'snapshot-1',
+          baseOperationSeq: 1,
+          targetTrackId: 'track-a',
+          targetSegmentId: 'segment-source',
+          affectedTimeRange: {
+            startMs: 0,
+            endMs: 1000,
+          },
+          status: 'optimistic',
+          attemptCount: 0,
+          error: null,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          idempotencyKey: 'queued-split-1',
+          clientOperationId: 'client-queued-split-1',
+        },
+      ],
+    },
+    isBootstrapping: false,
+    isOnline: true,
+    isSyncing: false,
+    lastError: null,
+  };
+
+  const originalWarn = console.warn;
+  console.warn = () => {};
+  try {
+    const replayed = harness.replayQueuedOperationsIntoProjectState();
+    const appliedState = engine.getState().projectState;
+
+    assert.equal(replayed, false);
+    assert.ok(appliedState);
+    assert.equal(appliedState?.versions[0]?.tracks[0]?.segments.length, 1);
+    assert.equal(engine.getState().queue.entries[0]?.status, 'optimistic');
+  } finally {
+    console.warn = originalWarn;
+  }
+});
+
+test('ProjectSyncEngine applies a remote accepted segment split even when a local request-shaped split is queued', async () => {
+  const sourceSegment: TrackTimelineSegment = {
+    id: 'segment-source',
+    trackVersionId: 'track-version-a',
+    sourceStartMs: 0,
+    sourceEndMs: 1000,
+    timelineStartMs: 0,
+    timelineEndMs: 1000,
+    durationMs: 1000,
+    startMs: 0,
+    endMs: 1000,
+    gainDb: 0,
+    fadeInMs: 0,
+    fadeOutMs: 0,
+    isMuted: false,
+    position: 0,
+    isImplicit: false,
+  };
+  const root = makeVersion('version-root', {
+    isCurrent: true,
+    tracks: [
+      makeTrack('track-version-a', {
+        trackId: 'track-a',
+        trackName: 'Track A',
+        segments: [sourceSegment],
+      }),
+    ],
+  });
+  const initial = createLocalProjectStateFromBootstrap(makeBootstrap([root], root.id));
+  const engine = new ProjectSyncEngine();
+  const harness = engine as unknown as {
+    projectId: string | null;
+    demoId: string | null;
+    bootstrapResponse: DawProjectBootstrapResponse | null;
+    state: ReturnType<ProjectSyncEngine['getState']>;
+  };
+  const stubbedCache = dawLocalCache as unknown as {
+    putAcceptedOperation: (projectId: string, demoId: string, operation: DawProjectOperationRecord) => Promise<void>;
+    deletePendingOperation: (projectId: string, demoId: string, idempotencyKey: string) => Promise<void>;
+    putProject: (...args: unknown[]) => Promise<void>;
+  };
+
+  const originalPutAcceptedOperation = stubbedCache.putAcceptedOperation;
+  const originalDeletePendingOperation = stubbedCache.deletePendingOperation;
+  const originalPutProject = stubbedCache.putProject;
+  const originalWarn = console.warn;
+
+  stubbedCache.putAcceptedOperation = async () => {};
+  stubbedCache.deletePendingOperation = async () => {};
+  stubbedCache.putProject = async () => {};
+  console.warn = () => {};
+
+  try {
+    harness.projectId = 'project-1';
+    harness.demoId = 'demo-1';
+    harness.bootstrapResponse = makeBootstrap([root], root.id);
+    harness.state = {
+      ...engine.getState(),
+      projectState: initial,
+      lastSyncedOperationSeq: 1,
+      queue: {
+        entries: [
+          {
+            id: 'queued-split-1',
+            operationType: 'SEGMENT_SPLIT',
+            payload: {
+              trackVersionId: 'track-version-a',
+              segmentId: 'segment-source',
+              segmentStartMs: 0,
+              segmentEndMs: 1000,
+              splitTimeMs: 500,
+            },
+            baseSnapshotId: 'snapshot-1',
+            baseOperationSeq: 1,
+            targetTrackId: 'track-a',
+            targetSegmentId: 'segment-source',
+            affectedTimeRange: {
+              startMs: 0,
+              endMs: 1000,
+            },
+            status: 'optimistic',
+            attemptCount: 0,
+            error: null,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            idempotencyKey: 'queued-split-1',
+            clientOperationId: 'client-queued-split-1',
+          },
+        ],
+      },
+      isBootstrapping: false,
+      isOnline: true,
+      isSyncing: false,
+      lastError: null,
+    };
+
+    const acceptedSplit = makeOperation('SEGMENT_SPLIT', 2, {
+      trackVersionId: 'track-version-a',
+      sourceSegmentId: 'segment-source',
+      leftSegment: {
+        id: 'segment-left',
+        trackVersionId: 'track-version-a',
+        startMs: 0,
+        endMs: 500,
+        timelineStartMs: 0,
+        timelineEndMs: 500,
+        gainDb: 0,
+        fadeInMs: 0,
+        fadeOutMs: 0,
+        isMuted: false,
+        position: 0,
+      },
+      rightSegment: {
+        id: 'segment-right',
+        trackVersionId: 'track-version-a',
+        startMs: 500,
+        endMs: 1000,
+        timelineStartMs: 500,
+        timelineEndMs: 1000,
+        gainDb: 0,
+        fadeInMs: 0,
+        fadeOutMs: 0,
+        isMuted: false,
+        position: 1,
+      },
+    });
+
+    await engine.receiveAcceptedRemoteOperations([acceptedSplit]);
+
+    const appliedState = engine.getState().projectState;
+    const appliedTrack = appliedState?.versions[0]?.tracks[0];
+
+    assert.ok(appliedState);
+    assert.ok(appliedTrack);
+    assert.equal(appliedTrack?.segments.length, 2);
+    assert.deepEqual(
+      appliedTrack?.segments.map((segment) => segment.id),
+      ['segment-left', 'segment-right'],
+    );
+    assert.equal(appliedState?.lastSeenOperationSeq, 2);
+    assert.equal(engine.getState().queue.entries[0]?.status, 'optimistic');
+  } finally {
+    stubbedCache.putAcceptedOperation = originalPutAcceptedOperation;
+    stubbedCache.deletePendingOperation = originalDeletePendingOperation;
+    stubbedCache.putProject = originalPutProject;
+    console.warn = originalWarn;
+  }
+});
+
 test('ProjectSyncEngine marks the client local-only when a commit falls back offline', async () => {
   const root = makeVersion('version-root', {
     isCurrent: true,
@@ -1881,5 +2124,118 @@ test('ProjectSyncEngine catch-up applies a version-tree change without changing 
     assert.equal(engine.getState().lastSyncedOperationSeq, 2);
   } finally {
     (globalThis as typeof globalThis & { fetch: typeof fetch }).fetch = originalFetch;
+  }
+});
+
+test('ProjectSyncEngine reboots when a realtime version_tree_changed event arrives', async () => {
+  const root = makeVersion('version-root', { isCurrent: true });
+  const initial = createLocalProjectStateFromBootstrap(makeBootstrap([root], root.id));
+  const engine = new ProjectSyncEngine();
+  const harness = engine as unknown as {
+    projectId: string | null;
+    demoId: string | null;
+    state: ReturnType<ProjectSyncEngine['getState']>;
+    handleRealtimeVersionTreeChanged: (event: MessageEvent<string>) => Promise<void>;
+  };
+  harness.projectId = 'project-1';
+  harness.demoId = 'demo-1';
+  harness.state = {
+    ...engine.getState(),
+    projectState: {
+      ...initial,
+      activeVersionId: root.id,
+      isFollowingHead: true,
+    },
+    lastSyncedOperationSeq: 1,
+  };
+
+  const branch = makeVersion('version-branch', {
+    label: 'Branch label',
+    name: 'Branch label',
+    branchName: 'Branch label',
+    parentId: root.id,
+    parentVersionId: root.id,
+    createdAt: '2025-01-02T00:00:00.000Z',
+    isCurrent: true,
+    operationSeq: 2,
+  });
+  const bootstrapResponse = makeBootstrap([root, branch], branch.id);
+  bootstrapResponse.activeVersionId = branch.id;
+  bootstrapResponse.isFollowingHead = true;
+  bootstrapResponse.activeBranchName = branch.label;
+  bootstrapResponse.project.currentVersionId = branch.id;
+  bootstrapResponse.latestSnapshot = {
+    id: 'snapshot-2',
+    projectId: 'project-1',
+    demoId: 'demo-1',
+    operationSeq: 2,
+    snapshot: {
+      versions: [root, branch],
+      currentVersionId: branch.id,
+      comments: [],
+      annotations: [],
+      tempoMetadataByTrackVersionId: {},
+    },
+    createdById: 'user-b',
+    createdAt: '2025-01-02T00:00:00.000Z',
+  };
+
+  const originalFetch = globalThis.fetch;
+  const stubbedCache = dawLocalCache as unknown as {
+    putProject: (...args: unknown[]) => Promise<void>;
+    putPluginDefinitions: (...args: unknown[]) => Promise<void>;
+    putAsset: (...args: unknown[]) => Promise<void>;
+  };
+  const originalPutProject = stubbedCache.putProject;
+  const originalPutPluginDefinitions = stubbedCache.putPluginDefinitions;
+  const originalPutAsset = stubbedCache.putAsset;
+  const capturedUrls: string[] = [];
+
+  stubbedCache.putProject = async () => {};
+  stubbedCache.putPluginDefinitions = async () => {};
+  stubbedCache.putAsset = async () => {};
+  (globalThis as typeof globalThis & { fetch: typeof fetch }).fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input.toString();
+    capturedUrls.push(url);
+    if (url.includes('/bootstrap')) {
+      return jsonResponse(bootstrapResponse);
+    }
+    if (url.includes('/active-version') && init?.method === 'POST') {
+      return jsonResponse({
+        activeVersionId: branch.id,
+        isFollowingHead: true,
+        activeBranchName: branch.label,
+      });
+    }
+    throw new Error(`Unexpected fetch in test: ${url}`);
+  };
+
+  try {
+    await harness.handleRealtimeVersionTreeChanged({
+      data: JSON.stringify({
+        type: 'version_tree_changed',
+        projectId: 'project-1',
+        demoId: 'demo-1',
+        createdAt: '2025-01-02T00:00:00.000Z',
+        actorUserId: 'user-b',
+      }),
+    } as MessageEvent<string>);
+
+    assert.deepEqual(capturedUrls, [
+      '/api/daw/projects/project-1/bootstrap?demoId=demo-1',
+      '/api/daw/projects/project-1/active-version',
+    ]);
+    const projectState = engine.getState().projectState;
+    assert.ok(projectState);
+    assert.equal(projectState?.versions.length, 2);
+    assert.equal(projectState?.currentVersionId, branch.id);
+    assert.equal(projectState?.activeVersionId, branch.id);
+    assert.equal(projectState?.isFollowingHead, true);
+    assert.equal(engine.getState().lastSyncedOperationSeq, 2);
+  } finally {
+    (globalThis as typeof globalThis & { fetch: typeof fetch }).fetch = originalFetch;
+    stubbedCache.putProject = originalPutProject;
+    stubbedCache.putPluginDefinitions = originalPutPluginDefinitions;
+    stubbedCache.putAsset = originalPutAsset;
   }
 });

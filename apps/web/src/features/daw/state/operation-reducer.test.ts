@@ -1011,3 +1011,135 @@ test('SEGMENT_MOVED optimistic replay and accepted operation do not duplicate th
   assert.equal(movedSegment?.endMs, 900);
   assert.equal(applied.operationHistory.length, 1);
 });
+
+test('SEGMENT_SPLIT accepted payload replaces the source clip with deterministic left and right clips', () => {
+  const root = makeVersion('version-root', {
+    isCurrent: true,
+    tracks: [
+      makeTrack('track-version-1', {
+        trackId: 'track-1',
+        trackName: 'Track 1',
+        segments: [
+          {
+            id: 'segment-source',
+            trackVersionId: 'track-version-1',
+            sourceStartMs: 0,
+            sourceEndMs: 1000,
+            timelineStartMs: 0,
+            timelineEndMs: 1000,
+            durationMs: 1000,
+            startMs: 0,
+            endMs: 1000,
+            gainDb: 0,
+            fadeInMs: 0,
+            fadeOutMs: 0,
+            isMuted: false,
+            position: 0,
+            isImplicit: false,
+          },
+        ],
+      }),
+    ],
+  });
+  const initial = createLocalProjectStateFromBootstrap(makeBootstrap([root], root.id));
+  const splitOperation = makeOperation('SEGMENT_SPLIT', 2, {
+    trackVersionId: 'track-version-1',
+    sourceSegmentId: 'segment-source',
+    leftSegment: {
+      id: 'segment-left',
+      trackVersionId: 'track-version-1',
+      startMs: 0,
+      endMs: 500,
+      timelineStartMs: 0,
+      timelineEndMs: 500,
+      gainDb: 0,
+      fadeInMs: 0,
+      fadeOutMs: 0,
+      isMuted: false,
+      position: 0,
+    },
+    rightSegment: {
+      id: 'segment-right',
+      trackVersionId: 'track-version-1',
+      startMs: 500,
+      endMs: 1000,
+      timelineStartMs: 500,
+      timelineEndMs: 1000,
+      gainDb: 0,
+      fadeInMs: 0,
+      fadeOutMs: 0,
+      isMuted: false,
+      position: 1,
+    },
+  });
+
+  const applied = applyAcceptedProjectOperation(initial, splitOperation);
+  const updatedTrack = applied.versions[0]?.tracks[0];
+
+  assert.ok(updatedTrack);
+  assert.equal(updatedTrack?.segments.length, 2);
+  assert.deepEqual(
+    updatedTrack?.segments.map((segment) => segment.id),
+    ['segment-left', 'segment-right'],
+  );
+  assert.equal(updatedTrack?.segments[0]?.timelineStartMs, 0);
+  assert.equal(updatedTrack?.segments[1]?.timelineStartMs, 500);
+  assert.equal(applied.operationHistory.length, 1);
+});
+
+test('SEGMENT_SPLIT request-shaped payload is ignored instead of crashing the accepted reducer', () => {
+  const root = makeVersion('version-root', {
+    isCurrent: true,
+    tracks: [
+      makeTrack('track-version-1', {
+        trackId: 'track-1',
+        trackName: 'Track 1',
+        segments: [
+          {
+            id: 'segment-source',
+            trackVersionId: 'track-version-1',
+            sourceStartMs: 0,
+            sourceEndMs: 1000,
+            timelineStartMs: 0,
+            timelineEndMs: 1000,
+            durationMs: 1000,
+            startMs: 0,
+            endMs: 1000,
+            gainDb: 0,
+            fadeInMs: 0,
+            fadeOutMs: 0,
+            isMuted: false,
+            position: 0,
+            isImplicit: false,
+          },
+        ],
+      }),
+    ],
+  });
+  const initial = createLocalProjectStateFromBootstrap(makeBootstrap([root], root.id));
+  const requestShapedSplit = makeOperation('SEGMENT_SPLIT', 2, {
+    trackVersionId: 'track-version-1',
+    segmentId: 'segment-source',
+    segmentStartMs: 0,
+    segmentEndMs: 1000,
+    splitTimeMs: 500,
+  }) as unknown as DawProjectOperationRecord;
+
+  const originalWarn = console.warn;
+  const warnings: unknown[][] = [];
+  console.warn = ((...args: unknown[]) => {
+    warnings.push(args);
+  }) as typeof console.warn;
+
+  try {
+    const applied = applyAcceptedProjectOperation(initial, requestShapedSplit);
+    const updatedTrack = applied.versions[0]?.tracks[0];
+
+    assert.ok(updatedTrack);
+    assert.equal(updatedTrack?.segments.length, 1);
+    assert.equal(updatedTrack?.segments[0]?.id, 'segment-source');
+    assert.equal(warnings.length > 0, true);
+  } finally {
+    console.warn = originalWarn;
+  }
+});

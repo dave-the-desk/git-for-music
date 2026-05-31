@@ -18,6 +18,7 @@ import {
 } from '@/features/daw/server/assets';
 import {
   emitAcceptedDawOperation,
+  emitDawVersionTreeChanged,
 } from '@/features/daw/server/realtime-gateway';
 import {
   serializeCreatedDemoTrackVersionTreeTrack,
@@ -292,6 +293,12 @@ export async function uploadTrackCommand(input: {
       clientOperationId: recordedTrackVersionCreatedOperation.clientOperationId ?? null,
       baseSnapshotId: recordedTrackVersionCreatedOperation.baseSnapshotId ?? null,
       baseOperationSeq: recordedTrackVersionCreatedOperation.baseOperationSeq ?? 0,
+    });
+
+    emitDawVersionTreeChanged({
+      projectId: demo.project.id,
+      demoId: demo.id,
+      actorUserId: input.userId,
     });
   }
 

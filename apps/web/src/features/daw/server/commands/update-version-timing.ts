@@ -7,8 +7,12 @@ import type {
 } from '@git-for-music/shared';
 import { isValidTempoBpm, normalizeTimeSignature } from '@/features/daw/utils/timing';
 import type { DawProjectOperationRecord } from '@/features/daw/protocol';
+import { shouldBroadcastVersionTreeChanged } from '@/features/daw/server/command-api';
 import { recordDemoDawOperation } from '@/features/daw/server/snapshot-builder';
-import { emitAcceptedDawOperation } from '@/features/daw/server/realtime-gateway';
+import {
+  emitAcceptedDawOperation,
+  emitDawVersionTreeChanged,
+} from '@/features/daw/server/realtime-gateway';
 
 const MAX_LABEL_LENGTH = 120;
 const VALID_DENOMINATORS = new Set([1, 2, 4, 8, 16, 32]);
@@ -188,6 +192,14 @@ export async function updateDemoVersionTimingCommand(input: {
       baseSnapshotId: updated.operation.baseSnapshotId ?? null,
       baseOperationSeq: updated.operation.baseOperationSeq ?? 0,
     });
+
+    if (shouldBroadcastVersionTreeChanged('VERSION_TIMING_UPDATED')) {
+      emitDawVersionTreeChanged({
+        projectId: version.demo.project.id,
+        demoId: version.demoId,
+        actorUserId: updated.operation.actorUserId ?? input.userId,
+      });
+    }
   }
 
   return NextResponse.json(serializeTiming(updated.next));

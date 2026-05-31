@@ -97,6 +97,19 @@ const BRANCH_CREATING_OPERATION_TYPES = new Set<DawOperationType>([
   'SEGMENT_MERGED',
   'CROSSFADE_SET',
 ]);
+const VERSION_TREE_MUTATION_OPERATION_TYPES = new Set<DawOperationType>([
+  'VERSION_CREATED',
+  'VERSION_BRANCH_CREATED',
+  'VERSION_RENAMED',
+  'VERSION_SELECTED',
+  'VERSION_REVERTED_FROM',
+  'CURRENT_VERSION_CHANGED',
+  'TRACK_VERSION_CREATED',
+  'VERSION_PARENT_SET',
+  'VERSION_OPERATION_SUMMARY_SET',
+  'VERSION_NODE_ADDED',
+  'VERSION_TIMING_UPDATED',
+]);
 
 export function shouldBranchFromHistoricalBase(input: {
   baseSnapshotId: string | null;
@@ -138,6 +151,10 @@ export function getTimelineEditBranchLabel(operationType: DawOperationType) {
     default:
       return null;
   }
+}
+
+export function shouldBroadcastVersionTreeChanged(operationType: DawOperationType) {
+  return VERSION_TREE_MUTATION_OPERATION_TYPES.has(operationType);
 }
 
 function toIsoString(value: Date | string) {
@@ -1911,6 +1928,7 @@ export async function setUserActiveVersion(
     demoId: workspace.demo.id,
     userId: input.userId,
     currentActiveVersionId: input.activeVersionId,
+    isFollowingHead: input.isFollowingHead,
   });
 
   if (!activeVersionState) {
@@ -2212,6 +2230,9 @@ export async function commitDawProjectOperation(
           forceCheckpoint: execution.forceCheckpoint,
         },
       );
+      if (shouldBroadcastVersionTreeChanged(effectiveRequest.operationType)) {
+        versionTreeChanged = true;
+      }
 
       const operation = await loadOperationBySequence(tx, {
         demoId: workspace.demo.id,
