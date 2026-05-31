@@ -1228,3 +1228,162 @@ test('SEGMENT_MERGED replays by removing the source clips and inserting the merg
   assert.equal(applied.operationHistory.length, 1);
   assert.equal(applied.operationHistory[0]?.summary, 'Merged clips on Track 1');
 });
+
+test('SEGMENT_FADE_SET updates only the selected segment fade metadata', () => {
+  const segmentA: TrackTimelineSegment = {
+    id: 'segment-a',
+    trackVersionId: 'track-version-1',
+    sourceStartMs: 0,
+    sourceEndMs: 1000,
+    timelineStartMs: 0,
+    timelineEndMs: 1000,
+    durationMs: 1000,
+    startMs: 0,
+    endMs: 1000,
+    gainDb: 0,
+    fadeInMs: 10,
+    fadeOutMs: 20,
+    isMuted: false,
+    position: 0,
+    isImplicit: false,
+    crossfadeInMs: 5,
+    crossfadeOutMs: 6,
+    crossfadeCurve: 'linear',
+  };
+  const segmentB: TrackTimelineSegment = {
+    id: 'segment-b',
+    trackVersionId: 'track-version-1',
+    sourceStartMs: 1000,
+    sourceEndMs: 2000,
+    timelineStartMs: 1000,
+    timelineEndMs: 2000,
+    durationMs: 1000,
+    startMs: 1000,
+    endMs: 2000,
+    gainDb: 0,
+    fadeInMs: 30,
+    fadeOutMs: 40,
+    isMuted: false,
+    position: 1,
+    isImplicit: false,
+    crossfadeInMs: 7,
+    crossfadeOutMs: 8,
+    crossfadeCurve: 'equalPower',
+  };
+  const root = makeVersion('version-root', {
+    isCurrent: true,
+    tracks: [
+      makeTrack('track-version-1', {
+        trackId: 'track-1',
+        trackName: 'Track 1',
+        segments: [segmentA, segmentB],
+      }),
+    ],
+  });
+  const initial = createLocalProjectStateFromBootstrap(makeBootstrap([root], root.id));
+
+  const applied = applyAcceptedProjectOperation(
+    initial,
+    makeOperation('SEGMENT_FADE_SET', 2, {
+      trackVersionId: 'track-version-1',
+      segmentId: 'segment-a',
+      fadeInMs: 150,
+      fadeOutMs: 250,
+      previousFadeInMs: 10,
+      previousFadeOutMs: 20,
+    }),
+  );
+
+  const updatedTrack = applied.versions[0]?.tracks[0];
+  assert.ok(updatedTrack);
+  assert.deepEqual(updatedTrack?.segments[0], {
+    ...segmentA,
+    fadeInMs: 150,
+    fadeOutMs: 250,
+  });
+  assert.deepEqual(updatedTrack?.segments[1], segmentB);
+  assert.equal(applied.operationHistory.length, 1);
+  assert.equal(applied.operationHistory[0]?.summary, 'Set fade on Track 1');
+});
+
+test('CROSSFADE_SET updates only the left and right clip crossfade metadata', () => {
+  const segmentA: TrackTimelineSegment = {
+    id: 'segment-a',
+    trackVersionId: 'track-version-1',
+    sourceStartMs: 0,
+    sourceEndMs: 1000,
+    timelineStartMs: 0,
+    timelineEndMs: 1000,
+    durationMs: 1000,
+    startMs: 0,
+    endMs: 1000,
+    gainDb: 0,
+    fadeInMs: 10,
+    fadeOutMs: 20,
+    isMuted: false,
+    position: 0,
+    isImplicit: false,
+    crossfadeInMs: 11,
+    crossfadeOutMs: null,
+    crossfadeCurve: null,
+  };
+  const segmentB: TrackTimelineSegment = {
+    id: 'segment-b',
+    trackVersionId: 'track-version-1',
+    sourceStartMs: 1000,
+    sourceEndMs: 2000,
+    timelineStartMs: 1000,
+    timelineEndMs: 2000,
+    durationMs: 1000,
+    startMs: 1000,
+    endMs: 2000,
+    gainDb: 0,
+    fadeInMs: 30,
+    fadeOutMs: 40,
+    isMuted: false,
+    position: 1,
+    isImplicit: false,
+    crossfadeInMs: null,
+    crossfadeOutMs: 22,
+    crossfadeCurve: null,
+  };
+  const root = makeVersion('version-root', {
+    isCurrent: true,
+    tracks: [
+      makeTrack('track-version-1', {
+        trackId: 'track-1',
+        trackName: 'Track 1',
+        segments: [segmentA, segmentB],
+      }),
+    ],
+  });
+  const initial = createLocalProjectStateFromBootstrap(makeBootstrap([root], root.id));
+
+  const applied = applyAcceptedProjectOperation(
+    initial,
+    makeOperation('CROSSFADE_SET', 2, {
+      trackVersionId: 'track-version-1',
+      leftSegmentId: 'segment-a',
+      rightSegmentId: 'segment-b',
+      crossfadeInMs: 250,
+      crossfadeOutMs: 250,
+      curve: 'linear',
+    }),
+  );
+
+  const updatedTrack = applied.versions[0]?.tracks[0];
+  assert.ok(updatedTrack);
+  assert.equal(updatedTrack?.segments.length, 2);
+  assert.equal(updatedTrack?.segments[0]?.crossfadeInMs, 11);
+  assert.equal(updatedTrack?.segments[0]?.crossfadeOutMs, 250);
+  assert.equal(updatedTrack?.segments[0]?.crossfadeCurve, 'linear');
+  assert.equal(updatedTrack?.segments[0]?.fadeInMs, 10);
+  assert.equal(updatedTrack?.segments[0]?.fadeOutMs, 20);
+  assert.equal(updatedTrack?.segments[1]?.crossfadeInMs, 250);
+  assert.equal(updatedTrack?.segments[1]?.crossfadeOutMs, 22);
+  assert.equal(updatedTrack?.segments[1]?.crossfadeCurve, 'linear');
+  assert.equal(updatedTrack?.segments[1]?.fadeInMs, 30);
+  assert.equal(updatedTrack?.segments[1]?.fadeOutMs, 40);
+  assert.equal(applied.operationHistory.length, 1);
+  assert.equal(applied.operationHistory[0]?.summary, 'Adjusted crossfade on Track 1');
+});

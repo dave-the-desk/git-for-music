@@ -117,6 +117,7 @@ export interface ProjectSegment {
   position: number;
   crossfadeInMs: number | null;
   crossfadeOutMs: number | null;
+  crossfadeCurve?: string | null;
 }
 
 export interface ProjectTrackVersion {
@@ -274,6 +275,7 @@ export type ProjectOperationType =
   | 'SEGMENT_SPLIT'
   | 'SEGMENT_MOVED'
   | 'SEGMENT_TRIMMED'
+  | 'SEGMENT_FADE_SET'
   | 'SEGMENT_MERGED'
   | 'CROSSFADE_SET'
   | 'CROSSFADE_REMOVED'
@@ -362,6 +364,15 @@ export interface SegmentTrimmedOperationPayload {
     startMs: number;
     endMs: number;
   };
+}
+
+export interface SegmentFadeSetOperationPayload {
+  trackVersionId: string;
+  segmentId: string;
+  fadeInMs: number;
+  fadeOutMs: number;
+  previousFadeInMs?: number;
+  previousFadeOutMs?: number;
 }
 
 export interface SegmentMergedOperationPayload {
@@ -475,6 +486,7 @@ export interface ProjectOperationPayloadMap {
   SEGMENT_SPLIT: SegmentSplitOperationPayload;
   SEGMENT_MOVED: SegmentMovedOperationPayload;
   SEGMENT_TRIMMED: SegmentTrimmedOperationPayload;
+  SEGMENT_FADE_SET: SegmentFadeSetOperationPayload;
   SEGMENT_MERGED: SegmentMergedOperationPayload;
   CROSSFADE_SET: CrossfadeSetOperationPayload;
   CROSSFADE_REMOVED: CrossfadeRemovedOperationPayload;

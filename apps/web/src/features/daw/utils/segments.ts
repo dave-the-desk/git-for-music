@@ -47,9 +47,15 @@ export type MergeableSegment = SegmentLike & {
 
 export const EMPTY_TRACK_MIME_TYPE = 'application/x-git-for-music-empty-track';
 export const MERGE_EPSILON_MS = 2;
+export const DEFAULT_CROSSFADE_MS = 250;
+export const CROSSFADE_EPSILON_MS = 2;
 export const MERGE_DIFFERENT_TRACK_ERROR = 'These clips must be on the same track to merge.';
 export const MERGE_NOT_CONTIGUOUS_ERROR =
   'These clips cannot be merged because they are not continuous. Use a future bounce/render command to combine non-contiguous audio.';
+export const CROSSFADE_DIFFERENT_TRACK_ERROR = 'These clips must be on the same track to crossfade.';
+export const CROSSFADE_NOT_CONTIGUOUS_ERROR = 'These clips cannot be crossfaded because there is a gap between them.';
+export const CROSSFADE_NOT_SELECTABLE_ERROR = 'Only saved audio clips can be crossfaded.';
+export const CROSSFADE_DURATION_ERROR = 'Crossfade duration must fit within both clips.';
 
 function assertFiniteNumber(name: string, value: unknown): asserts value is number {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
@@ -140,6 +146,10 @@ export function isMergeSelectableSegment(segment: Pick<MergeableSegment, 'startM
   );
 }
 
+export function isFadeSelectableSegment(segment: Pick<MergeableSegment, 'startMs' | 'endMs' | 'isImplicit'>) {
+  return isMergeSelectableSegment(segment);
+}
+
 export function isSameMergeSelection(
   selection: MergeSelection | null,
   segment: Pick<MergeableSegment, 'id' | 'trackVersionId'>,
@@ -164,6 +174,97 @@ export function sortSegmentsForMerge<T extends MergeableSegment>(first: T, secon
   }
 
   return first.id <= second.id ? [first, second] : [second, first];
+}
+
+export function isCrossfadeSelectableSegment(
+  segment: Pick<MergeableSegment, 'startMs' | 'endMs' | 'isImplicit' | 'timelineEndMs' | 'timelineStartMs'>,
+) {
+  return (
+    segment.isImplicit !== true &&
+    isFiniteNumber(segment.startMs) &&
+    isFiniteNumber(segment.endMs) &&
+    segment.endMs > segment.startMs &&
+    isFiniteNumber(resolveSegmentTimelineStartMs(segment)) &&
+    isFiniteNumber(resolveSegmentTimelineEndMs(segment))
+  );
+}
+
+export function sortSegmentsForCrossfade<T extends MergeableSegment>(first: T, second: T): [T, T] {
+  const leftTimelineStartMs = resolveSegmentTimelineStartMs(first);
+  const rightTimelineStartMs = resolveSegmentTimelineStartMs(second);
+
+  if (leftTimelineStartMs < rightTimelineStartMs - CROSSFADE_EPSILON_MS) {
+    return [first, second];
+  }
+
+  if (rightTimelineStartMs < leftTimelineStartMs - CROSSFADE_EPSILON_MS) {
+    return [second, first];
+  }
+
+  if (first.position !== second.position) {
+    return first.position <= second.position ? [first, second] : [second, first];
+  }
+
+  return first.id <= second.id ? [first, second] : [second, first];
+}
+
+export function getCrossfadeCandidateError(first: MergeableSegment, second: MergeableSegment) {
+  if (!isCrossfadeSelectableSegment(first) || !isCrossfadeSelectableSegment(second)) {
+    return CROSSFADE_NOT_SELECTABLE_ERROR;
+  }
+
+  if (first.trackVersionId !== second.trackVersionId) {
+    return CROSSFADE_DIFFERENT_TRACK_ERROR;
+  }
+
+  const [left, right] = sortSegmentsForCrossfade(first, second);
+
+  if (left.id === right.id) {
+    return 'Select two different clips to crossfade.';
+  }
+
+  const leftTimelineEndMs = resolveSegmentTimelineEndMs(left);
+  const rightTimelineStartMs = resolveSegmentTimelineStartMs(right);
+  const timelineGapMs = rightTimelineStartMs - leftTimelineEndMs;
+
+  if (timelineGapMs > CROSSFADE_EPSILON_MS) {
+    return CROSSFADE_NOT_CONTIGUOUS_ERROR;
+  }
+
+  return null;
+}
+
+export function buildCrossfadePayload(
+  first: MergeableSegment,
+  second: MergeableSegment,
+  durationMs: number,
+  curve: string | null = 'linear',
+) {
+  if (!isFiniteNumber(durationMs) || durationMs <= 0) {
+    throw new Error('Crossfade duration must be a positive finite number');
+  }
+
+  const validationError = getCrossfadeCandidateError(first, second);
+  if (validationError) {
+    throw new Error(validationError);
+  }
+
+  const [left, right] = sortSegmentsForCrossfade(first, second);
+  const leftDurationMs = Math.max(0, left.endMs - left.startMs);
+  const rightDurationMs = Math.max(0, right.endMs - right.startMs);
+
+  if (durationMs > leftDurationMs + CROSSFADE_EPSILON_MS || durationMs > rightDurationMs + CROSSFADE_EPSILON_MS) {
+    throw new Error(CROSSFADE_DURATION_ERROR);
+  }
+
+  return {
+    trackVersionId: left.trackVersionId,
+    leftSegmentId: left.id,
+    rightSegmentId: right.id,
+    crossfadeInMs: durationMs,
+    crossfadeOutMs: durationMs,
+    curve,
+  };
 }
 
 function hasMergeCrossfadeMetadata(segment: MergeableSegment) {

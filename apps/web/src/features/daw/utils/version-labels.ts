@@ -16,6 +16,8 @@ type VersionLike = {
       startMs?: number;
       endMs?: number;
       position?: number;
+      fadeInMs?: number | null;
+      fadeOutMs?: number | null;
       crossfadeInMs?: number | null;
       crossfadeOutMs?: number | null;
       crossfadeCurve?: string | null;
@@ -105,6 +107,24 @@ function hasMeaningfulCrossfadeChange(
   );
 }
 
+function hasMeaningfulFadeChange(
+  left:
+    | {
+        fadeInMs?: number | null;
+        fadeOutMs?: number | null;
+      }
+    | undefined,
+  right:
+    | {
+        fadeInMs?: number | null;
+        fadeOutMs?: number | null;
+      }
+    | undefined,
+) {
+  if (!left || !right) return false;
+  return left.fadeInMs !== right.fadeInMs || left.fadeOutMs !== right.fadeOutMs;
+}
+
 function summarizeNotes(
   label: 'Comment' | 'Annotation',
   current:
@@ -171,6 +191,8 @@ export function getHistoryOperationBadgeLabel(operationType: string) {
       return 'Moved';
     case 'SEGMENT_TRIMMED':
       return 'Trimmed';
+    case 'SEGMENT_FADE_SET':
+      return 'Fade';
     case 'CROSSFADE_SET':
       return 'Crossfade';
     default:
@@ -210,6 +232,7 @@ export function getVersionOperationSummary<T extends VersionLike>(
 
     const prevSegmentsById = new Map(prevSegments.map((segment) => [segment.id, segment]));
     let moved = false;
+    let faded = false;
     let crossfade = false;
     let edited = false;
 
@@ -239,6 +262,10 @@ export function getVersionOperationSummary<T extends VersionLike>(
         crossfade = true;
       }
 
+      if (hasMeaningfulFadeChange(segment, previousSegment)) {
+        faded = true;
+      }
+
       if (
         previousSegment.position !== segment.position ||
         previousSegment.startMs !== segment.startMs ||
@@ -248,6 +275,7 @@ export function getVersionOperationSummary<T extends VersionLike>(
       }
     }
 
+    if (faded) return `Fade: ${track.trackName}`;
     if (crossfade) return `Crossfade: ${track.trackName}`;
     if (moved) return `Moved: ${track.trackName}`;
     if (edited) return `Edited: ${track.trackName}`;

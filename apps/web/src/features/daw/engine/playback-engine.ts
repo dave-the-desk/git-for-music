@@ -423,6 +423,7 @@ export class AudioPlaybackEngine {
 
           segmentGain.gain.setValueAtTime(startingGain, audioContext.currentTime);
 
+          // Crossfade curves are preserved in metadata, but playback currently applies a linear ramp.
           const fadeInMs = Math.max(0, segment.fadeInMs + (segment.crossfadeInMs ?? 0));
           const fadeOutMs = Math.max(0, segment.fadeOutMs + (segment.crossfadeOutMs ?? 0));
           if (fadeInMs > elapsedInSegmentMs) {

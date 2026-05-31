@@ -25,6 +25,8 @@ export type TrackLaneVisualSegment = TrackTimelineSegment & {
   widthPx: number;
   sourceOffsetPx: number;
   sourceWidthPx: number;
+  fadeInWidthPx: number;
+  fadeOutWidthPx: number;
   crossfadeInWidthPx: number;
   crossfadeOutWidthPx: number;
   waveform: WaveformCacheEntry | null;
@@ -127,8 +129,10 @@ export function buildDawVisualProjection(input: BuildDawVisualProjectionInput): 
         widthPx,
         sourceOffsetPx,
         sourceWidthPx,
-        crossfadeInWidthPx: msToPx(segment.crossfadeInMs ?? 0),
-        crossfadeOutWidthPx: msToPx(segment.crossfadeOutMs ?? 0),
+        fadeInWidthPx: msToPx(segment.fadeInMs),
+        fadeOutWidthPx: msToPx(segment.fadeOutMs),
+        crossfadeInWidthPx: segment.crossfadeInMs ? msToPx(segment.crossfadeInMs) : 0,
+        crossfadeOutWidthPx: segment.crossfadeOutMs ? msToPx(segment.crossfadeOutMs) : 0,
         waveform,
       };
     });

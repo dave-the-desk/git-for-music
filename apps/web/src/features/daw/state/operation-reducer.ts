@@ -558,6 +558,16 @@ function buildOperationHistoryEntry(
         summary: track ? `Merged clips on ${track.trackName}` : 'Merged clips',
       };
     }
+    case 'SEGMENT_FADE_SET': {
+      const payload = operation.payload as { trackVersionId: string; segmentId: string };
+      const track = findTrackByTrackVersionId(state, payload.trackVersionId);
+      return {
+        ...baseEntry,
+        trackId: track?.trackId ?? null,
+        segmentId: payload.segmentId,
+        summary: track ? `Set fade on ${track.trackName}` : 'Set fade',
+      };
+    }
     case 'CROSSFADE_SET': {
       const payload = operation.payload as { trackVersionId: string; leftSegmentId: string };
       const track = findTrackByTrackVersionId(state, payload.trackVersionId);
@@ -1110,6 +1120,39 @@ export function applyAcceptedProjectOperation(
         })),
       }, operation);
     }
+    case 'SEGMENT_FADE_SET': {
+      const payload = operation.payload as {
+        trackVersionId: string;
+        segmentId: string;
+        fadeInMs: number;
+        fadeOutMs: number;
+      };
+      return appendOperationHistory(
+        {
+          ...state,
+          versions: state.versions.map((version) => ({
+            ...version,
+            tracks: version.tracks.map((track) =>
+              track.trackVersionId !== payload.trackVersionId
+                ? track
+                : {
+                    ...track,
+                    segments: track.segments.map((segment) =>
+                      segment.id === payload.segmentId
+                        ? {
+                            ...segment,
+                            fadeInMs: payload.fadeInMs,
+                            fadeOutMs: payload.fadeOutMs,
+                          }
+                        : segment,
+                    ),
+                  },
+            ),
+          })),
+        },
+        operation,
+      );
+    }
     case 'CROSSFADE_SET': {
       const payload = operation.payload as {
         trackVersionId: string;
@@ -1119,36 +1162,39 @@ export function applyAcceptedProjectOperation(
         crossfadeOutMs: number;
         curve: string | null;
       };
-      return {
-        ...state,
-        versions: state.versions.map((version) => ({
-          ...version,
-          tracks: version.tracks.map((track) =>
-            track.trackVersionId !== payload.trackVersionId
-              ? track
-              : {
-                  ...track,
-                  segments: track.segments.map((segment) => {
-                    if (segment.id === payload.leftSegmentId) {
-                      return {
-                        ...segment,
-                        crossfadeOutMs: payload.crossfadeOutMs,
-                        crossfadeCurve: payload.curve,
-                      };
-                    }
-                    if (segment.id === payload.rightSegmentId) {
-                      return {
-                        ...segment,
-                        crossfadeInMs: payload.crossfadeInMs,
-                        crossfadeCurve: payload.curve,
-                      };
-                    }
-                    return segment;
-                  }),
-                },
-          ),
-        })),
-      };
+      return appendOperationHistory(
+        {
+          ...state,
+          versions: state.versions.map((version) => ({
+            ...version,
+            tracks: version.tracks.map((track) =>
+              track.trackVersionId !== payload.trackVersionId
+                ? track
+                : {
+                    ...track,
+                    segments: track.segments.map((segment) => {
+                      if (segment.id === payload.leftSegmentId) {
+                        return {
+                          ...segment,
+                          crossfadeOutMs: payload.crossfadeOutMs,
+                          crossfadeCurve: payload.curve,
+                        };
+                      }
+                      if (segment.id === payload.rightSegmentId) {
+                        return {
+                          ...segment,
+                          crossfadeInMs: payload.crossfadeInMs,
+                          crossfadeCurve: payload.curve,
+                        };
+                      }
+                      return segment;
+                    }),
+                  },
+            ),
+          })),
+        },
+        operation,
+      );
     }
     case 'SEGMENT_SPLIT': {
       if (!isAcceptedSegmentSplitPayload(operation.payload)) {

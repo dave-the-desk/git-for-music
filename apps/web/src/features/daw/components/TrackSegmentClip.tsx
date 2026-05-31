@@ -2,7 +2,7 @@
 
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { PX_PER_SECOND } from '@/features/daw/components/TimelineRuler';
-import type { TrackTimelineSegment } from '@/features/daw/utils/segments';
+import type { TrackLaneVisualSegment } from '@/features/daw/rendering/visual-renderer';
 
 export type TrackSegmentClipHandle = {
   playSegmentFromTimelineTime: (timelineTimeMs: number) => void;
@@ -13,22 +13,32 @@ export type TrackSegmentClipHandle = {
   setVolume: (volume: number) => void;
 };
 
+type FadeHandleEdge = 'left' | 'right';
+
 type TrackSegmentClipProps = {
   trackVersionId: string;
-  segment: TrackTimelineSegment;
+  segment: TrackLaneVisualSegment;
   storageKey: string;
   isSelected: boolean;
   isPendingMerge: boolean;
+  isPendingCrossfade: boolean;
+  isFadeSelected: boolean;
   isMuted: boolean;
   isDragging: boolean;
   isMergeSelectable: boolean;
-  timelineTool: 'select' | 'split' | 'merge';
+  isFadeSelectable: boolean;
+  isCrossfadeSelectable: boolean;
+  timelineTool: 'select' | 'split' | 'merge' | 'fade' | 'crossfade';
   currentTimeMs: number;
   onDurationReady?: (trackVersionId: string, durationMs: number) => void;
   onPointerDown: (event: React.PointerEvent<HTMLButtonElement>) => void;
   onPointerMove: (event: React.PointerEvent<HTMLButtonElement>) => void;
   onPointerUp: (event: React.PointerEvent<HTMLButtonElement>) => void;
   onPointerCancel: () => void;
+  onFadeHandlePointerDown: (edge: FadeHandleEdge, event: React.PointerEvent<HTMLDivElement>) => void;
+  onFadeHandlePointerMove: (edge: FadeHandleEdge, event: React.PointerEvent<HTMLDivElement>) => void;
+  onFadeHandlePointerUp: (edge: FadeHandleEdge, event: React.PointerEvent<HTMLDivElement>) => void;
+  onFadeHandlePointerCancel: (edge: FadeHandleEdge) => void;
   onClick: (event: React.MouseEvent<HTMLButtonElement>) => void;
 };
 
@@ -40,9 +50,13 @@ export const TrackSegmentClip = forwardRef<TrackSegmentClipHandle, TrackSegmentC
       storageKey,
       isSelected,
       isPendingMerge,
+      isPendingCrossfade,
+      isFadeSelected,
       isMuted,
       isDragging,
       isMergeSelectable,
+      isFadeSelectable,
+      isCrossfadeSelectable,
       timelineTool,
       currentTimeMs,
       onDurationReady,
@@ -50,6 +64,10 @@ export const TrackSegmentClip = forwardRef<TrackSegmentClipHandle, TrackSegmentC
       onPointerMove,
       onPointerUp,
       onPointerCancel,
+      onFadeHandlePointerDown,
+      onFadeHandlePointerMove,
+      onFadeHandlePointerUp,
+      onFadeHandlePointerCancel,
       onClick,
     },
     ref,
@@ -60,16 +78,19 @@ export const TrackSegmentClip = forwardRef<TrackSegmentClipHandle, TrackSegmentC
     const durationSecondsRef = useRef<number>(0);
     const [isReady, setIsReady] = useState(false);
     const [sourceDurationMs, setSourceDurationMs] = useState(0);
-    const clipWidthPx = Math.max(12, (segment.durationMs / 1000) * PX_PER_SECOND);
-    const leftPx = (segment.timelineStartMs / 1000) * PX_PER_SECOND;
-    const sourceOffsetPx = (segment.sourceStartMs / 1000) * PX_PER_SECOND;
-    const estimatedSourceWidthPx = Math.max(
-      clipWidthPx + sourceOffsetPx,
-      ((segment.sourceEndMs || segment.durationMs) / 1000) * PX_PER_SECOND,
-      300,
-    );
-    const sourceWidthPx = sourceDurationMs > 0 ? (sourceDurationMs / 1000) * PX_PER_SECOND : estimatedSourceWidthPx;
+    const clipWidthPx = Math.max(12, segment.widthPx);
+    const leftPx = segment.leftPx;
+    const sourceOffsetPx = segment.sourceOffsetPx;
+    const sourceWidthPx =
+      sourceDurationMs > 0 ? (sourceDurationMs / 1000) * PX_PER_SECOND : Math.max(segment.sourceWidthPx, 300);
     const isPlayheadInside = currentTimeMs >= segment.timelineStartMs && currentTimeMs <= segment.timelineEndMs;
+    const clipLabel = segment.isImplicit ? 'Clip 1' : `Clip ${segment.position + 1}`;
+    const durationLabel = `${Math.max(0, Math.round(segment.durationMs / 1000))}s`;
+    const isFadeToolActive = timelineTool === 'fade';
+
+    function stopHandleEvent(event: React.SyntheticEvent) {
+      event.stopPropagation();
+    }
 
     useEffect(() => {
       if (!containerRef.current) return;
@@ -224,6 +245,61 @@ export const TrackSegmentClip = forwardRef<TrackSegmentClipHandle, TrackSegmentC
       wavesurferRef.current?.setMuted(isMuted);
     }, [isMuted]);
 
+    const fadeInOverlayWidthPx = isFadeSelected ? Math.max(6, segment.fadeInWidthPx) : segment.fadeInWidthPx;
+    const fadeOutOverlayWidthPx = isFadeSelected ? Math.max(6, segment.fadeOutWidthPx) : segment.fadeOutWidthPx;
+    const crossfadeInOverlayWidthPx = segment.crossfadeInWidthPx > 0 ? Math.max(4, segment.crossfadeInWidthPx) : 0;
+    const crossfadeOutOverlayWidthPx = segment.crossfadeOutWidthPx > 0 ? Math.max(4, segment.crossfadeOutWidthPx) : 0;
+
+    function renderFadeHandle(edge: FadeHandleEdge) {
+      if (!isFadeToolActive || !isFadeSelected) return null;
+
+      const isLeft = edge === 'left';
+      const overlayWidthPx = isLeft ? fadeInOverlayWidthPx : fadeOutOverlayWidthPx;
+      const handlePositionClass = isLeft ? 'left-0' : 'right-0';
+      const overlayGradientClass = isLeft
+        ? 'bg-gradient-to-r from-cyan-400/25 to-transparent'
+        : 'bg-gradient-to-l from-cyan-400/25 to-transparent';
+
+      return (
+        <>
+          <div
+            className={`pointer-events-none absolute inset-y-0 ${handlePositionClass} ${overlayGradientClass}`}
+            style={{ width: overlayWidthPx }}
+            aria-hidden
+          />
+          <div
+            role="slider"
+            aria-label={isLeft ? 'Adjust fade in' : 'Adjust fade out'}
+            aria-valuemin={0}
+            aria-valuemax={Math.max(0, Math.round(segment.durationMs))}
+            aria-valuenow={Math.max(0, Math.round(isLeft ? segment.fadeInMs : segment.fadeOutMs))}
+            className={`absolute inset-y-0 z-20 flex w-2 items-center justify-center ${handlePositionClass} cursor-ew-resize bg-cyan-300/65 text-cyan-50 shadow-[0_0_0_1px_rgba(103,232,249,0.35)] hover:bg-cyan-200/80`}
+            onPointerDown={(event) => {
+              stopHandleEvent(event);
+              event.currentTarget.setPointerCapture(event.pointerId);
+              onFadeHandlePointerDown(edge, event);
+            }}
+            onPointerMove={(event) => {
+              stopHandleEvent(event);
+              onFadeHandlePointerMove(edge, event);
+            }}
+            onPointerUp={(event) => {
+              stopHandleEvent(event);
+              onFadeHandlePointerUp(edge, event);
+            }}
+            onPointerCancel={() => {
+              onFadeHandlePointerCancel(edge);
+            }}
+            onClick={(event) => {
+              stopHandleEvent(event);
+            }}
+          >
+            <span className="h-8 w-px rounded bg-white/90" />
+          </div>
+        </>
+      );
+    }
+
     return (
       <button
         type="button"
@@ -241,18 +317,42 @@ export const TrackSegmentClip = forwardRef<TrackSegmentClipHandle, TrackSegmentC
                 : isMergeSelectable
                   ? 'Merge tool: click this clip to use it as the first selection'
                   : 'This clip cannot be merged'
-              : 'Select tool: drag this clip to move it'
+              : timelineTool === 'fade'
+                ? isFadeSelected
+                  ? 'Fade tool: drag the left or right handle to adjust this clip'
+                  : isFadeSelectable
+                    ? 'Fade tool: click this clip to edit its fades'
+                    : 'This clip cannot be faded'
+                : timelineTool === 'crossfade'
+                  ? isPendingCrossfade
+                    ? 'Crossfade tool: first clip selected. Click a second compatible clip or press Escape to cancel.'
+                    : isCrossfadeSelectable
+                      ? 'Crossfade tool: click this clip as the first selection'
+                      : 'This clip cannot be crossfaded'
+                  : 'Select tool: drag this clip to move it'
         }
         className={`absolute top-2 z-10 overflow-hidden rounded-md border text-left transition-colors ${
           isPendingMerge
             ? 'border-emerald-400 bg-emerald-500/20 text-emerald-50 shadow-[0_0_0_1px_rgba(16,185,129,0.35)]'
+            : isPendingCrossfade
+              ? 'border-teal-400 bg-teal-500/20 text-teal-50 shadow-[0_0_0_1px_rgba(45,212,191,0.35)]'
+              : isFadeSelected
+                ? 'border-cyan-400 bg-cyan-500/20 text-cyan-50 shadow-[0_0_0_1px_rgba(34,211,238,0.35)]'
             : isSelected
             ? 'border-amber-400 bg-amber-500/20 text-amber-100 shadow-[0_0_0_1px_rgba(251,191,36,0.35)]'
             : timelineTool === 'merge'
               ? isMergeSelectable
                 ? 'border-emerald-500/60 bg-gray-900/70 text-gray-200 hover:border-emerald-400 hover:bg-emerald-500/10'
                 : 'border-gray-700 bg-gray-900/70 text-gray-500 opacity-70'
-              : 'border-gray-700 bg-gray-900/70 text-gray-300 hover:border-indigo-400 hover:bg-indigo-500/10'
+              : timelineTool === 'crossfade'
+                ? isCrossfadeSelectable
+                  ? 'border-teal-500/60 bg-gray-900/70 text-gray-200 hover:border-teal-400 hover:bg-teal-500/10'
+                  : 'border-gray-700 bg-gray-900/70 text-gray-500 opacity-70'
+              : timelineTool === 'fade'
+                  ? isFadeSelectable
+                    ? 'border-cyan-500/60 bg-gray-900/70 text-gray-200 hover:border-cyan-400 hover:bg-cyan-500/10'
+                    : 'border-gray-700 bg-gray-900/70 text-gray-500 opacity-70'
+                  : 'border-gray-700 bg-gray-900/70 text-gray-300 hover:border-indigo-400 hover:bg-indigo-500/10'
         } ${
           isMuted ? 'opacity-40' : ''
         } ${isPlayheadInside ? 'ring-1 ring-indigo-400/40' : ''} ${
@@ -264,7 +364,15 @@ export const TrackSegmentClip = forwardRef<TrackSegmentClipHandle, TrackSegmentC
                 ? isMergeSelectable
                   ? 'cursor-pointer'
                   : 'cursor-not-allowed'
-                : 'cursor-grab'
+              : timelineTool === 'crossfade'
+                  ? isCrossfadeSelectable
+                    ? 'cursor-pointer'
+                    : 'cursor-not-allowed'
+                  : timelineTool === 'fade'
+                    ? isFadeSelectable
+                      ? 'cursor-pointer'
+                      : 'cursor-not-allowed'
+                    : 'cursor-grab'
         }`}
         style={{
           left: leftPx,
@@ -282,14 +390,36 @@ export const TrackSegmentClip = forwardRef<TrackSegmentClipHandle, TrackSegmentC
           >
             <div ref={containerRef} className="h-full w-full" />
           </div>
+          <div
+            className="pointer-events-none absolute inset-y-0 left-0 bg-gradient-to-r from-cyan-400/18 to-transparent"
+            style={{ width: fadeInOverlayWidthPx }}
+            aria-hidden
+          />
+          <div
+            className="pointer-events-none absolute inset-y-0 right-0 bg-gradient-to-l from-cyan-400/18 to-transparent"
+            style={{ width: fadeOutOverlayWidthPx }}
+            aria-hidden
+          />
+          <div
+            className="pointer-events-none absolute inset-y-0 left-0 bg-gradient-to-r from-teal-400/16 to-transparent"
+            style={{ width: crossfadeInOverlayWidthPx }}
+            aria-hidden
+          />
+          <div
+            className="pointer-events-none absolute inset-y-0 right-0 bg-gradient-to-l from-teal-400/16 to-transparent"
+            style={{ width: crossfadeOutOverlayWidthPx }}
+            aria-hidden
+          />
           <div className="absolute inset-0 bg-gradient-to-b from-gray-950/10 via-transparent to-gray-950/45" />
           <div className="absolute left-1 top-1 rounded bg-gray-950/55 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-gray-100/95 backdrop-blur-[2px]">
-            {segment.isImplicit ? 'Clip 1' : `Clip ${segment.position + 1}`}
+            {clipLabel}
           </div>
           <div className="absolute right-1 top-1 rounded bg-gray-950/55 px-1.5 py-0.5 text-[9px] font-medium text-gray-100/90 backdrop-blur-[2px]">
-            {Math.max(0, Math.round(segment.durationMs / 1000))}s
+            {durationLabel}
           </div>
           <div className="absolute inset-0 border border-white/5" />
+          {renderFadeHandle('left')}
+          {renderFadeHandle('right')}
           {isReady ? null : (
             <div className="absolute inset-0 animate-pulse bg-gray-900/20" aria-hidden />
           )}

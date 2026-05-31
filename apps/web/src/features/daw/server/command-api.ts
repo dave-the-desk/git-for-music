@@ -18,6 +18,9 @@ import {
 import { analyzeDawOperationConflict } from '@/features/daw/server/conflict-rules';
 import {
   buildMergedSegmentFromPair,
+  CROSSFADE_EPSILON_MS,
+  CROSSFADE_DURATION_ERROR,
+  getCrossfadeCandidateError,
   getMergeCandidateError,
   sortSegmentsForMerge,
   splitSegment,
@@ -94,6 +97,7 @@ const TIMELINE_EDIT_OPERATION_TYPES = new Set<DawOperationType>([
   'SEGMENT_DELETED',
   'SEGMENT_TRIMMED',
   'SEGMENT_MERGED',
+  'SEGMENT_FADE_SET',
   'CROSSFADE_SET',
 ]);
 const BRANCH_CREATING_OPERATION_TYPES = new Set<DawOperationType>([
@@ -101,6 +105,7 @@ const BRANCH_CREATING_OPERATION_TYPES = new Set<DawOperationType>([
   'SEGMENT_DELETED',
   'SEGMENT_TRIMMED',
   'SEGMENT_MERGED',
+  'SEGMENT_FADE_SET',
   'CROSSFADE_SET',
 ]);
 const VERSION_TREE_MUTATION_OPERATION_TYPES = new Set<DawOperationType>([
@@ -128,6 +133,10 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
 export function isTimelineEditOperation(operationType: DawOperationType) {
   return TIMELINE_EDIT_OPERATION_TYPES.has(operationType);
 }
@@ -152,6 +161,8 @@ export function getTimelineEditBranchLabel(operationType: DawOperationType) {
       return 'Trimmed clip';
     case 'SEGMENT_MERGED':
       return 'Merged clips';
+    case 'SEGMENT_FADE_SET':
+      return 'Fade adjusted';
     case 'CROSSFADE_SET':
       return 'Crossfade adjusted';
     default:
@@ -404,6 +415,139 @@ function validateCollaborativeNotePayload(
 
   if (payload.startTimeMs !== null && payload.endTimeMs !== null && payload.endTimeMs < payload.startTimeMs) {
     return `${noteKind} endTimeMs must be greater than or equal to startTimeMs`;
+  }
+
+  return null;
+}
+
+type SegmentFadeValidationSegment = {
+  id: string;
+  trackVersionId: string;
+  startMs: number;
+  endMs: number;
+  timelineStartMs: number | null;
+  fadeInMs: number;
+  fadeOutMs: number;
+  position: number;
+};
+
+type SegmentCrossfadeValidationSegment = MergeableSegment;
+
+function materializeFadeValidationSegment(segment: {
+  id: string;
+  trackVersionId: string;
+  startMs: number;
+  endMs: number;
+  timelineStartMs: number | null;
+  fadeInMs: number;
+  fadeOutMs: number;
+  position: number;
+  trackVersion: {
+    startOffsetMs: number;
+  };
+}): SegmentFadeValidationSegment {
+  return {
+    id: segment.id,
+    trackVersionId: segment.trackVersionId,
+    startMs: segment.startMs,
+    endMs: segment.endMs,
+    timelineStartMs: segment.timelineStartMs ?? segment.trackVersion.startOffsetMs + segment.startMs,
+    fadeInMs: segment.fadeInMs,
+    fadeOutMs: segment.fadeOutMs,
+    position: segment.position,
+  };
+}
+
+function materializeCrossfadeValidationSegment(segment: {
+  id: string;
+  trackVersionId: string;
+  startMs: number;
+  endMs: number;
+  timelineStartMs: number | null;
+  position: number;
+  isImplicit?: boolean | null;
+  trackVersion: {
+    startOffsetMs: number;
+  };
+}): SegmentCrossfadeValidationSegment {
+  const timelineStartMs = segment.timelineStartMs ?? segment.trackVersion.startOffsetMs + segment.startMs;
+  return {
+    id: segment.id,
+    trackVersionId: segment.trackVersionId,
+    startMs: segment.startMs,
+    endMs: segment.endMs,
+    timelineStartMs,
+    timelineEndMs: timelineStartMs + Math.max(0, segment.endMs - segment.startMs),
+    gainDb: 0,
+    fadeInMs: 0,
+    fadeOutMs: 0,
+    isMuted: false,
+    position: segment.position,
+    isImplicit: segment.isImplicit ?? false,
+  };
+}
+
+export function validateSegmentFadeSelection(
+  segment: SegmentFadeValidationSegment,
+  payload: {
+    fadeInMs: number;
+    fadeOutMs: number;
+  },
+) {
+  if (!segment || !isFiniteNumber(segment.startMs) || !isFiniteNumber(segment.endMs)) {
+    return 'Segment not found';
+  }
+
+  if (!isFiniteNumber(payload.fadeInMs) || !isFiniteNumber(payload.fadeOutMs)) {
+    return 'Fade durations must be finite numbers';
+  }
+
+  if (payload.fadeInMs < 0 || payload.fadeOutMs < 0) {
+    return 'Fade durations must be non-negative';
+  }
+
+  const segmentDurationMs = Math.max(0, segment.endMs - segment.startMs);
+  if (payload.fadeInMs + payload.fadeOutMs > segmentDurationMs + CROSSFADE_EPSILON_MS) {
+    return 'Fade duration cannot exceed the clip duration.';
+  }
+
+  return null;
+}
+
+export function validateSegmentCrossfadeSelection(
+  leftSegment: SegmentCrossfadeValidationSegment,
+  rightSegment: SegmentCrossfadeValidationSegment,
+  payload: {
+    crossfadeInMs: number;
+    crossfadeOutMs: number;
+    curve: string | null;
+  },
+) {
+  const candidateError = getCrossfadeCandidateError(leftSegment, rightSegment);
+  if (candidateError) {
+    return candidateError;
+  }
+
+  if (!isFiniteNumber(payload.crossfadeInMs) || !isFiniteNumber(payload.crossfadeOutMs)) {
+    return 'Crossfade durations must be finite numbers';
+  }
+
+  if (payload.crossfadeInMs < 0 || payload.crossfadeOutMs < 0) {
+    return 'Crossfade durations must be non-negative';
+  }
+
+  if (payload.curve !== null && !isNonEmptyString(payload.curve)) {
+    return 'Crossfade curve must be a non-empty string or null';
+  }
+
+  const leftDurationMs = Math.max(0, leftSegment.endMs - leftSegment.startMs);
+  const rightDurationMs = Math.max(0, rightSegment.endMs - rightSegment.startMs);
+
+  if (
+    payload.crossfadeOutMs > leftDurationMs + CROSSFADE_EPSILON_MS ||
+    payload.crossfadeInMs > rightDurationMs + CROSSFADE_EPSILON_MS
+  ) {
+    return CROSSFADE_DURATION_ERROR;
   }
 
   return null;
@@ -1108,6 +1252,76 @@ async function executeOperationMutation(
       };
     }
 
+    case 'SEGMENT_FADE_SET': {
+      const payload = request.payload;
+      if (
+        !isFiniteNumber(payload.fadeInMs) ||
+        !isFiniteNumber(payload.fadeOutMs) ||
+        payload.fadeInMs < 0 ||
+        payload.fadeOutMs < 0
+      ) {
+        throw new Error('Fade durations must be non-negative finite numbers');
+      }
+
+      const segment = await client.segment.findFirst({
+        where: {
+          id: payload.segmentId,
+          trackVersionId: payload.trackVersionId,
+          trackVersion: {
+            track: {
+              demo: {
+                id: workspace.demo.id,
+                projectId: workspace.project.id,
+              },
+            },
+          },
+        },
+        select: {
+          id: true,
+          trackVersionId: true,
+          startMs: true,
+          endMs: true,
+          timelineStartMs: true,
+          fadeInMs: true,
+          fadeOutMs: true,
+          position: true,
+          trackVersion: {
+            select: {
+              startOffsetMs: true,
+            },
+          },
+        },
+      });
+
+      if (!segment) {
+        throw new Error('Segment not found');
+      }
+
+      const validationError = validateSegmentFadeSelection(materializeFadeValidationSegment(segment), payload);
+      if (validationError) {
+        throw new Error(validationError);
+      }
+
+      await client.segment.update({
+        where: { id: segment.id },
+        data: {
+          fadeInMs: payload.fadeInMs,
+          fadeOutMs: payload.fadeOutMs,
+        },
+      });
+
+      return {
+        logPayload: {
+          trackVersionId: payload.trackVersionId,
+          segmentId: segment.id,
+          fadeInMs: payload.fadeInMs,
+          fadeOutMs: payload.fadeOutMs,
+          previousFadeInMs: segment.fadeInMs,
+          previousFadeOutMs: segment.fadeOutMs,
+        },
+      };
+    }
+
     case 'SEGMENT_MERGED': {
       const payload = request.payload;
       if (!Array.isArray(payload.segmentIds) || payload.segmentIds.length !== 2) {
@@ -1256,6 +1470,10 @@ async function executeOperationMutation(
         throw new Error('Crossfade durations must be finite numbers');
       }
 
+      if (payload.crossfadeInMs < 0 || payload.crossfadeOutMs < 0) {
+        throw new Error('Crossfade durations must be non-negative');
+      }
+
       const leftSegment = await client.segment.findFirst({
         where: {
           id: payload.leftSegmentId,
@@ -1271,6 +1489,16 @@ async function executeOperationMutation(
         },
         select: {
           id: true,
+          trackVersionId: true,
+          startMs: true,
+          endMs: true,
+          timelineStartMs: true,
+          position: true,
+          trackVersion: {
+            select: {
+              startOffsetMs: true,
+            },
+          },
         },
       });
 
@@ -1289,11 +1517,34 @@ async function executeOperationMutation(
         },
         select: {
           id: true,
+          trackVersionId: true,
+          startMs: true,
+          endMs: true,
+          timelineStartMs: true,
+          position: true,
+          trackVersion: {
+            select: {
+              startOffsetMs: true,
+            },
+          },
         },
       });
 
       if (!leftSegment || !rightSegment) {
         throw new Error('Segment not found');
+      }
+
+      const validationError = validateSegmentCrossfadeSelection(
+        materializeCrossfadeValidationSegment(leftSegment),
+        materializeCrossfadeValidationSegment(rightSegment),
+        {
+          crossfadeInMs: payload.crossfadeInMs,
+          crossfadeOutMs: payload.crossfadeOutMs,
+          curve: payload.curve,
+        },
+      );
+      if (validationError) {
+        throw new Error(validationError);
       }
 
       return {
@@ -1837,6 +2088,15 @@ function translateRequestForBranch(
         },
       } as DawOperationCommitRequest & { clientOperationId: string };
     case 'SEGMENT_TRIMMED':
+      return {
+        ...request,
+        payload: {
+          ...request.payload,
+          trackVersionId: translateTrackVersionId(request.payload.trackVersionId),
+          segmentId: translateSegmentId(request.payload.segmentId) ?? request.payload.segmentId,
+        },
+      } as DawOperationCommitRequest & { clientOperationId: string };
+    case 'SEGMENT_FADE_SET':
       return {
         ...request,
         payload: {

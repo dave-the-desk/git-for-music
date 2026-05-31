@@ -1,4 +1,5 @@
 import type { Prisma } from '@git-for-music/db';
+import { loadSnapshotStateForDemo, type DemoDawSnapshotData } from '@/features/daw/server/snapshot-builder';
 import type {
   DawVersionTreeNodeSnapshot,
   DawVersionTreeTrackSnapshot,
@@ -61,6 +62,75 @@ export type DemoVersionCloneMap = {
   tracks: DawVersionTreeTrackSnapshot[];
 };
 
+async function loadSourceVersionSnapshotState(
+  tx: Prisma.TransactionClient,
+  demoId: string,
+): Promise<DemoDawSnapshotData | null> {
+  const demo = await tx.demo.findFirst?.({
+    where: {
+      id: demoId,
+    },
+    select: {
+      projectId: true,
+    },
+  });
+
+  if (!demo?.projectId) {
+    return null;
+  }
+
+  try {
+    return await loadSnapshotStateForDemo(tx, {
+      projectId: demo.projectId,
+      demoId,
+    });
+  } catch {
+    return null;
+  }
+}
+
+function hydrateClonedTrackCrossfades(
+  clonedTracks: DawVersionTreeTrackSnapshot[],
+  sourceSnapshot: DemoDawSnapshotData | null,
+  sourceVersionId: string,
+) {
+  if (!sourceSnapshot) {
+    return clonedTracks;
+  }
+
+  const sourceVersion = sourceSnapshot.versions.find((version) => version.id === sourceVersionId);
+  if (!sourceVersion) {
+    return clonedTracks;
+  }
+
+  const sourceTrackByTrackId = new Map(sourceVersion.tracks.map((track) => [track.trackId, track]));
+
+  return clonedTracks.map((track) => {
+    const sourceTrack = sourceTrackByTrackId.get(track.trackId);
+    if (!sourceTrack) {
+      return track;
+    }
+
+    const sourceSegmentsByPosition = new Map(sourceTrack.segments.map((segment) => [segment.position, segment]));
+    return {
+      ...track,
+      segments: track.segments.map((segment) => {
+        const sourceSegment = sourceSegmentsByPosition.get(segment.position);
+        if (!sourceSegment) {
+          return segment;
+        }
+
+        return {
+          ...segment,
+          crossfadeInMs: sourceSegment.crossfadeInMs ?? null,
+          crossfadeOutMs: sourceSegment.crossfadeOutMs ?? null,
+          crossfadeCurve: sourceSegment.crossfadeCurve ?? null,
+        };
+      }),
+    };
+  });
+}
+
 export async function cloneTrackVersionsToDemoVersion(
   tx: Prisma.TransactionClient,
   sourceVersionId: string,
@@ -81,6 +151,17 @@ export async function cloneTrackVersionsToDemoVersion(
   const trackVersionIdMap = new Map<string, string>();
   const segmentIdMap = new Map<string, string>();
   const tracks: DawVersionTreeTrackSnapshot[] = [];
+  const sourceVersionRow = await tx.demoVersion.findFirst({
+    where: {
+      id: sourceVersionId,
+    },
+    select: {
+      demoId: true,
+    },
+  });
+  const sourceSnapshotState = sourceVersionRow?.demoId
+    ? await loadSourceVersionSnapshotState(tx, sourceVersionRow.demoId)
+    : null;
 
   for (const sourceTrackVersion of sourceTrackVersions) {
     const createdTrackVersion = await tx.trackVersion.create({
@@ -165,7 +246,7 @@ export async function cloneTrackVersionsToDemoVersion(
   return {
     trackVersionIdMap,
     segmentIdMap,
-    tracks,
+    tracks: hydrateClonedTrackCrossfades(tracks, sourceSnapshotState, sourceVersionId),
   };
 }
 

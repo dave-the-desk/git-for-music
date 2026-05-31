@@ -26,7 +26,7 @@ export type DawRealtimePresenceEvent = DawRealtimeBaseEvent & {
   status: 'online' | 'idle' | 'away' | 'offline';
   cursorTimeMs: number | null;
   selectedTrackId: string | null;
-  currentTool: 'select' | 'split' | 'merge';
+  currentTool: 'select' | 'split' | 'merge' | 'fade' | 'crossfade';
   recordingState: 'idle' | 'recording' | 'preview' | 'uploading' | 'error';
   playbackFollowState: boolean;
 };

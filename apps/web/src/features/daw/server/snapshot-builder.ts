@@ -136,6 +136,7 @@ export type DemoDawOperationType =
   | 'SEGMENT_DELETED'
   | 'SEGMENT_TRIMMED'
   | 'SEGMENT_MERGED'
+  | 'SEGMENT_FADE_SET'
   | 'CROSSFADE_SET'
   | 'VERSION_CREATED'
   | 'VERSION_RENAMED'
@@ -200,6 +201,14 @@ export type DemoDawOperationPayload =
       trackVersionId: string;
       segmentIds: string[];
       mergedSegment: DemoDawSnapshotSegment;
+    }
+  | {
+      trackVersionId: string;
+      segmentId: string;
+      fadeInMs: number;
+      fadeOutMs: number;
+      previousFadeInMs?: number | null;
+      previousFadeOutMs?: number | null;
     }
   | {
       trackVersionId: string;
@@ -901,6 +910,30 @@ function mergeSegments(
   }
 }
 
+function setSegmentFade(
+  snapshot: DemoDawSnapshotData,
+  trackVersionId: string,
+  segmentId: string,
+  fadeInMs: number,
+  fadeOutMs: number,
+) {
+  for (const version of snapshot.versions) {
+    const track = version.tracks.find((candidate) => candidate.trackVersionId === trackVersionId);
+    if (!track) continue;
+
+    track.segments = track.segments.map((segment) =>
+      segment.id === segmentId
+        ? {
+            ...segment,
+            fadeInMs,
+            fadeOutMs,
+          }
+        : segment,
+    );
+    return;
+  }
+}
+
 function setCrossfade(
   snapshot: DemoDawSnapshotData,
   trackVersionId: string,
@@ -1144,6 +1177,24 @@ function applyDemoOperation(snapshot: DemoDawSnapshotData, operation: DemoDawSna
           { trackVersionId: string; segmentIds: string[]; mergedSegment: DemoDawSnapshotSegment }
         >;
         mergeSegments(snapshot, payload.trackVersionId, payload.segmentIds, payload.mergedSegment);
+        const historyItem = buildOperationHistoryItem(snapshot, operation);
+        if (historyItem) {
+          upsertOperationHistory(snapshot, historyItem);
+        }
+      }
+      return snapshot;
+    case 'SEGMENT_FADE_SET':
+      {
+        const payload = operation.payload as Extract<
+          DemoDawOperationPayload,
+          {
+            trackVersionId: string;
+            segmentId: string;
+            fadeInMs: number;
+            fadeOutMs: number;
+          }
+        >;
+        setSegmentFade(snapshot, payload.trackVersionId, payload.segmentId, payload.fadeInMs, payload.fadeOutMs);
         const historyItem = buildOperationHistoryItem(snapshot, operation);
         if (historyItem) {
           upsertOperationHistory(snapshot, historyItem);
@@ -1598,6 +1649,19 @@ function buildOperationHistoryItem(
         trackId: track?.trackId ?? null,
         segmentId: payload.segmentIds[0] ?? null,
         summary: track ? `Merged clips on ${track.trackName}` : 'Merged clips',
+      };
+    }
+    case 'SEGMENT_FADE_SET': {
+      const payload = operation.payload as Extract<
+        DemoDawOperationPayload,
+        { trackVersionId: string; segmentId: string }
+      >;
+      const track = findTrackByVersionId(snapshot, payload.trackVersionId);
+      return {
+        ...baseItem,
+        trackId: track?.trackId ?? null,
+        segmentId: payload.segmentId,
+        summary: track ? `Set fade on ${track.trackName}` : 'Set fade',
       };
     }
     case 'CROSSFADE_SET': {

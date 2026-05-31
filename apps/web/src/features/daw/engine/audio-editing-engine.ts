@@ -1,6 +1,7 @@
 import type {
   DawOperationCommitRequest,
   DawOperationPayloadCrossfadeSet,
+  DawOperationPayloadSegmentFadeSet,
   DawOperationPayloadSegmentDeleted,
   DawOperationPayloadSegmentMerged,
   DawOperationPayloadSegmentMoved,
@@ -85,6 +86,21 @@ export class AudioEditingEngine {
       demoId: this.context.demoId,
       operationType: 'SEGMENT_MERGED',
       payload: input satisfies DawOperationPayloadSegmentMerged,
+    };
+  }
+
+  setSegmentFade(input: {
+    trackVersionId: string;
+    segmentId: string;
+    fadeInMs: number;
+    fadeOutMs: number;
+    previousFadeInMs?: number | null;
+    previousFadeOutMs?: number | null;
+  }): DawOperationCommitRequest {
+    return {
+      demoId: this.context.demoId,
+      operationType: 'SEGMENT_FADE_SET',
+      payload: input satisfies DawOperationPayloadSegmentFadeSet,
     };
   }
 

@@ -1,7 +1,7 @@
 import { createProjectPresenceSeed, emitDawProjectPresence } from '@/features/daw/server/realtime-gateway';
 
 export type DawProjectPresenceStatus = 'online' | 'idle' | 'away';
-export type DawProjectPresenceCurrentTool = 'select' | 'split' | 'merge';
+export type DawProjectPresenceCurrentTool = 'select' | 'split' | 'merge' | 'fade' | 'crossfade';
 export type DawProjectRecordingState = 'idle' | 'recording' | 'preview' | 'uploading' | 'error';
 
 export type DawProjectPresenceRecord = {

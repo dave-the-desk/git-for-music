@@ -44,6 +44,7 @@ const VERSION_TREE_REFRESH_OPERATION_TYPES = new Set<DawOperationType>([
   'SEGMENT_DELETED',
   'SEGMENT_TRIMMED',
   'SEGMENT_MERGED',
+  'SEGMENT_FADE_SET',
   'CROSSFADE_SET',
   'VERSION_CREATED',
   'VERSION_BRANCH_CREATED',
@@ -94,7 +95,7 @@ type RealtimePresenceEvent = {
   status: 'online' | 'idle' | 'away' | 'offline';
   cursorTimeMs: number | null;
   selectedTrackId: string | null;
-  currentTool: 'select' | 'split' | 'merge';
+  currentTool: 'select' | 'split' | 'merge' | 'fade' | 'crossfade';
   recordingState: 'idle' | 'recording' | 'preview' | 'uploading' | 'error';
   playbackFollowState: boolean;
 };

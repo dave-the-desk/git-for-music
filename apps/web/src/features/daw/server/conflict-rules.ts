@@ -278,6 +278,18 @@ async function resolveRequestScope(
         payloadSignature: stableSignature(request.payload),
       };
     }
+    case 'SEGMENT_FADE_SET': {
+      const scope = await resolveSegmentScope(client, workspace, {
+        trackVersionId: request.payload.trackVersionId,
+        segmentId: request.payload.segmentId ?? request.targetSegmentId,
+      });
+      if (!scope) return null;
+      return {
+        kind: 'track-timeline',
+        ...scope,
+        payloadSignature: stableSignature(request.payload),
+      };
+    }
     case 'SEGMENT_MERGED': {
       const trackId = request.targetTrackId ?? (await resolveTrackVersionTrackId(client, workspace, request.payload.trackVersionId));
       if (!trackId) return null;
@@ -461,6 +473,24 @@ async function resolveExistingOperationScope(
         trackVersionId: payload.trackVersionId,
         segmentId: payload.segmentId,
         fallbackRange: rangeFrom(payload.to.startMs, payload.to.endMs),
+      });
+      if (!scope) return null;
+      return {
+        kind: 'track-timeline',
+        ...scope,
+        payloadSignature: stableSignature(payload),
+      };
+    }
+    case 'SEGMENT_FADE_SET': {
+      const payload = operation.payload as {
+        trackVersionId: string;
+        segmentId: string;
+        fadeInMs: number;
+        fadeOutMs: number;
+      };
+      const scope = await resolveSegmentScope(client, workspace, {
+        trackVersionId: payload.trackVersionId,
+        segmentId: payload.segmentId,
       });
       if (!scope) return null;
       return {

@@ -8,6 +8,7 @@ export type DawOperationType =
   | 'SEGMENT_DELETED'
   | 'SEGMENT_TRIMMED'
   | 'SEGMENT_MERGED'
+  | 'SEGMENT_FADE_SET'
   | 'CROSSFADE_SET'
   | 'VERSION_CREATED'
   | 'VERSION_RENAMED'
@@ -95,6 +96,15 @@ export interface DawOperationPayloadSegmentMerged {
   trackVersionId: string;
   segmentIds: string[];
   mergedSegment: DawSegmentSnapshot;
+}
+
+export interface DawOperationPayloadSegmentFadeSet {
+  trackVersionId: string;
+  segmentId: string;
+  fadeInMs: number;
+  fadeOutMs: number;
+  previousFadeInMs?: number | null;
+  previousFadeOutMs?: number | null;
 }
 
 export interface DawOperationPayloadCrossfadeSet {
@@ -283,6 +293,7 @@ export type DawCommandPayload =
   | DawOperationPayloadSegmentDeleted
   | DawOperationPayloadSegmentTrimmed
   | DawOperationPayloadSegmentMerged
+  | DawOperationPayloadSegmentFadeSet
   | DawOperationPayloadCrossfadeSet
   | DawOperationPayloadVersionCreated
   | DawOperationPayloadVersionRenamed
@@ -324,6 +335,7 @@ export type DawOperationLogPayload =
   | DawOperationPayloadSegmentDeleted
   | DawOperationPayloadSegmentTrimmed
   | DawOperationPayloadSegmentMerged
+  | DawOperationPayloadSegmentFadeSet
   | DawOperationPayloadCrossfadeSet
   | DawOperationPayloadVersionCreated
   | DawOperationPayloadVersionRenamed
@@ -518,6 +530,11 @@ export type DawOperationCommitRequest =
       demoId: string;
       operationType: 'SEGMENT_MERGED';
       payload: DawOperationPayloadSegmentMerged;
+    })
+  | (DawOperationCommitMetadata & {
+      demoId: string;
+      operationType: 'SEGMENT_FADE_SET';
+      payload: DawOperationPayloadSegmentFadeSet;
     })
   | (DawOperationCommitMetadata & {
       demoId: string;

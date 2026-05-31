@@ -38,12 +38,18 @@ import {
 } from '@/features/daw/rendering/visual-renderer';
 import {
   buildMergedSegmentFromPair,
+  buildCrossfadePayload,
   EMPTY_TRACK_MIME_TYPE,
+  DEFAULT_CROSSFADE_MS,
+  getCrossfadeCandidateError,
   getMergeCandidateError,
+  isFadeSelectableSegment,
   isMergeSelectableSegment,
+  isCrossfadeSelectableSegment,
   isSameMergeSelection,
   isValidSplitTime,
   sortSegmentsForMerge,
+  sortSegmentsForCrossfade,
   type MergeSelection,
 } from '@/features/daw/utils/segments';
 import {
@@ -208,7 +214,7 @@ type ProjectPresenceRecord = {
   status: 'online' | 'idle' | 'away' | 'offline';
   cursorTimeMs: number | null;
   selectedTrackId: string | null;
-  currentTool: 'select' | 'split' | 'merge';
+  currentTool: 'select' | 'split' | 'merge' | 'fade' | 'crossfade';
   recordingState: 'idle' | 'recording' | 'preview' | 'uploading' | 'error';
   playbackFollowState: boolean;
   updatedAt: string;
@@ -328,13 +334,17 @@ export function DemoDawClient({
   const [operationDebugEntries, setOperationDebugEntries] = useState<OperationDebugEntry[]>([]);
   const [dragError, setDragError] = useState<string | null>(null);
   const dragRef = useRef<TimelineDragState | null>(null);
-  const [timelineTool, setTimelineTool] = useState<'select' | 'split' | 'merge'>('select');
+  const [timelineTool, setTimelineTool] = useState<'select' | 'split' | 'merge' | 'fade' | 'crossfade'>('select');
   const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(null);
   const [splitHover, setSplitHover] = useState<SplitHoverState>(null);
   const [splitError, setSplitError] = useState<string | null>(null);
   const [pendingMergeSelection, setPendingMergeSelection] = useState<MergeSelection | null>(null);
   const [mergeError, setMergeError] = useState<string | null>(null);
   const [mergeSubmitting, setMergeSubmitting] = useState(false);
+  const [pendingCrossfadeSelection, setPendingCrossfadeSelection] = useState<MergeSelection | null>(null);
+  const [crossfadeError, setCrossfadeError] = useState<string | null>(null);
+  const [crossfadeSubmitting, setCrossfadeSubmitting] = useState(false);
+  const [fadeError, setFadeError] = useState<string | null>(null);
 
   const [renameState, setRenameState] = useState<RenameState | null>(null);
   const [historyProjectState, setHistoryProjectState] = useState<LocalProjectState | null>(null);
@@ -353,13 +363,26 @@ export function DemoDawClient({
   const undoTimelineEditInFlightRef = useRef(false);
   const deleteSelectedClipRef = useRef<() => Promise<boolean>>(async () => false);
   const cancelTimelineDragRef = useRef<() => void>(() => {});
-  const timelineToolRef = useRef<'select' | 'split' | 'merge'>('select');
+  const timelineToolRef = useRef<'select' | 'split' | 'merge' | 'fade' | 'crossfade'>('select');
   const presenceIdRef = useRef(crypto.randomUUID());
   const currentTimeMsRef = useRef(0);
   const selectedTrackIdRef = useRef<string | null>(null);
   const currentRecordingStateRef = useRef<'idle' | 'recording' | 'preview' | 'uploading' | 'error'>('idle');
   const playbackFollowStateRef = useRef(false);
   const lastPresencePayloadRef = useRef<string | null>(null);
+  const fadeDragRef = useRef<{
+    trackVersionId: string;
+    segmentId: string;
+    edge: 'left' | 'right';
+    pointerId: number;
+    startClientX: number;
+    currentClientX: number;
+    startFadeInMs: number;
+    startFadeOutMs: number;
+    currentFadeInMs: number;
+    currentFadeOutMs: number;
+    segmentDurationMs: number;
+  } | null>(null);
 
   const publishPresence = useCallback(async (statusOverride?: 'online' | 'idle' | 'away') => {
     const status =
@@ -940,6 +963,9 @@ export function DemoDawClient({
     setSplitError(null);
     setPendingMergeSelection(null);
     setMergeError(null);
+    clearCrossfadeSelection();
+    cancelFadeDrag();
+    clearFadeSelection();
     setTimelineTool('select');
   }, [selectedTracks, selectedVersionId]);
 
@@ -1245,10 +1271,21 @@ export function DemoDawClient({
       if (event.key === 'Escape') {
         if (dragRef.current) {
           cancelTimelineDragRef.current();
+        } else if (fadeDragRef.current) {
+          cancelFadeDrag();
+          clearFadeSelection();
+          setTimelineTool('select');
+        } else if (timelineToolRef.current === 'crossfade') {
+          clearCrossfadeSelection();
+          setSelectedSegmentId(null);
+          setTimelineTool('select');
         } else if (timelineToolRef.current === 'merge') {
           setPendingMergeSelection(null);
           setMergeError(null);
           setSelectedSegmentId(null);
+          setTimelineTool('select');
+        } else if (timelineToolRef.current === 'fade') {
+          clearFadeSelection();
           setTimelineTool('select');
         } else if (timelineToolRef.current === 'split') {
           setSplitHover(null);
@@ -1688,6 +1725,7 @@ export function DemoDawClient({
       case 'SEGMENT_DELETED':
       case 'SEGMENT_TRIMMED':
       case 'SEGMENT_MERGED':
+      case 'SEGMENT_FADE_SET':
       case 'CROSSFADE_SET':
         return findTrackByVersionId(
           (payload as Extract<DawCommandPayload, { trackVersionId: string }>).trackVersionId,
@@ -1719,6 +1757,8 @@ export function DemoDawClient({
         return (payload as Extract<DawCommandPayload, { segmentId: string }>).segmentId ?? null;
       case 'SEGMENT_MERGED':
         return (payload as Extract<DawCommandPayload, { segmentIds: string[] }>).segmentIds[0] ?? null;
+      case 'SEGMENT_FADE_SET':
+        return (payload as Extract<DawCommandPayload, { segmentId: string }>).segmentId ?? null;
       case 'CROSSFADE_SET':
         {
           const crossfade = payload as Extract<
@@ -1782,6 +1822,11 @@ export function DemoDawClient({
           const trimmed = payload as Extract<DawCommandPayload, { to: { startMs: number; endMs: number } }>;
           return { startMs: trimmed.to.startMs, endMs: trimmed.to.endMs };
         }
+      case 'SEGMENT_FADE_SET': {
+        const fade = payload as Extract<DawCommandPayload, { trackVersionId: string; segmentId: string }>;
+        const segment = findSegmentById(fade.trackVersionId, fade.segmentId);
+        return segment ? { startMs: segment.timelineStartMs, endMs: segment.timelineEndMs } : null;
+      }
       case 'SEGMENT_MERGED':
         {
           const merged = payload as Extract<
@@ -1974,6 +2019,144 @@ export function DemoDawClient({
       nextSegments,
       previousSelectedSegmentId: selectedSegmentId,
     });
+  }
+
+  function updateFadePreview(trackVersionId: string, segmentId: string, fadeInMs: number, fadeOutMs: number) {
+    const track = selectedTracks.find((candidate) => candidate.trackVersionId === trackVersionId);
+    if (!track) return;
+
+    const currentSegments = getDisplayedTrackSegments(track);
+    const nextSegments = currentSegments.map((segment) =>
+      segment.id === segmentId
+        ? {
+            ...segment,
+            fadeInMs,
+            fadeOutMs,
+          }
+        : segment,
+    );
+    setTrackSegmentLayout(trackVersionId, nextSegments);
+  }
+
+  function getFadePointerMetrics(
+    event: React.PointerEvent<HTMLDivElement>,
+    drag: NonNullable<typeof fadeDragRef.current>,
+    edge: 'left' | 'right',
+  ) {
+    const clip = event.currentTarget.closest<HTMLButtonElement>('button');
+    const rect = clip?.getBoundingClientRect();
+    if (!rect || rect.width <= 0) {
+      return null;
+    }
+
+    const position = Math.max(0, Math.min(event.clientX - rect.left, rect.width));
+    const durationMs = Math.max(0, drag.segmentDurationMs);
+    if (durationMs <= 0) {
+      return null;
+    }
+
+    const pxPerMs = rect.width / durationMs;
+    const maxFadeInMs = Math.max(0, durationMs - drag.currentFadeOutMs);
+    const maxFadeOutMs = Math.max(0, durationMs - drag.currentFadeInMs);
+
+    if (edge === 'left') {
+      return {
+        fadeInMs: Math.max(0, Math.min(position / pxPerMs, maxFadeInMs)),
+        fadeOutMs: drag.currentFadeOutMs,
+      };
+    }
+
+    return {
+      fadeInMs: drag.currentFadeInMs,
+      fadeOutMs: Math.max(0, Math.min((rect.width - position) / pxPerMs, maxFadeOutMs)),
+    };
+  }
+
+  function handleFadeHandlePointerDown(
+    track: DawTrack,
+    segment: TrackTimelineSegment,
+    edge: 'left' | 'right',
+    event: React.PointerEvent<HTMLDivElement>,
+  ) {
+    if (timelineTool !== 'fade') return;
+    setSelectedTrackVersionId(track.trackVersionId);
+    setSelectedSegmentId(segment.id);
+    setFadeError(null);
+    setCrossfadeError(null);
+
+    fadeDragRef.current = {
+      trackVersionId: track.trackVersionId,
+      segmentId: segment.id,
+      edge,
+      pointerId: event.pointerId,
+      startClientX: event.clientX,
+      currentClientX: event.clientX,
+      startFadeInMs: segment.fadeInMs,
+      startFadeOutMs: segment.fadeOutMs,
+      currentFadeInMs: segment.fadeInMs,
+      currentFadeOutMs: segment.fadeOutMs,
+      segmentDurationMs: segment.durationMs,
+    };
+  }
+
+  function handleFadeHandlePointerMove(
+    track: DawTrack,
+    segment: TrackTimelineSegment,
+    edge: 'left' | 'right',
+    event: React.PointerEvent<HTMLDivElement>,
+  ) {
+    if (timelineTool !== 'fade') return;
+    const drag = fadeDragRef.current;
+    if (!drag || drag.trackVersionId !== track.trackVersionId || drag.segmentId !== segment.id || drag.edge !== edge) {
+      return;
+    }
+
+    const next = getFadePointerMetrics(event, drag, edge);
+    if (!next) return;
+
+    drag.currentClientX = event.clientX;
+    drag.currentFadeInMs = next.fadeInMs;
+    drag.currentFadeOutMs = next.fadeOutMs;
+    updateFadePreview(track.trackVersionId, segment.id, next.fadeInMs, next.fadeOutMs);
+  }
+
+  async function handleFadeHandlePointerUp(
+    track: DawTrack,
+    segment: TrackTimelineSegment,
+    edge: 'left' | 'right',
+    event: React.PointerEvent<HTMLDivElement>,
+  ) {
+    if (timelineTool !== 'fade') return;
+    const drag = fadeDragRef.current;
+    if (!drag || drag.trackVersionId !== track.trackVersionId || drag.segmentId !== segment.id || drag.edge !== edge) {
+      return;
+    }
+
+    const next = getFadePointerMetrics(event, drag, edge);
+    const finalFadeInMs = next?.fadeInMs ?? drag.currentFadeInMs;
+    const finalFadeOutMs = next?.fadeOutMs ?? drag.currentFadeOutMs;
+
+    drag.currentClientX = event.clientX;
+    drag.currentFadeInMs = finalFadeInMs;
+    drag.currentFadeOutMs = finalFadeOutMs;
+    fadeDragRef.current = null;
+
+    try {
+      await commitEditingOperation(
+        audioEditingEngine.setSegmentFade({
+          trackVersionId: track.trackVersionId,
+          segmentId: segment.id,
+          fadeInMs: finalFadeInMs,
+          fadeOutMs: finalFadeOutMs,
+          previousFadeInMs: drag.startFadeInMs,
+          previousFadeOutMs: drag.startFadeOutMs,
+        }),
+      );
+      setFadeError(null);
+    } catch (error) {
+      updateFadePreview(track.trackVersionId, segment.id, drag.startFadeInMs, drag.startFadeOutMs);
+      setFadeError(error instanceof Error ? error.message : 'Could not set fade');
+    }
   }
 
   function toggleMute(trackVersionId: string) {
@@ -2213,8 +2396,44 @@ export function DemoDawClient({
     setMergeError(null);
   }
 
-  function activateTimelineTool(nextTool: 'select' | 'split' | 'merge') {
+  function clearCrossfadeSelection() {
+    setPendingCrossfadeSelection(null);
+    setCrossfadeError(null);
+  }
+
+  function clearFadeSelection() {
+    setSelectedSegmentId(null);
+    setFadeError(null);
+    fadeDragRef.current = null;
+  }
+
+  function cancelFadeDrag() {
+    const drag = fadeDragRef.current;
+    if (!drag) return;
+
+    const track = selectedTracks.find((candidate) => candidate.trackVersionId === drag.trackVersionId);
+    if (track) {
+      const currentSegments = getDisplayedTrackSegments(track);
+      const nextSegments = currentSegments.map((segment) =>
+        segment.id === drag.segmentId
+          ? {
+              ...segment,
+              fadeInMs: drag.startFadeInMs,
+              fadeOutMs: drag.startFadeOutMs,
+            }
+          : segment,
+      );
+      setTrackSegmentLayout(drag.trackVersionId, nextSegments);
+    }
+
+    fadeDragRef.current = null;
+  }
+
+  function activateTimelineTool(nextTool: 'select' | 'split' | 'merge' | 'fade' | 'crossfade') {
     clearMergeSelection();
+    clearCrossfadeSelection();
+    cancelFadeDrag();
+    clearFadeSelection();
 
     setSplitHover(null);
     setSplitError(null);
@@ -2222,6 +2441,10 @@ export function DemoDawClient({
     if (nextTool === 'merge') {
       // Merge mode is a fresh two-click workflow, so we drop any prior clip selection
       // instead of reusing it as an ambiguous first click.
+      setSelectedSegmentId(null);
+    }
+
+    if (nextTool === 'fade' || nextTool === 'crossfade') {
       setSelectedSegmentId(null);
     }
 
@@ -2588,29 +2811,69 @@ export function DemoDawClient({
     }
   }
 
-  async function handleCrossfadeSelectedSegments() {
-    const track = getActiveTrackForSelection();
-    if (!track) return;
-    const segments = getDisplayedTrackSegments(track).filter((segment) => !segment.isImplicit);
-    const selectedIndex = segments.findIndex((segment) => segment.id === selectedSegmentId);
-    if (selectedIndex < 0 || segments.length < 2) return;
-    const left = segments[selectedIndex];
-    const right = segments[selectedIndex + 1];
-    if (!left || !right) return;
+  async function handleCrossfadeSegmentClick(track: DawTrack, clickedSegment: TrackTimelineSegment) {
+    if (timelineTool !== 'crossfade') return;
+    if (crossfadeSubmitting) return;
+
+    setSelectedTrackVersionId(track.trackVersionId);
+
+    if (!isCrossfadeSelectableSegment(clickedSegment)) {
+      setCrossfadeError('Only saved audio clips can be crossfaded.');
+      return;
+    }
+
+    if (isSameMergeSelection(pendingCrossfadeSelection, clickedSegment)) {
+      clearCrossfadeSelection();
+      setSelectedSegmentId(null);
+      return;
+    }
+
+    if (!pendingCrossfadeSelection) {
+      clearCrossfadeSelection();
+      setPendingCrossfadeSelection({
+        trackVersionId: clickedSegment.trackVersionId,
+        segmentId: clickedSegment.id,
+      });
+      setSelectedSegmentId(clickedSegment.id);
+      return;
+    }
+
+    const firstSegment = findSegmentById(
+      pendingCrossfadeSelection.trackVersionId,
+      pendingCrossfadeSelection.segmentId,
+    );
+    if (!firstSegment) {
+      clearCrossfadeSelection();
+      setCrossfadeError('The first clip is no longer available. Please choose another clip.');
+      return;
+    }
+
+    const candidateError = getCrossfadeCandidateError(firstSegment, clickedSegment);
+    if (candidateError) {
+      setCrossfadeError(candidateError);
+      return;
+    }
+
+    const [leftSegment, rightSegment] = sortSegmentsForCrossfade(firstSegment, clickedSegment);
+    let payload: ReturnType<typeof buildCrossfadePayload>;
+    try {
+      payload = buildCrossfadePayload(leftSegment, rightSegment, DEFAULT_CROSSFADE_MS, 'linear');
+    } catch (error) {
+      setCrossfadeError(error instanceof Error ? error.message : 'Could not set crossfade');
+      return;
+    }
+
+    setCrossfadeError(null);
+    setCrossfadeSubmitting(true);
 
     try {
-      await commitEditingOperation(
-        audioEditingEngine.setCrossfade({
-          trackVersionId: track.trackVersionId,
-          leftSegmentId: left.id,
-          rightSegmentId: right.id,
-          crossfadeInMs: 250,
-          crossfadeOutMs: 250,
-          curve: 'linear',
-        }),
-      );
+      await commitEditingOperation(audioEditingEngine.setCrossfade(payload));
+      clearCrossfadeSelection();
+      setSelectedSegmentId(null);
     } catch (error) {
-      setDragError(error instanceof Error ? error.message : 'Could not set crossfade');
+      setCrossfadeError(error instanceof Error ? error.message : 'Could not set crossfade');
+    } finally {
+      setCrossfadeSubmitting(false);
     }
   }
 
@@ -2994,15 +3257,12 @@ export function DemoDawClient({
   }
 
   const hasTimelineContent = selectedTracks.length > 0 || temporaryRecordingTrack !== null;
-  const selectedTrackSegments = selectedTrack
-    ? getDisplayedTrackSegments(selectedTrack).filter((segment) => !segment.isImplicit)
-    : [];
-  const selectedTrackSegmentIndex = selectedTrackSegments.findIndex((segment) => segment.id === selectedSegmentId);
   const canEnterMergeMode = selectedTracks.some((track) =>
     getDisplayedTrackSegments(track).filter((segment) => !segment.isImplicit).length >= 2,
   );
-  const canCrossfadeSelectedSegments =
-    selectedTrackSegmentIndex >= 0 && selectedTrackSegmentIndex < selectedTrackSegments.length - 1;
+  const canEnterCrossfadeMode = selectedTracks.some((track) =>
+    getDisplayedTrackSegments(track).some((segment) => isCrossfadeSelectableSegment(segment)),
+  );
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
@@ -3101,15 +3361,37 @@ export function DemoDawClient({
                           ? 'bg-emerald-600 text-white hover:bg-emerald-500'
                           : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
                       } disabled:cursor-not-allowed disabled:opacity-40`}
-                    >
+                      >
                       Merge
                     </button>
                     <button
                       type="button"
-                      onClick={() => void handleCrossfadeSelectedSegments()}
-                      disabled={!canCrossfadeSelectedSegments}
-                      title={!canCrossfadeSelectedSegments ? 'Select a clip with a next segment to crossfade' : 'Apply a simple crossfade to the next segment'}
-                      className="rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-slate-300 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
+                      onClick={() => activateTimelineTool(timelineTool === 'fade' ? 'select' : 'fade')}
+                      title={timelineTool === 'fade' ? 'Leave fade mode' : 'Click a clip, then drag its fade handles'}
+                      className={`rounded-md px-3 py-2 text-sm font-medium ${
+                        timelineTool === 'fade'
+                          ? 'bg-cyan-600 text-white hover:bg-cyan-500'
+                          : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
+                      }`}
+                    >
+                      Fade
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => activateTimelineTool(timelineTool === 'crossfade' ? 'select' : 'crossfade')}
+                      disabled={!canEnterCrossfadeMode}
+                      title={
+                        !canEnterCrossfadeMode
+                          ? 'Add or upload at least one saved clip before using Crossfade'
+                          : timelineTool === 'crossfade'
+                            ? 'Leave crossfade mode'
+                            : 'Click two compatible clips on the same track to apply a crossfade'
+                      }
+                      className={`rounded-md px-3 py-2 text-sm font-medium ${
+                        timelineTool === 'crossfade'
+                          ? 'bg-teal-600 text-white hover:bg-teal-500'
+                          : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
+                      } disabled:cursor-not-allowed disabled:opacity-40`}
                     >
                       Crossfade
                     </button>
@@ -3144,7 +3426,7 @@ export function DemoDawClient({
                     </label>
                   </div>
                   <p className="text-xs text-slate-400">
-                    Select is the main cursor mode. Cut splits clips at the playhead. Merge now uses an explicit two-click clip selection.
+                    Select is the main cursor mode. Cut splits clips at the playhead. Merge, Fade, and Crossfade now use explicit clip selections.
                   </p>
                   {timelineTool === 'merge' ? (
                     <div className="space-y-1 text-xs">
@@ -3157,6 +3439,27 @@ export function DemoDawClient({
                       ) : null}
                       {!mergeSubmitting && !mergeError && !pendingMergeSelection ? (
                         <p className="text-slate-500">Click the first clip you want to merge.</p>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {timelineTool === 'fade' ? (
+                    <div className="space-y-1 text-xs">
+                      {fadeError ? <p className="text-rose-300">{fadeError}</p> : null}
+                      <p className="text-cyan-300">
+                        Click a clip to reveal its fade handles, then drag either edge to update the fade.
+                      </p>
+                    </div>
+                  ) : null}
+                  {timelineTool === 'crossfade' ? (
+                    <div className="space-y-1 text-xs">
+                      {crossfadeSubmitting ? <p className="text-teal-300">Applying crossfade...</p> : null}
+                      {crossfadeError ? <p className="text-rose-300">{crossfadeError}</p> : null}
+                      {!crossfadeSubmitting && pendingCrossfadeSelection ? (
+                        <p className="text-teal-300">
+                          First clip selected. Click a second compatible clip on the same track, or press Escape to cancel.
+                        </p>
+                      ) : !crossfadeSubmitting ? (
+                        <p className="text-slate-500">Click the first clip you want to crossfade.</p>
                       ) : null}
                     </div>
                   ) : null}
@@ -4026,7 +4329,17 @@ export function DemoDawClient({
                         const isPendingMerge =
                           pendingMergeSelection?.trackVersionId === track.trackVersionId &&
                           pendingMergeSelection.segmentId === segment.id;
+                        const isPendingCrossfade =
+                          pendingCrossfadeSelection?.trackVersionId === track.trackVersionId &&
+                          pendingCrossfadeSelection.segmentId === segment.id;
                         const isMergeSelectable = isMergeToolActive && isMergeSelectableSegment(segment);
+                        const isCrossfadeSelectable =
+                          timelineTool === 'crossfade' && isCrossfadeSelectableSegment(segment);
+                        const isFadeSelected =
+                          timelineTool === 'fade' &&
+                          selectedTrackVersionId === track.trackVersionId &&
+                          selectedSegmentId === segment.id;
+                        const isFadeSelectable = timelineTool === 'fade' && isFadeSelectableSegment(segment);
                         const isDraggingSegment =
                           dragRef.current?.kind === 'segment' && dragRef.current.segmentId === segment.id;
                         const isDraggingImplicitTrack =
@@ -4040,10 +4353,14 @@ export function DemoDawClient({
                             storageKey={track.storageKey}
                             isSelected={isSelected}
                             isPendingMerge={isPendingMerge}
+                            isPendingCrossfade={isPendingCrossfade}
+                            isFadeSelected={isFadeSelected}
                             isMuted={isMuted}
                             isDragging={isDraggingSegment || isDraggingImplicitTrack}
                             timelineTool={timelineTool}
                             isMergeSelectable={isMergeSelectable}
+                            isFadeSelectable={isFadeSelectable}
+                            isCrossfadeSelectable={isCrossfadeSelectable}
                             currentTimeMs={currentTimeMs}
                             onDurationReady={handleDurationReady}
                             onPointerDown={(event) => handleSegmentPointerDown(event, track, segment)}
@@ -4057,6 +4374,23 @@ export function DemoDawClient({
                             }}
                             onPointerUp={(event) => void handleSegmentPointerUp(event, track, segment)}
                             onPointerCancel={() => handleSegmentPointerCancel(track, segment)}
+                            onFadeHandlePointerDown={(edge, event) =>
+                              handleFadeHandlePointerDown(track, segment, edge, event)
+                            }
+                            onFadeHandlePointerMove={(edge, event) =>
+                              handleFadeHandlePointerMove(track, segment, edge, event)
+                            }
+                            onFadeHandlePointerUp={(edge, event) =>
+                              void handleFadeHandlePointerUp(track, segment, edge, event)
+                            }
+                            onFadeHandlePointerCancel={() => {
+                              if (
+                                fadeDragRef.current?.trackVersionId === track.trackVersionId &&
+                                fadeDragRef.current?.segmentId === segment.id
+                              ) {
+                                cancelFadeDrag();
+                              }
+                            }}
                             onClick={(event) => {
                               if (timelineTool === 'split') {
                                 event.stopPropagation();
@@ -4066,6 +4400,22 @@ export function DemoDawClient({
                               if (timelineTool === 'merge') {
                                 event.stopPropagation();
                                 void handleMergeSegmentClick(track, segment);
+                                return;
+                              }
+                              if (timelineTool === 'crossfade') {
+                                event.stopPropagation();
+                                void handleCrossfadeSegmentClick(track, segment);
+                                return;
+                              }
+                              if (timelineTool === 'fade') {
+                                event.stopPropagation();
+                                if (!isFadeSelectableSegment(segment)) {
+                                  setFadeError('Only saved audio clips can be faded.');
+                                  return;
+                                }
+                                setSelectedTrackVersionId(track.trackVersionId);
+                                setSelectedSegmentId(segment.id);
+                                setFadeError(null);
                                 return;
                               }
                               event.stopPropagation();

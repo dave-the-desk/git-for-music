@@ -294,7 +294,7 @@ test('loadSnapshotStateForDemo strips legacy recording take state from old snaps
     demoId: 'demo-1',
   });
 
-  assert.equal((snapshot as Record<string, unknown>).recordingTakesByTrackId, undefined);
+  assert.equal((snapshot as unknown as { recordingTakesByTrackId?: unknown }).recordingTakesByTrackId, undefined);
 });
 
 test('loadSnapshotStateForDemo replays SEGMENT_MOVED across track versions with exact placement', async () => {
@@ -560,4 +560,258 @@ test('loadSnapshotStateForDemo replays SEGMENT_MERGED into a single persisted cl
   });
   assert.equal(snapshot.operationHistory.length, 1);
   assert.equal(snapshot.operationHistory[0]?.summary, 'Merged clips on Track A');
+});
+
+test('loadSnapshotStateForDemo replays SEGMENT_FADE_SET into persisted clip fades', async () => {
+  const latestSnapshot = {
+    id: 'snapshot-1',
+    projectId: 'project-1',
+    demoId: 'demo-1',
+    operationSeq: 1,
+    snapshot: {
+      id: 'demo-1',
+      name: 'Demo',
+      description: null,
+      currentVersionId: 'version-root',
+      project: {
+        id: 'project-1',
+        slug: 'project-1',
+        group: {
+          id: 'group-1',
+          slug: 'group',
+        },
+      },
+      versions: [
+        {
+          id: 'version-root',
+          label: 'Root',
+          description: null,
+          tempoBpm: 120,
+          timeSignatureNum: 4,
+          timeSignatureDen: 4,
+          musicalKey: null,
+          tempoSource: 'MANUAL',
+          keySource: 'MANUAL',
+          parentId: null,
+          createdAt: '2025-01-01T00:00:00.000Z',
+          tracks: [
+            {
+              id: 'track-version-a',
+              trackId: 'track-a',
+              trackName: 'Track A',
+              trackPosition: 0,
+              trackVersionId: 'track-version-a',
+              storageKey: '/tracks/a.wav',
+              mimeType: 'audio/wav',
+              durationMs: 2000,
+              startOffsetMs: 0,
+              createdAt: '2025-01-01T00:00:00.000Z',
+              isDerived: false,
+              operationType: 'ORIGINAL',
+              parentTrackVersionId: null,
+              segments: [
+                {
+                  id: 'segment-a',
+                  trackVersionId: 'track-version-a',
+                  startMs: 0,
+                  endMs: 1000,
+                  timelineStartMs: 0,
+                  gainDb: 0,
+                  fadeInMs: 10,
+                  fadeOutMs: 20,
+                  isMuted: false,
+                  position: 0,
+                },
+                {
+                  id: 'segment-b',
+                  trackVersionId: 'track-version-a',
+                  startMs: 1000,
+                  endMs: 2000,
+                  timelineStartMs: 1000,
+                  gainDb: 0,
+                  fadeInMs: 30,
+                  fadeOutMs: 40,
+                  isMuted: false,
+                  position: 1,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      comments: [],
+      annotations: [],
+    },
+    createdById: 'user-a',
+    createdAt: '2025-01-01T00:00:00.000Z',
+  };
+
+  const snapshot = await loadSnapshotStateForDemo(
+    makeClient(latestSnapshot, [
+      {
+        id: 'op-2',
+        projectId: 'project-1',
+        demoId: 'demo-1',
+        operationType: 'SEGMENT_FADE_SET',
+        createdAt: '2025-01-02T00:00:00.000Z',
+        actorUserId: 'user-b',
+        baseSnapshotId: 'snapshot-1',
+        baseOperationSeq: 1,
+        operationSeq: 2,
+        payload: {
+          trackVersionId: 'track-version-a',
+          segmentId: 'segment-a',
+          fadeInMs: 150,
+          fadeOutMs: 250,
+          previousFadeInMs: 10,
+          previousFadeOutMs: 20,
+        },
+        idempotencyKey: 'idempotency-2',
+        clientOperationId: 'client-2',
+      },
+    ]) as never,
+    {
+      projectId: 'project-1',
+      demoId: 'demo-1',
+    },
+  );
+
+  const track = snapshot.versions[0]?.tracks[0];
+  assert.ok(track);
+  assert.equal(track?.segments[0]?.fadeInMs, 150);
+  assert.equal(track?.segments[0]?.fadeOutMs, 250);
+  assert.equal(track?.segments[1]?.fadeInMs, 30);
+  assert.equal(track?.segments[1]?.fadeOutMs, 40);
+  assert.equal(snapshot.operationHistory.length, 1);
+  assert.equal(snapshot.operationHistory[0]?.summary, 'Set fade on Track A');
+});
+
+test('loadSnapshotStateForDemo replays CROSSFADE_SET into both clip edges', async () => {
+  const latestSnapshot = {
+    id: 'snapshot-1',
+    projectId: 'project-1',
+    demoId: 'demo-1',
+    operationSeq: 1,
+    snapshot: {
+      id: 'demo-1',
+      name: 'Demo',
+      description: null,
+      currentVersionId: 'version-root',
+      project: {
+        id: 'project-1',
+        slug: 'project-1',
+        group: {
+          id: 'group-1',
+          slug: 'group',
+        },
+      },
+      versions: [
+        {
+          id: 'version-root',
+          label: 'Root',
+          description: null,
+          tempoBpm: 120,
+          timeSignatureNum: 4,
+          timeSignatureDen: 4,
+          musicalKey: null,
+          tempoSource: 'MANUAL',
+          keySource: 'MANUAL',
+          parentId: null,
+          createdAt: '2025-01-01T00:00:00.000Z',
+          tracks: [
+            {
+              id: 'track-version-a',
+              trackId: 'track-a',
+              trackName: 'Track A',
+              trackPosition: 0,
+              trackVersionId: 'track-version-a',
+              storageKey: '/tracks/a.wav',
+              mimeType: 'audio/wav',
+              durationMs: 2000,
+              startOffsetMs: 0,
+              createdAt: '2025-01-01T00:00:00.000Z',
+              isDerived: false,
+              operationType: 'ORIGINAL',
+              parentTrackVersionId: null,
+              segments: [
+                {
+                  id: 'segment-a',
+                  trackVersionId: 'track-version-a',
+                  startMs: 0,
+                  endMs: 1000,
+                  timelineStartMs: 0,
+                  gainDb: 0,
+                  fadeInMs: 10,
+                  fadeOutMs: 20,
+                  isMuted: false,
+                  position: 0,
+                  crossfadeInMs: null,
+                  crossfadeOutMs: null,
+                  crossfadeCurve: null,
+                },
+                {
+                  id: 'segment-b',
+                  trackVersionId: 'track-version-a',
+                  startMs: 1000,
+                  endMs: 2000,
+                  timelineStartMs: 1000,
+                  gainDb: 0,
+                  fadeInMs: 30,
+                  fadeOutMs: 40,
+                  isMuted: false,
+                  position: 1,
+                  crossfadeInMs: null,
+                  crossfadeOutMs: null,
+                  crossfadeCurve: null,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      comments: [],
+      annotations: [],
+    },
+    createdById: 'user-a',
+    createdAt: '2025-01-01T00:00:00.000Z',
+  };
+
+  const snapshot = await loadSnapshotStateForDemo(
+    makeClient(latestSnapshot, [
+      {
+        id: 'op-2',
+        projectId: 'project-1',
+        demoId: 'demo-1',
+        operationType: 'CROSSFADE_SET',
+        createdAt: '2025-01-02T00:00:00.000Z',
+        actorUserId: 'user-b',
+        baseSnapshotId: 'snapshot-1',
+        baseOperationSeq: 1,
+        operationSeq: 2,
+        payload: {
+          trackVersionId: 'track-version-a',
+          leftSegmentId: 'segment-a',
+          rightSegmentId: 'segment-b',
+          crossfadeInMs: 250,
+          crossfadeOutMs: 250,
+          curve: 'linear',
+        },
+        idempotencyKey: 'idempotency-2',
+        clientOperationId: 'client-2',
+      },
+    ]) as never,
+    {
+      projectId: 'project-1',
+      demoId: 'demo-1',
+    },
+  );
+
+  const track = snapshot.versions[0]?.tracks[0];
+  assert.ok(track);
+  assert.equal(track?.segments[0]?.crossfadeOutMs, 250);
+  assert.equal(track?.segments[0]?.crossfadeCurve, 'linear');
+  assert.equal(track?.segments[1]?.crossfadeInMs, 250);
+  assert.equal(track?.segments[1]?.crossfadeCurve, 'linear');
+  assert.equal(snapshot.operationHistory.length, 1);
+  assert.equal(snapshot.operationHistory[0]?.summary, 'Adjusted crossfade on Track A');
 });

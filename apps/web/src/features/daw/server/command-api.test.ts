@@ -7,6 +7,8 @@ import {
   shouldCreateBranchForOperation,
   setUserActiveVersion,
   shouldBranchFromHistoricalBase,
+  validateSegmentFadeSelection,
+  validateSegmentCrossfadeSelection,
   validateSegmentMergeSelection,
 } from '@/features/daw/server/command-api';
 
@@ -238,6 +240,7 @@ test('timeline edits that branch keep labels while placement moves stay in place
     'SEGMENT_DELETED',
     'SEGMENT_TRIMMED',
     'SEGMENT_MERGED',
+    'SEGMENT_FADE_SET',
     'CROSSFADE_SET',
   ] as const) {
     assert.equal(isTimelineEditOperation(operationType), true, operationType);
@@ -252,6 +255,201 @@ test('timeline edits that branch keep labels while placement moves stay in place
   }
 
   assert.equal(isTimelineEditOperation('VERSION_RENAMED'), false);
+});
+
+test('validateSegmentFadeSelection accepts valid fades and rejects invalid durations', () => {
+  assert.equal(
+    validateSegmentFadeSelection(
+      makeMergeSegment({
+        id: 'segment-a',
+        startMs: 0,
+        endMs: 1000,
+      }),
+      {
+        fadeInMs: 100,
+        fadeOutMs: 200,
+      },
+    ),
+    null,
+  );
+
+  assert.equal(
+    validateSegmentFadeSelection(
+      makeMergeSegment({
+        id: 'segment-a',
+        startMs: 0,
+        endMs: 1000,
+      }),
+      {
+        fadeInMs: -1,
+        fadeOutMs: 0,
+      },
+    ),
+    'Fade durations must be non-negative',
+  );
+
+  assert.equal(
+    validateSegmentFadeSelection(
+      makeMergeSegment({
+        id: 'segment-a',
+        startMs: 0,
+        endMs: 1000,
+      }),
+      {
+        fadeInMs: 600,
+        fadeOutMs: 500,
+      },
+    ),
+    'Fade duration cannot exceed the clip duration.',
+  );
+});
+
+test('validateSegmentCrossfadeSelection accepts adjacent clips and rejects invalid candidates', () => {
+  assert.equal(
+    validateSegmentCrossfadeSelection(
+      makeMergeSegment({
+        id: 'segment-a',
+        trackVersionId: 'track-version-1',
+        startMs: 0,
+        endMs: 1000,
+        timelineStartMs: 0,
+        timelineEndMs: 1000,
+        position: 0,
+      }),
+      makeMergeSegment({
+        id: 'segment-b',
+        trackVersionId: 'track-version-1',
+        startMs: 1000,
+        endMs: 2000,
+        timelineStartMs: 1000,
+        timelineEndMs: 2000,
+        position: 1,
+      }),
+      {
+        crossfadeInMs: 250,
+        crossfadeOutMs: 250,
+        curve: 'linear',
+      },
+    ),
+    null,
+  );
+
+  assert.equal(
+    validateSegmentCrossfadeSelection(
+      makeMergeSegment({
+        id: 'segment-a',
+        trackVersionId: 'track-version-1',
+        startMs: 0,
+        endMs: 1000,
+        timelineStartMs: 0,
+        timelineEndMs: 1000,
+        position: 0,
+      }),
+      makeMergeSegment({
+        id: 'segment-b',
+        trackVersionId: 'track-version-1',
+        startMs: 1000,
+        endMs: 2000,
+        timelineStartMs: 1004,
+        timelineEndMs: 2004,
+        position: 1,
+      }),
+      {
+        crossfadeInMs: 250,
+        crossfadeOutMs: 250,
+        curve: 'linear',
+      },
+    ),
+    'These clips cannot be crossfaded because there is a gap between them.',
+  );
+
+  assert.equal(
+    validateSegmentCrossfadeSelection(
+      makeMergeSegment({
+        id: 'segment-a',
+        trackVersionId: 'track-version-1',
+        startMs: 0,
+        endMs: 1000,
+        timelineStartMs: 0,
+        timelineEndMs: 1000,
+        position: 0,
+      }),
+      makeMergeSegment({
+        id: 'segment-b',
+        trackVersionId: 'track-version-2',
+        startMs: 1000,
+        endMs: 2000,
+        timelineStartMs: 1000,
+        timelineEndMs: 2000,
+        position: 1,
+      }),
+      {
+        crossfadeInMs: 250,
+        crossfadeOutMs: 250,
+        curve: 'linear',
+      },
+    ),
+    'These clips must be on the same track to crossfade.',
+  );
+
+  assert.equal(
+    validateSegmentCrossfadeSelection(
+      makeMergeSegment({
+        id: 'segment-a',
+        trackVersionId: 'track-version-1',
+        isImplicit: true,
+        startMs: 0,
+        endMs: 1000,
+        timelineStartMs: 0,
+        timelineEndMs: 1000,
+        position: 0,
+      }),
+      makeMergeSegment({
+        id: 'segment-b',
+        trackVersionId: 'track-version-1',
+        startMs: 1000,
+        endMs: 2000,
+        timelineStartMs: 1000,
+        timelineEndMs: 2000,
+        position: 1,
+      }),
+      {
+        crossfadeInMs: 250,
+        crossfadeOutMs: 250,
+        curve: 'linear',
+      },
+    ),
+    'Only saved audio clips can be crossfaded.',
+  );
+
+  assert.equal(
+    validateSegmentCrossfadeSelection(
+      makeMergeSegment({
+        id: 'segment-a',
+        trackVersionId: 'track-version-1',
+        startMs: 0,
+        endMs: 200,
+        timelineStartMs: 0,
+        timelineEndMs: 200,
+        position: 0,
+      }),
+      makeMergeSegment({
+        id: 'segment-b',
+        trackVersionId: 'track-version-1',
+        startMs: 200,
+        endMs: 350,
+        timelineStartMs: 200,
+        timelineEndMs: 350,
+        position: 1,
+      }),
+      {
+        crossfadeInMs: 250,
+        crossfadeOutMs: 250,
+        curve: 'linear',
+      },
+    ),
+    'Crossfade duration must fit within both clips.',
+  );
 });
 
 test('version tree mutations broadcast a tree refresh while timeline edits do not', () => {
