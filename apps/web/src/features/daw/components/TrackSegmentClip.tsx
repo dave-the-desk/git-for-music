@@ -245,8 +245,8 @@ export const TrackSegmentClip = forwardRef<TrackSegmentClipHandle, TrackSegmentC
       wavesurferRef.current?.setMuted(isMuted);
     }, [isMuted]);
 
-    const fadeInOverlayWidthPx = isFadeSelected ? Math.max(6, segment.fadeInWidthPx) : segment.fadeInWidthPx;
-    const fadeOutOverlayWidthPx = isFadeSelected ? Math.max(6, segment.fadeOutWidthPx) : segment.fadeOutWidthPx;
+    const fadeInOverlayWidthPx = segment.fadeInWidthPx;
+    const fadeOutOverlayWidthPx = segment.fadeOutWidthPx;
     const crossfadeInOverlayWidthPx = segment.crossfadeInWidthPx > 0 ? Math.max(4, segment.crossfadeInWidthPx) : 0;
     const crossfadeOutOverlayWidthPx = segment.crossfadeOutWidthPx > 0 ? Math.max(4, segment.crossfadeOutWidthPx) : 0;
 
@@ -255,26 +255,53 @@ export const TrackSegmentClip = forwardRef<TrackSegmentClipHandle, TrackSegmentC
 
       const isLeft = edge === 'left';
       const overlayWidthPx = isLeft ? fadeInOverlayWidthPx : fadeOutOverlayWidthPx;
-      const handlePositionClass = isLeft ? 'left-0' : 'right-0';
+      const handleDotSizePx = 6;
+      const handleInsetPx = Math.ceil(handleDotSizePx / 2);
+      const handleCenterX = isLeft
+        ? Math.max(handleInsetPx, Math.min(clipWidthPx - handleInsetPx, handleInsetPx + segment.fadeInWidthPx))
+        : Math.max(
+            handleInsetPx,
+            Math.min(clipWidthPx - handleInsetPx, clipWidthPx - handleInsetPx - segment.fadeOutWidthPx),
+          );
       const overlayGradientClass = isLeft
         ? 'bg-gradient-to-r from-cyan-400/25 to-transparent'
         : 'bg-gradient-to-l from-cyan-400/25 to-transparent';
+      const handleAnchorX = isLeft ? handleInsetPx : clipWidthPx - handleInsetPx;
 
       return (
         <>
           <div
-            className={`pointer-events-none absolute inset-y-0 ${handlePositionClass} ${overlayGradientClass}`}
+            className={`pointer-events-none absolute inset-y-0 ${isLeft ? 'left-0' : 'right-0'} ${overlayGradientClass}`}
             style={{ width: overlayWidthPx }}
             aria-hidden
           />
+          <svg
+            className="pointer-events-none absolute inset-0 z-20 h-full w-full overflow-visible"
+            viewBox={`0 0 ${clipWidthPx} 56`}
+            aria-hidden
+          >
+            <line
+              x1={handleAnchorX}
+              y1={55}
+              x2={handleCenterX}
+              y2={5}
+              stroke="rgba(165, 243, 252, 0.9)"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+            />
+          </svg>
           <div
             role="slider"
-            aria-label={isLeft ? 'Adjust fade in' : 'Adjust fade out'}
+            aria-orientation="horizontal"
+            aria-label={isLeft ? 'Adjust fade in by dragging the top dot inward' : 'Adjust fade out by dragging the top dot inward'}
             aria-valuemin={0}
             aria-valuemax={Math.max(0, Math.round(segment.durationMs))}
             aria-valuenow={Math.max(0, Math.round(isLeft ? segment.fadeInMs : segment.fadeOutMs))}
-            className={`absolute inset-y-0 z-20 flex w-2 items-center justify-center ${handlePositionClass} cursor-ew-resize bg-cyan-300/65 text-cyan-50 shadow-[0_0_0_1px_rgba(103,232,249,0.35)] hover:bg-cyan-200/80`}
+            aria-valuetext={`${isLeft ? 'Fade in' : 'Fade out'} ${Math.max(0, Math.round(isLeft ? segment.fadeInMs : segment.fadeOutMs))} ms`}
+            className="pointer-events-auto absolute top-0 z-30 flex h-full w-6 -translate-x-1/2 flex-col items-center justify-start cursor-ew-resize select-none touch-none text-cyan-50"
+            style={{ left: handleCenterX }}
             onPointerDown={(event) => {
+              event.preventDefault();
               stopHandleEvent(event);
               event.currentTarget.setPointerCapture(event.pointerId);
               onFadeHandlePointerDown(edge, event);
@@ -294,7 +321,7 @@ export const TrackSegmentClip = forwardRef<TrackSegmentClipHandle, TrackSegmentC
               stopHandleEvent(event);
             }}
           >
-            <span className="h-8 w-px rounded bg-white/90" />
+            <span className="mt-0.5 h-1.5 w-1.5 rounded-full border border-cyan-50/90 bg-cyan-300 shadow-[0_0_0_1px_rgba(8,145,178,0.45)]" />
           </div>
         </>
       );
@@ -319,9 +346,9 @@ export const TrackSegmentClip = forwardRef<TrackSegmentClipHandle, TrackSegmentC
                   : 'This clip cannot be merged'
               : timelineTool === 'fade'
                 ? isFadeSelected
-                  ? 'Fade tool: drag the left or right handle to adjust this clip'
+                  ? 'Fade tool: drag the top dot inward to adjust this clip'
                   : isFadeSelectable
-                    ? 'Fade tool: click this clip to edit its fades'
+                    ? 'Fade tool: click this clip to show its fade dots'
                     : 'This clip cannot be faded'
                 : timelineTool === 'crossfade'
                   ? isPendingCrossfade
@@ -331,7 +358,7 @@ export const TrackSegmentClip = forwardRef<TrackSegmentClipHandle, TrackSegmentC
                       : 'This clip cannot be crossfaded'
                   : 'Select tool: drag this clip to move it'
         }
-        className={`absolute top-2 z-10 overflow-hidden rounded-md border text-left transition-colors ${
+        className={`absolute top-2 z-10 overflow-visible rounded-md border text-left transition-colors ${
           isPendingMerge
             ? 'border-emerald-400 bg-emerald-500/20 text-emerald-50 shadow-[0_0_0_1px_rgba(16,185,129,0.35)]'
             : isPendingCrossfade
@@ -380,9 +407,9 @@ export const TrackSegmentClip = forwardRef<TrackSegmentClipHandle, TrackSegmentC
           height: 56,
         }}
       >
-        <div className="pointer-events-none relative h-full w-full overflow-hidden">
+        <div className="relative h-full w-full overflow-hidden">
           <div
-            className="absolute top-1/2 left-0 h-14 -translate-y-1/2"
+            className="pointer-events-none absolute top-1/2 left-0 h-14 -translate-y-1/2"
             style={{
               width: sourceWidthPx,
               transform: `translateX(-${sourceOffsetPx}px)`,
@@ -410,20 +437,20 @@ export const TrackSegmentClip = forwardRef<TrackSegmentClipHandle, TrackSegmentC
             style={{ width: crossfadeOutOverlayWidthPx }}
             aria-hidden
           />
-          <div className="absolute inset-0 bg-gradient-to-b from-gray-950/10 via-transparent to-gray-950/45" />
-          <div className="absolute left-1 top-1 rounded bg-gray-950/55 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-gray-100/95 backdrop-blur-[2px]">
+          <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-gray-950/10 via-transparent to-gray-950/45" />
+          <div className="pointer-events-none absolute left-1 top-1 rounded bg-gray-950/55 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-gray-100/95 backdrop-blur-[2px]">
             {clipLabel}
           </div>
-          <div className="absolute right-1 top-1 rounded bg-gray-950/55 px-1.5 py-0.5 text-[9px] font-medium text-gray-100/90 backdrop-blur-[2px]">
+          <div className="pointer-events-none absolute right-1 top-1 rounded bg-gray-950/55 px-1.5 py-0.5 text-[9px] font-medium text-gray-100/90 backdrop-blur-[2px]">
             {durationLabel}
           </div>
-          <div className="absolute inset-0 border border-white/5" />
-          {renderFadeHandle('left')}
-          {renderFadeHandle('right')}
-          {isReady ? null : (
-            <div className="absolute inset-0 animate-pulse bg-gray-900/20" aria-hidden />
-          )}
+          <div className="pointer-events-none absolute inset-0 border border-white/5" />
         </div>
+        {renderFadeHandle('left')}
+        {renderFadeHandle('right')}
+        {isReady ? null : (
+          <div className="pointer-events-none absolute inset-0 z-40 animate-pulse bg-gray-900/20" aria-hidden />
+        )}
       </button>
     );
   },

@@ -2056,19 +2056,20 @@ export function DemoDawClient({
     }
 
     const pxPerMs = rect.width / durationMs;
+    const handleInsetPx = 3;
     const maxFadeInMs = Math.max(0, durationMs - drag.currentFadeOutMs);
     const maxFadeOutMs = Math.max(0, durationMs - drag.currentFadeInMs);
 
     if (edge === 'left') {
       return {
-        fadeInMs: Math.max(0, Math.min(position / pxPerMs, maxFadeInMs)),
+        fadeInMs: Math.max(0, Math.min((position - handleInsetPx) / pxPerMs, maxFadeInMs)),
         fadeOutMs: drag.currentFadeOutMs,
       };
     }
 
     return {
       fadeInMs: drag.currentFadeInMs,
-      fadeOutMs: Math.max(0, Math.min((rect.width - position) / pxPerMs, maxFadeOutMs)),
+      fadeOutMs: Math.max(0, Math.min((rect.width - position - handleInsetPx) / pxPerMs, maxFadeOutMs)),
     };
   }
 
@@ -3367,7 +3368,7 @@ export function DemoDawClient({
                     <button
                       type="button"
                       onClick={() => activateTimelineTool(timelineTool === 'fade' ? 'select' : 'fade')}
-                      title={timelineTool === 'fade' ? 'Leave fade mode' : 'Click a clip, then drag its fade handles'}
+                      title={timelineTool === 'fade' ? 'Leave fade mode' : 'Click a clip, then drag the top dot inward'}
                       className={`rounded-md px-3 py-2 text-sm font-medium ${
                         timelineTool === 'fade'
                           ? 'bg-cyan-600 text-white hover:bg-cyan-500'
@@ -3446,7 +3447,7 @@ export function DemoDawClient({
                     <div className="space-y-1 text-xs">
                       {fadeError ? <p className="text-rose-300">{fadeError}</p> : null}
                       <p className="text-cyan-300">
-                        Click a clip to reveal its fade handles, then drag either edge to update the fade.
+                        Click a clip to reveal its fade dots, then drag a dot inward to update the fade.
                       </p>
                     </div>
                   ) : null}
