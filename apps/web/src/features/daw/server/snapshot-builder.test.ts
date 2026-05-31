@@ -425,3 +425,139 @@ test('loadSnapshotStateForDemo replays SEGMENT_MOVED across track versions with 
   assert.equal(targetTrack?.segments[0]?.timelineEndMs, 4300);
   assert.equal(targetTrack?.segments[0]?.trackVersionId, 'track-version-b');
 });
+
+test('loadSnapshotStateForDemo replays SEGMENT_MERGED into a single persisted clip', async () => {
+  const mergedSegment = {
+    id: 'segment-merged',
+    trackVersionId: 'track-version-a',
+    startMs: 0,
+    endMs: 2000,
+    timelineStartMs: 0,
+    timelineEndMs: 2000,
+    gainDb: 0,
+    fadeInMs: 0,
+    fadeOutMs: 0,
+    isMuted: false,
+    position: 0,
+  };
+
+  const latestSnapshot = {
+    id: 'snapshot-1',
+    projectId: 'project-1',
+    demoId: 'demo-1',
+    operationSeq: 1,
+    snapshot: {
+      id: 'demo-1',
+      name: 'Demo',
+      description: null,
+      currentVersionId: 'version-root',
+      project: {
+        id: 'project-1',
+        slug: 'project-1',
+        group: {
+          id: 'group-1',
+          slug: 'group',
+        },
+      },
+      versions: [
+        {
+          id: 'version-root',
+          label: 'Root',
+          description: null,
+          tempoBpm: 120,
+          timeSignatureNum: 4,
+          timeSignatureDen: 4,
+          musicalKey: null,
+          tempoSource: 'MANUAL',
+          keySource: 'MANUAL',
+          parentId: null,
+          createdAt: '2025-01-01T00:00:00.000Z',
+          tracks: [
+            {
+              id: 'track-version-a',
+              trackId: 'track-a',
+              trackName: 'Track A',
+              trackPosition: 0,
+              trackVersionId: 'track-version-a',
+              storageKey: '/tracks/a.wav',
+              mimeType: 'audio/wav',
+              durationMs: 2000,
+              startOffsetMs: 0,
+              createdAt: '2025-01-01T00:00:00.000Z',
+              isDerived: false,
+              operationType: 'ORIGINAL',
+              parentTrackVersionId: null,
+              segments: [
+                {
+                  id: 'segment-a',
+                  trackVersionId: 'track-version-a',
+                  startMs: 0,
+                  endMs: 1000,
+                  timelineStartMs: 0,
+                  gainDb: 0,
+                  fadeInMs: 0,
+                  fadeOutMs: 0,
+                  isMuted: false,
+                  position: 0,
+                },
+                {
+                  id: 'segment-b',
+                  trackVersionId: 'track-version-a',
+                  startMs: 1000,
+                  endMs: 2000,
+                  timelineStartMs: 1000,
+                  gainDb: 0,
+                  fadeInMs: 0,
+                  fadeOutMs: 0,
+                  isMuted: false,
+                  position: 1,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      comments: [],
+      annotations: [],
+    },
+    createdById: 'user-a',
+    createdAt: '2025-01-01T00:00:00.000Z',
+  };
+
+  const snapshot = await loadSnapshotStateForDemo(
+    makeClient(latestSnapshot, [
+      {
+        id: 'op-2',
+        projectId: 'project-1',
+        demoId: 'demo-1',
+        operationType: 'SEGMENT_MERGED',
+        createdAt: '2025-01-02T00:00:00.000Z',
+        actorUserId: 'user-b',
+        baseSnapshotId: 'snapshot-1',
+        baseOperationSeq: 1,
+        operationSeq: 2,
+        payload: {
+          trackVersionId: 'track-version-a',
+          segmentIds: ['segment-a', 'segment-b'],
+          mergedSegment,
+        },
+        idempotencyKey: 'idempotency-2',
+        clientOperationId: 'client-2',
+      },
+    ]) as never,
+    {
+      projectId: 'project-1',
+      demoId: 'demo-1',
+    },
+  );
+
+  const mergedTrack = snapshot.versions[0]?.tracks[0];
+  assert.ok(mergedTrack);
+  assert.equal(mergedTrack?.segments.length, 1);
+  assert.deepEqual(mergedTrack?.segments[0], {
+    ...mergedSegment,
+    trackVersionId: 'track-version-a',
+  });
+  assert.equal(snapshot.operationHistory.length, 1);
+  assert.equal(snapshot.operationHistory[0]?.summary, 'Merged clips on Track A');
+});

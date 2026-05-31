@@ -36,7 +36,16 @@ import {
   PX_PER_SECOND,
   type WaveformCache,
 } from '@/features/daw/rendering/visual-renderer';
-import { EMPTY_TRACK_MIME_TYPE, isValidSplitTime } from '@/features/daw/utils/segments';
+import {
+  buildMergedSegmentFromPair,
+  EMPTY_TRACK_MIME_TYPE,
+  getMergeCandidateError,
+  isMergeSelectableSegment,
+  isSameMergeSelection,
+  isValidSplitTime,
+  sortSegmentsForMerge,
+  type MergeSelection,
+} from '@/features/daw/utils/segments';
 import {
   formatBarBeatLabel,
   isValidTempoBpm,
@@ -199,7 +208,7 @@ type ProjectPresenceRecord = {
   status: 'online' | 'idle' | 'away' | 'offline';
   cursorTimeMs: number | null;
   selectedTrackId: string | null;
-  currentTool: 'select' | 'split';
+  currentTool: 'select' | 'split' | 'merge';
   recordingState: 'idle' | 'recording' | 'preview' | 'uploading' | 'error';
   playbackFollowState: boolean;
   updatedAt: string;
@@ -319,10 +328,13 @@ export function DemoDawClient({
   const [operationDebugEntries, setOperationDebugEntries] = useState<OperationDebugEntry[]>([]);
   const [dragError, setDragError] = useState<string | null>(null);
   const dragRef = useRef<TimelineDragState | null>(null);
-  const [timelineTool, setTimelineTool] = useState<'select' | 'split'>('select');
+  const [timelineTool, setTimelineTool] = useState<'select' | 'split' | 'merge'>('select');
   const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(null);
   const [splitHover, setSplitHover] = useState<SplitHoverState>(null);
   const [splitError, setSplitError] = useState<string | null>(null);
+  const [pendingMergeSelection, setPendingMergeSelection] = useState<MergeSelection | null>(null);
+  const [mergeError, setMergeError] = useState<string | null>(null);
+  const [mergeSubmitting, setMergeSubmitting] = useState(false);
 
   const [renameState, setRenameState] = useState<RenameState | null>(null);
   const [historyProjectState, setHistoryProjectState] = useState<LocalProjectState | null>(null);
@@ -341,7 +353,7 @@ export function DemoDawClient({
   const undoTimelineEditInFlightRef = useRef(false);
   const deleteSelectedClipRef = useRef<() => Promise<boolean>>(async () => false);
   const cancelTimelineDragRef = useRef<() => void>(() => {});
-  const timelineToolRef = useRef<'select' | 'split'>('select');
+  const timelineToolRef = useRef<'select' | 'split' | 'merge'>('select');
   const presenceIdRef = useRef(crypto.randomUUID());
   const currentTimeMsRef = useRef(0);
   const selectedTrackIdRef = useRef<string | null>(null);
@@ -926,6 +938,8 @@ export function DemoDawClient({
     setSelectedTrackVersionId(selectedTracks[0]?.trackVersionId ?? null);
     setSplitHover(null);
     setSplitError(null);
+    setPendingMergeSelection(null);
+    setMergeError(null);
     setTimelineTool('select');
   }, [selectedTracks, selectedVersionId]);
 
@@ -1231,6 +1245,11 @@ export function DemoDawClient({
       if (event.key === 'Escape') {
         if (dragRef.current) {
           cancelTimelineDragRef.current();
+        } else if (timelineToolRef.current === 'merge') {
+          setPendingMergeSelection(null);
+          setMergeError(null);
+          setSelectedSegmentId(null);
+          setTimelineTool('select');
         } else if (timelineToolRef.current === 'split') {
           setSplitHover(null);
           setTimelineTool('select');
@@ -2189,9 +2208,29 @@ export function DemoDawClient({
   deleteSelectedClipRef.current = deleteSelectedClip;
   cancelTimelineDragRef.current = cancelTimelineDrag;
 
+  function clearMergeSelection() {
+    setPendingMergeSelection(null);
+    setMergeError(null);
+  }
+
+  function activateTimelineTool(nextTool: 'select' | 'split' | 'merge') {
+    clearMergeSelection();
+
+    setSplitHover(null);
+    setSplitError(null);
+
+    if (nextTool === 'merge') {
+      // Merge mode is a fresh two-click workflow, so we drop any prior clip selection
+      // instead of reusing it as an ambiguous first click.
+      setSelectedSegmentId(null);
+    }
+
+    setTimelineTool(nextTool);
+  }
+
   function handleTrackPointerDown(e: React.PointerEvent<HTMLDivElement>, track: DawTrack) {
-    setSelectedTrackVersionId(track.trackVersionId);
     if (timelineTool !== 'select') return;
+    setSelectedTrackVersionId(track.trackVersionId);
 
     const visibleSegments = getRenderableTrackSegments(track);
     if (visibleSegments.length !== 1 || !visibleSegments[0]?.isImplicit) return;
@@ -2244,9 +2283,9 @@ export function DemoDawClient({
     track: DawTrack,
     segment: TrackTimelineSegment,
   ) {
+    e.stopPropagation();
     setSelectedTrackVersionId(track.trackVersionId);
     if (timelineTool !== 'select') return;
-    e.stopPropagation();
     e.currentTarget.setPointerCapture(e.pointerId);
     setSelectedSegmentId(segment.id);
     setSplitError(null);
@@ -2289,6 +2328,7 @@ export function DemoDawClient({
     track: DawTrack,
     segment: TrackTimelineSegment,
   ) {
+    if (timelineTool !== 'select') return;
     const drag = dragRef.current;
     console.log('[DemoDawClient] handleSegmentPointerUp', {
       trackVersionId: track.trackVersionId,
@@ -2299,7 +2339,6 @@ export function DemoDawClient({
       timelineTool,
       pointerId: e.pointerId,
     });
-    if (timelineTool !== 'select') return;
     if (!drag || drag.trackVersionId !== track.trackVersionId) return;
     e.currentTarget.releasePointerCapture?.(e.pointerId);
 
@@ -2318,6 +2357,7 @@ export function DemoDawClient({
   }
 
   function handleSegmentPointerCancel(track: DawTrack, segment: TrackTimelineSegment) {
+    if (timelineTool !== 'select') return;
     const drag = dragRef.current;
     console.log('[DemoDawClient] handleSegmentPointerCancel', {
       trackVersionId: track.trackVersionId,
@@ -2483,83 +2523,68 @@ export function DemoDawClient({
     }
   }
 
-  function getSelectedSegment(track = getActiveTrackForSelection()) {
-    if (!track || !selectedSegmentId) return null;
-    return getDisplayedTrackSegments(track).find((segment) => segment.id === selectedSegmentId) ?? null;
-  }
+  async function handleMergeSegmentClick(track: DawTrack, clickedSegment: TrackTimelineSegment) {
+    if (timelineTool !== 'merge') return;
+    if (mergeSubmitting) return;
 
-  async function handleTrimSelectedSegment() {
-    const track = getActiveTrackForSelection();
-    if (!track) return;
-    const segment = getSelectedSegment(track);
-    if (!segment || segment.isImplicit) return;
+    setSelectedTrackVersionId(track.trackVersionId);
 
-    const targetEndMs = Math.max(segment.timelineStartMs + 10, currentTimeMs);
-    if (targetEndMs <= segment.timelineStartMs || targetEndMs >= segment.timelineEndMs) {
-      setDragError('Move the playhead inside the clip to trim it.');
+    if (!isMergeSelectableSegment(clickedSegment)) {
+      setMergeError('Only saved audio clips can be merged.');
       return;
     }
 
-    try {
-      await commitEditingOperation(
-        audioEditingEngine.trimSegment({
-          trackVersionId: track.trackVersionId,
-          segmentId: segment.id,
-          from: {
-            startMs: segment.sourceStartMs,
-            endMs: segment.sourceEndMs,
-          },
-          to: {
-            startMs: segment.sourceStartMs,
-            endMs: segment.sourceStartMs + (targetEndMs - segment.timelineStartMs),
-          },
-        }),
-      );
-    } catch (error) {
-      setDragError(error instanceof Error ? error.message : 'Could not trim clip');
+    if (isSameMergeSelection(pendingMergeSelection, clickedSegment)) {
+      // Re-clicking the first clip is the easiest way to back out without losing the current mode.
+      clearMergeSelection();
+      return;
     }
-  }
 
-  async function handleMergeSelectedSegments() {
-    const track = getActiveTrackForSelection();
-    if (!track) return;
-    const segments = getDisplayedTrackSegments(track).filter((segment) => !segment.isImplicit);
-    const selectedIndex = segments.findIndex((segment) => segment.id === selectedSegmentId);
-    if (selectedIndex < 0 || segments.length < 2) return;
+    if (!pendingMergeSelection) {
+      clearMergeSelection();
+      setPendingMergeSelection({
+        trackVersionId: clickedSegment.trackVersionId,
+        segmentId: clickedSegment.id,
+      });
+      setSelectedSegmentId(null);
+      return;
+    }
 
-    const left = segments[Math.max(0, selectedIndex - 1)];
-    const right = segments[selectedIndex + 1] ?? segments[selectedIndex];
-    if (!left || !right || left.id === right.id) return;
+    const firstSegment = findSegmentById(pendingMergeSelection.trackVersionId, pendingMergeSelection.segmentId);
+    if (!firstSegment) {
+      clearMergeSelection();
+      setMergeError('The first clip is no longer available. Please choose another clip.');
+      return;
+    }
 
-    const mergedStartMs = Math.min(left.timelineStartMs, right.timelineStartMs);
-    const mergedEndMs = Math.max(left.timelineEndMs, right.timelineEndMs);
-    const mergedSegment = {
+    const mergeError = getMergeCandidateError(firstSegment, clickedSegment);
+    if (mergeError) {
+      setMergeError(mergeError);
+      return;
+    }
+
+    const [leftSegment, rightSegment] = sortSegmentsForMerge(firstSegment, clickedSegment);
+    const mergedSegment = buildMergedSegmentFromPair(leftSegment, rightSegment, {
       id: crypto.randomUUID(),
-      trackVersionId: track.trackVersionId,
-      startMs: Math.min(left.startMs, right.startMs),
-      endMs: Math.max(left.endMs, right.endMs),
-      timelineStartMs: mergedStartMs,
-      timelineEndMs: mergedEndMs,
-      gainDb: Math.max(left.gainDb, right.gainDb),
-      fadeInMs: left.fadeInMs,
-      fadeOutMs: right.fadeOutMs,
-      isMuted: left.isMuted || right.isMuted,
-      position: left.position,
-      crossfadeInMs: left.crossfadeInMs ?? null,
-      crossfadeOutMs: right.crossfadeOutMs ?? null,
-      crossfadeCurve: left.crossfadeCurve ?? right.crossfadeCurve ?? null,
-    };
+    });
+
+    setMergeError(null);
+    setMergeSubmitting(true);
 
     try {
       await commitEditingOperation(
         audioEditingEngine.mergeSegments({
-          trackVersionId: track.trackVersionId,
-          segmentIds: [left.id, right.id],
+          trackVersionId: leftSegment.trackVersionId,
+          segmentIds: [leftSegment.id, rightSegment.id],
           mergedSegment,
         }),
       );
+      clearMergeSelection();
+      setSelectedSegmentId(null);
     } catch (error) {
-      setDragError(error instanceof Error ? error.message : 'Could not merge clips');
+      setMergeError(error instanceof Error ? error.message : 'Could not merge clips');
+    } finally {
+      setMergeSubmitting(false);
     }
   }
 
@@ -2973,7 +2998,9 @@ export function DemoDawClient({
     ? getDisplayedTrackSegments(selectedTrack).filter((segment) => !segment.isImplicit)
     : [];
   const selectedTrackSegmentIndex = selectedTrackSegments.findIndex((segment) => segment.id === selectedSegmentId);
-  const canMergeSelectedSegments = selectedTrackSegmentIndex >= 0 && selectedTrackSegments.length > 1;
+  const canEnterMergeMode = selectedTracks.some((track) =>
+    getDisplayedTrackSegments(track).filter((segment) => !segment.isImplicit).length >= 2,
+  );
   const canCrossfadeSelectedSegments =
     selectedTrackSegmentIndex >= 0 && selectedTrackSegmentIndex < selectedTrackSegments.length - 1;
 
@@ -3033,9 +3060,7 @@ export function DemoDawClient({
                     <button
                       type="button"
                       onClick={() => {
-                        setTimelineTool('select');
-                        setSplitHover(null);
-                        setSplitError(null);
+                        activateTimelineTool('select');
                       }}
                       className={`rounded-md px-3 py-2 text-sm font-medium ${
                         timelineTool === 'select'
@@ -3048,9 +3073,7 @@ export function DemoDawClient({
                     <button
                       type="button"
                       onClick={() => {
-                        setTimelineTool('split');
-                        setSplitHover(null);
-                        setSplitError(null);
+                        activateTimelineTool('split');
                       }}
                       className={`rounded-md px-3 py-2 text-sm font-medium ${
                         timelineTool === 'split'
@@ -3062,26 +3085,22 @@ export function DemoDawClient({
                     </button>
                     <button
                       type="button"
-                      onClick={() => setTimelineTool('select')}
-                      className="rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-slate-300 hover:bg-slate-800"
-                    >
-                      Move
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void handleTrimSelectedSegment()}
-                      disabled={!selectedTrack || !selectedSegmentId}
-                      title={!selectedTrack || !selectedSegmentId ? 'Select a clip to trim it' : 'Trim the selected clip to the playhead'}
-                      className="rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-slate-300 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
-                    >
-                      Trim
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void handleMergeSelectedSegments()}
-                      disabled={!canMergeSelectedSegments}
-                      title={!canMergeSelectedSegments ? 'Select a clip with a neighbor to merge' : 'Merge the selected clip with a neighbor'}
-                      className="rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-slate-300 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
+                      onClick={() => activateTimelineTool(timelineTool === 'merge' ? 'select' : 'merge')}
+                      disabled={!canEnterMergeMode}
+                      title={
+                        !canEnterMergeMode
+                          ? 'Add or upload at least two saved clips on a track before using Merge'
+                          : mergeSubmitting
+                            ? 'Submitting merge request'
+                          : timelineTool === 'merge'
+                            ? 'Leave merge mode'
+                            : 'Click two compatible clips on the same track to merge them'
+                      }
+                      className={`rounded-md px-3 py-2 text-sm font-medium ${
+                        timelineTool === 'merge'
+                          ? 'bg-emerald-600 text-white hover:bg-emerald-500'
+                          : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
+                      } disabled:cursor-not-allowed disabled:opacity-40`}
                     >
                       Merge
                     </button>
@@ -3125,8 +3144,22 @@ export function DemoDawClient({
                     </label>
                   </div>
                   <p className="text-xs text-slate-400">
-                    Select is the main cursor mode. Cut splits clips at the playhead. Trim, merge, and crossfade use the current selection.
+                    Select is the main cursor mode. Cut splits clips at the playhead. Merge now uses an explicit two-click clip selection.
                   </p>
+                  {timelineTool === 'merge' ? (
+                    <div className="space-y-1 text-xs">
+                      {mergeSubmitting ? <p className="text-amber-300">Submitting merge request...</p> : null}
+                      {mergeError ? <p className="text-rose-300">{mergeError}</p> : null}
+                      {!mergeSubmitting && !mergeError && pendingMergeSelection ? (
+                        <p className="text-emerald-300">
+                          First clip selected. Click a second compatible clip on the same track, or press Escape to cancel.
+                        </p>
+                      ) : null}
+                      {!mergeSubmitting && !mergeError && !pendingMergeSelection ? (
+                        <p className="text-slate-500">Click the first clip you want to merge.</p>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
 
@@ -3689,6 +3722,7 @@ export function DemoDawClient({
                 const trackRecording = trackLane?.recording ?? null;
                 const trackSegments = trackLane?.segments ?? [];
                 const selectedTrackSegment = trackSegments.find((segment) => segment.id === selectedSegmentId) ?? null;
+                const isMergeToolActive = timelineTool === 'merge';
                 const splitHoverTimeMs =
                   timelineTool === 'split' && splitHover?.trackVersionId === track.trackVersionId
                     ? splitHover.timeMs
@@ -3989,6 +4023,10 @@ export function DemoDawClient({
 
                       {trackSegments.map((segment) => {
                         const isSelected = selectedTrackSegment?.id === segment.id;
+                        const isPendingMerge =
+                          pendingMergeSelection?.trackVersionId === track.trackVersionId &&
+                          pendingMergeSelection.segmentId === segment.id;
+                        const isMergeSelectable = isMergeToolActive && isMergeSelectableSegment(segment);
                         const isDraggingSegment =
                           dragRef.current?.kind === 'segment' && dragRef.current.segmentId === segment.id;
                         const isDraggingImplicitTrack =
@@ -4001,9 +4039,11 @@ export function DemoDawClient({
                             segment={segment}
                             storageKey={track.storageKey}
                             isSelected={isSelected}
+                            isPendingMerge={isPendingMerge}
                             isMuted={isMuted}
                             isDragging={isDraggingSegment || isDraggingImplicitTrack}
                             timelineTool={timelineTool}
+                            isMergeSelectable={isMergeSelectable}
                             currentTimeMs={currentTimeMs}
                             onDurationReady={handleDurationReady}
                             onPointerDown={(event) => handleSegmentPointerDown(event, track, segment)}
@@ -4021,6 +4061,11 @@ export function DemoDawClient({
                               if (timelineTool === 'split') {
                                 event.stopPropagation();
                                 void handleSplitClick(event.currentTarget, event.clientX, track, segment.timelineStartMs);
+                                return;
+                              }
+                              if (timelineTool === 'merge') {
+                                event.stopPropagation();
+                                void handleMergeSegmentClick(track, segment);
                                 return;
                               }
                               event.stopPropagation();

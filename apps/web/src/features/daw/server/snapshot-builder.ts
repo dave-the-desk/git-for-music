@@ -1587,6 +1587,19 @@ function buildOperationHistoryItem(
         summary: track ? `Trimmed clip on ${track.trackName}` : 'Trimmed clip',
       };
     }
+    case 'SEGMENT_MERGED': {
+      const payload = operation.payload as Extract<
+        DemoDawOperationPayload,
+        { trackVersionId: string; segmentIds: string[]; mergedSegment: DemoDawSnapshotSegment }
+      >;
+      const track = findTrackByVersionId(snapshot, payload.trackVersionId);
+      return {
+        ...baseItem,
+        trackId: track?.trackId ?? null,
+        segmentId: payload.segmentIds[0] ?? null,
+        summary: track ? `Merged clips on ${track.trackName}` : 'Merged clips',
+      };
+    }
     case 'CROSSFADE_SET': {
       const payload = operation.payload as Extract<
         DemoDawOperationPayload,

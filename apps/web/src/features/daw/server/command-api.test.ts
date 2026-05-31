@@ -7,7 +7,43 @@ import {
   shouldCreateBranchForOperation,
   setUserActiveVersion,
   shouldBranchFromHistoricalBase,
+  validateSegmentMergeSelection,
 } from '@/features/daw/server/command-api';
+
+function makeMergeSegment(overrides: Partial<{
+  id: string;
+  trackVersionId: string;
+  startMs: number;
+  endMs: number;
+  timelineStartMs: number;
+  timelineEndMs: number;
+  gainDb: number;
+  fadeInMs: number;
+  fadeOutMs: number;
+  isMuted: boolean;
+  position: number;
+  isImplicit: boolean;
+}> = {}) {
+  const startMs = overrides.startMs ?? 0;
+  const endMs = overrides.endMs ?? 1000;
+  const timelineStartMs = overrides.timelineStartMs ?? 0;
+  const timelineEndMs = overrides.timelineEndMs ?? timelineStartMs + (endMs - startMs);
+
+  return {
+    id: overrides.id ?? 'segment-a',
+    trackVersionId: overrides.trackVersionId ?? 'track-version-1',
+    startMs,
+    endMs,
+    timelineStartMs,
+    timelineEndMs,
+    gainDb: overrides.gainDb ?? 0,
+    fadeInMs: overrides.fadeInMs ?? 0,
+    fadeOutMs: overrides.fadeOutMs ?? 0,
+    isMuted: overrides.isMuted ?? false,
+    position: overrides.position ?? 0,
+    isImplicit: overrides.isImplicit ?? false,
+  };
+}
 
 test('setUserActiveVersion preserves an explicit pinned checkout without moving the shared head', async () => {
   let demoUpdateCalled = false;
@@ -238,4 +274,154 @@ test('version tree mutations broadcast a tree refresh while timeline edits do no
   for (const operationType of ['TRACK_RENAMED', 'SEGMENT_SPLIT', 'SEGMENT_MOVED'] as const) {
     assert.equal(shouldBroadcastVersionTreeChanged(operationType), false, operationType);
   }
+});
+
+test('validateSegmentMergeSelection accepts adjacent timeline and source segments', () => {
+  assert.equal(
+    validateSegmentMergeSelection(
+      makeMergeSegment({
+        id: 'segment-a',
+        startMs: 0,
+        endMs: 1000,
+        timelineStartMs: 0,
+        timelineEndMs: 1000,
+        position: 0,
+      }),
+      makeMergeSegment({
+        id: 'segment-b',
+        startMs: 1000,
+        endMs: 2000,
+        timelineStartMs: 1000,
+        timelineEndMs: 2000,
+        position: 1,
+      }),
+      {
+        id: 'merged-segment',
+        trackVersionId: 'track-version-1',
+        startMs: 0,
+        endMs: 2000,
+        timelineStartMs: 0,
+        timelineEndMs: 2000,
+        gainDb: 0,
+        fadeInMs: 0,
+        fadeOutMs: 0,
+        isMuted: false,
+        position: 0,
+      },
+    ),
+    null,
+  );
+});
+
+test('validateSegmentMergeSelection rejects timeline gaps', () => {
+  assert.equal(
+    validateSegmentMergeSelection(
+      makeMergeSegment({
+        id: 'segment-a',
+        startMs: 0,
+        endMs: 1000,
+        timelineStartMs: 0,
+        timelineEndMs: 1000,
+        position: 0,
+      }),
+      makeMergeSegment({
+        id: 'segment-b',
+        startMs: 1000,
+        endMs: 2000,
+        timelineStartMs: 1004,
+        timelineEndMs: 2004,
+        position: 1,
+      }),
+      {
+        id: 'merged-segment',
+        trackVersionId: 'track-version-1',
+        startMs: 0,
+        endMs: 2000,
+        timelineStartMs: 0,
+        timelineEndMs: 2000,
+        gainDb: 0,
+        fadeInMs: 0,
+        fadeOutMs: 0,
+        isMuted: false,
+        position: 0,
+      },
+    ),
+    'These clips cannot be merged because they are not continuous. Use a future bounce/render command to combine non-contiguous audio.',
+  );
+});
+
+test('validateSegmentMergeSelection rejects source gaps', () => {
+  assert.equal(
+    validateSegmentMergeSelection(
+      makeMergeSegment({
+        id: 'segment-a',
+        startMs: 0,
+        endMs: 1000,
+        timelineStartMs: 0,
+        timelineEndMs: 1000,
+        position: 0,
+      }),
+      makeMergeSegment({
+        id: 'segment-b',
+        startMs: 1050,
+        endMs: 2050,
+        timelineStartMs: 1000,
+        timelineEndMs: 2000,
+        position: 1,
+      }),
+      {
+        id: 'merged-segment',
+        trackVersionId: 'track-version-1',
+        startMs: 0,
+        endMs: 2000,
+        timelineStartMs: 0,
+        timelineEndMs: 2000,
+        gainDb: 0,
+        fadeInMs: 0,
+        fadeOutMs: 0,
+        isMuted: false,
+        position: 0,
+      },
+    ),
+    'These clips cannot be merged because they are not continuous. Use a future bounce/render command to combine non-contiguous audio.',
+  );
+});
+
+test('validateSegmentMergeSelection rejects different track versions', () => {
+  assert.equal(
+    validateSegmentMergeSelection(
+      makeMergeSegment({
+        id: 'segment-a',
+        trackVersionId: 'track-version-1',
+        startMs: 0,
+        endMs: 1000,
+        timelineStartMs: 0,
+        timelineEndMs: 1000,
+        position: 0,
+      }),
+      makeMergeSegment({
+        id: 'segment-b',
+        trackVersionId: 'track-version-2',
+        startMs: 1000,
+        endMs: 2000,
+        timelineStartMs: 1000,
+        timelineEndMs: 2000,
+        position: 1,
+      }),
+      {
+        id: 'merged-segment',
+        trackVersionId: 'track-version-1',
+        startMs: 0,
+        endMs: 2000,
+        timelineStartMs: 0,
+        timelineEndMs: 2000,
+        gainDb: 0,
+        fadeInMs: 0,
+        fadeOutMs: 0,
+        isMuted: false,
+        position: 0,
+      },
+    ),
+    'These clips must be on the same track to merge.',
+  );
 });

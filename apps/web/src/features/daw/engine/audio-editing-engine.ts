@@ -5,12 +5,11 @@ import type {
   DawOperationPayloadSegmentMerged,
   DawOperationPayloadSegmentMoved,
   DawOperationPayloadSegmentSplit,
-  DawOperationPayloadSegmentTrimmed,
   DawOperationPayloadTrackOffsetUpdated,
   DawOperationPayloadTrackRenamed,
   DawSegmentSnapshot,
 } from '@/features/daw/protocol';
-import type { DawTrack, TrackTimelineSegment } from '@/features/daw/state/local-project-state';
+import type { TrackTimelineSegment } from '@/features/daw/state/local-project-state';
 import { MIN_SPLIT_DISTANCE_MS, splitSegment } from '@/features/daw/utils/segments';
 
 type SplitSegmentLike = {
@@ -74,25 +73,6 @@ export class AudioEditingEngine {
       demoId: this.context.demoId,
       operationType: 'SEGMENT_MOVED',
       payload: input satisfies DawOperationPayloadSegmentMoved,
-    };
-  }
-
-  trimSegment(input: {
-    trackVersionId: string;
-    segmentId: string;
-    from: {
-      startMs: number;
-      endMs: number;
-    };
-    to: {
-      startMs: number;
-      endMs: number;
-    };
-  }): DawOperationCommitRequest {
-    return {
-      demoId: this.context.demoId,
-      operationType: 'SEGMENT_TRIMMED',
-      payload: input satisfies DawOperationPayloadSegmentTrimmed,
     };
   }
 

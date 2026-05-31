@@ -77,7 +77,7 @@ export async function POST(
     status: 'online' | 'idle' | 'away';
     cursorTimeMs: number | null;
     selectedTrackId: string | null;
-    currentTool: 'select' | 'split';
+    currentTool: 'select' | 'split' | 'merge';
     recordingState: 'idle' | 'recording' | 'preview' | 'uploading' | 'error';
     playbackFollowState: boolean;
   }>;
@@ -90,7 +90,7 @@ export async function POST(
     return NextResponse.json<ApiError>({ error: 'status is required' }, { status: 400 });
   }
 
-  if (body.currentTool !== 'select' && body.currentTool !== 'split') {
+  if (body.currentTool !== 'select' && body.currentTool !== 'split' && body.currentTool !== 'merge') {
     return NextResponse.json<ApiError>({ error: 'currentTool is required' }, { status: 400 });
   }
 
@@ -154,4 +154,3 @@ export async function DELETE(
 
   return NextResponse.json({ ok: true });
 }
-

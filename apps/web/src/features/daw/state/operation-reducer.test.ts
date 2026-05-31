@@ -1143,3 +1143,88 @@ test('SEGMENT_SPLIT request-shaped payload is ignored instead of crashing the ac
     console.warn = originalWarn;
   }
 });
+
+test('SEGMENT_MERGED replays by removing the source clips and inserting the merged clip', () => {
+  const root = makeVersion('version-root', {
+    isCurrent: true,
+    tracks: [
+      makeTrack('track-version-1', {
+        trackId: 'track-1',
+        trackName: 'Track 1',
+        segments: [
+          {
+            id: 'segment-a',
+            trackVersionId: 'track-version-1',
+            sourceStartMs: 0,
+            sourceEndMs: 1000,
+            timelineStartMs: 0,
+            timelineEndMs: 1000,
+            durationMs: 1000,
+            startMs: 0,
+            endMs: 1000,
+            gainDb: 0,
+            fadeInMs: 0,
+            fadeOutMs: 0,
+            isMuted: false,
+            position: 0,
+            isImplicit: false,
+          },
+          {
+            id: 'segment-b',
+            trackVersionId: 'track-version-1',
+            sourceStartMs: 1000,
+            sourceEndMs: 2000,
+            timelineStartMs: 1000,
+            timelineEndMs: 2000,
+            durationMs: 1000,
+            startMs: 1000,
+            endMs: 2000,
+            gainDb: 0,
+            fadeInMs: 0,
+            fadeOutMs: 0,
+            isMuted: false,
+            position: 1,
+            isImplicit: false,
+          },
+        ],
+      }),
+    ],
+  });
+  const initial = createLocalProjectStateFromBootstrap(makeBootstrap([root], root.id));
+  const mergedSegment = {
+    id: 'segment-merged',
+    trackVersionId: 'track-version-1',
+    startMs: 0,
+    endMs: 2000,
+    timelineStartMs: 0,
+    timelineEndMs: 2000,
+    gainDb: 0,
+    fadeInMs: 0,
+    fadeOutMs: 0,
+    isMuted: false,
+    position: 0,
+  };
+
+  const applied = applyAcceptedProjectOperation(
+    initial,
+    makeOperation('SEGMENT_MERGED', 2, {
+      trackVersionId: 'track-version-1',
+      segmentIds: ['segment-a', 'segment-b'],
+      mergedSegment,
+    }),
+  );
+
+  const updatedTrack = applied.versions[0]?.tracks[0];
+  assert.ok(updatedTrack);
+  assert.equal(updatedTrack?.segments.length, 1);
+  assert.deepEqual(updatedTrack?.segments[0], {
+    ...mergedSegment,
+    trackVersionId: 'track-version-1',
+    sourceStartMs: 0,
+    sourceEndMs: 2000,
+    durationMs: 2000,
+    isImplicit: false,
+  });
+  assert.equal(applied.operationHistory.length, 1);
+  assert.equal(applied.operationHistory[0]?.summary, 'Merged clips on Track 1');
+});

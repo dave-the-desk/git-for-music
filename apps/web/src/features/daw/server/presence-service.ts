@@ -1,7 +1,7 @@
 import { createProjectPresenceSeed, emitDawProjectPresence } from '@/features/daw/server/realtime-gateway';
 
 export type DawProjectPresenceStatus = 'online' | 'idle' | 'away';
-export type DawProjectPresenceCurrentTool = 'select' | 'split';
+export type DawProjectPresenceCurrentTool = 'select' | 'split' | 'merge';
 export type DawProjectRecordingState = 'idle' | 'recording' | 'preview' | 'uploading' | 'error';
 
 export type DawProjectPresenceRecord = {
@@ -183,4 +183,3 @@ export function removeProjectPresence(input: {
   const { updatedAtMs: _updatedAtMs, ...publicRecord } = record;
   return publicRecord;
 }
-

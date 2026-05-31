@@ -18,9 +18,11 @@ type TrackSegmentClipProps = {
   segment: TrackTimelineSegment;
   storageKey: string;
   isSelected: boolean;
+  isPendingMerge: boolean;
   isMuted: boolean;
   isDragging: boolean;
-  timelineTool: 'select' | 'split';
+  isMergeSelectable: boolean;
+  timelineTool: 'select' | 'split' | 'merge';
   currentTimeMs: number;
   onDurationReady?: (trackVersionId: string, durationMs: number) => void;
   onPointerDown: (event: React.PointerEvent<HTMLButtonElement>) => void;
@@ -37,8 +39,10 @@ export const TrackSegmentClip = forwardRef<TrackSegmentClipHandle, TrackSegmentC
       segment,
       storageKey,
       isSelected,
+      isPendingMerge,
       isMuted,
       isDragging,
+      isMergeSelectable,
       timelineTool,
       currentTimeMs,
       onDurationReady,
@@ -231,16 +235,36 @@ export const TrackSegmentClip = forwardRef<TrackSegmentClipHandle, TrackSegmentC
         title={
           timelineTool === 'split'
             ? 'Cut tool: click a clip to split it'
-            : 'Select tool: drag this clip to move it'
+            : timelineTool === 'merge'
+              ? isPendingMerge
+                ? 'Merge tool: first clip selected. Click a second compatible clip or press Escape to cancel.'
+                : isMergeSelectable
+                  ? 'Merge tool: click this clip to use it as the first selection'
+                  : 'This clip cannot be merged'
+              : 'Select tool: drag this clip to move it'
         }
         className={`absolute top-2 z-10 overflow-hidden rounded-md border text-left transition-colors ${
-          isSelected
+          isPendingMerge
+            ? 'border-emerald-400 bg-emerald-500/20 text-emerald-50 shadow-[0_0_0_1px_rgba(16,185,129,0.35)]'
+            : isSelected
             ? 'border-amber-400 bg-amber-500/20 text-amber-100 shadow-[0_0_0_1px_rgba(251,191,36,0.35)]'
-            : 'border-gray-700 bg-gray-900/70 text-gray-300 hover:border-indigo-400 hover:bg-indigo-500/10'
+            : timelineTool === 'merge'
+              ? isMergeSelectable
+                ? 'border-emerald-500/60 bg-gray-900/70 text-gray-200 hover:border-emerald-400 hover:bg-emerald-500/10'
+                : 'border-gray-700 bg-gray-900/70 text-gray-500 opacity-70'
+              : 'border-gray-700 bg-gray-900/70 text-gray-300 hover:border-indigo-400 hover:bg-indigo-500/10'
         } ${
           isMuted ? 'opacity-40' : ''
         } ${isPlayheadInside ? 'ring-1 ring-indigo-400/40' : ''} ${
-          isDragging ? 'cursor-grabbing' : timelineTool === 'split' ? 'cursor-crosshair' : 'cursor-grab'
+          isDragging
+            ? 'cursor-grabbing'
+            : timelineTool === 'split'
+              ? 'cursor-crosshair'
+              : timelineTool === 'merge'
+                ? isMergeSelectable
+                  ? 'cursor-pointer'
+                  : 'cursor-not-allowed'
+                : 'cursor-grab'
         }`}
         style={{
           left: leftPx,

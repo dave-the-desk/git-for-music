@@ -548,6 +548,16 @@ function buildOperationHistoryEntry(
         summary: track ? `Trimmed clip on ${track.trackName}` : 'Trimmed clip',
       };
     }
+    case 'SEGMENT_MERGED': {
+      const payload = operation.payload as { trackVersionId: string; segmentIds: string[] };
+      const track = findTrackByTrackVersionId(state, payload.trackVersionId);
+      return {
+        ...baseEntry,
+        trackId: track?.trackId ?? null,
+        segmentId: payload.segmentIds[0] ?? null,
+        summary: track ? `Merged clips on ${track.trackName}` : 'Merged clips',
+      };
+    }
     case 'CROSSFADE_SET': {
       const payload = operation.payload as { trackVersionId: string; leftSegmentId: string };
       const track = findTrackByTrackVersionId(state, payload.trackVersionId);

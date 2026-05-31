@@ -16,7 +16,14 @@ import {
   setDemoUserActiveVersion,
 } from '@/features/daw/server/demo-user-active-version';
 import { analyzeDawOperationConflict } from '@/features/daw/server/conflict-rules';
-import { splitSegment, MIN_SPLIT_DISTANCE_MS } from '@/features/daw/utils/segments';
+import {
+  buildMergedSegmentFromPair,
+  getMergeCandidateError,
+  sortSegmentsForMerge,
+  splitSegment,
+  MIN_SPLIT_DISTANCE_MS,
+  type MergeableSegment,
+} from '@/features/daw/utils/segments';
 import { isValidTempoBpm, normalizeTimeSignature } from '@/features/daw/utils/timing';
 import {
   createProjectPresenceSeed,
@@ -91,7 +98,6 @@ const TIMELINE_EDIT_OPERATION_TYPES = new Set<DawOperationType>([
 ]);
 const BRANCH_CREATING_OPERATION_TYPES = new Set<DawOperationType>([
   'TRACK_RENAMED',
-  'SEGMENT_SPLIT',
   'SEGMENT_DELETED',
   'SEGMENT_TRIMMED',
   'SEGMENT_MERGED',
@@ -398,6 +404,79 @@ function validateCollaborativeNotePayload(
 
   if (payload.startTimeMs !== null && payload.endTimeMs !== null && payload.endTimeMs < payload.startTimeMs) {
     return `${noteKind} endTimeMs must be greater than or equal to startTimeMs`;
+  }
+
+  return null;
+}
+
+function materializeMergeValidationSegment(segment: {
+  id: string;
+  trackVersionId: string;
+  startMs: number;
+  endMs: number;
+  timelineStartMs: number | null;
+  gainDb: number;
+  fadeInMs: number;
+  fadeOutMs: number;
+  isMuted: boolean;
+  position: number;
+  trackVersion: {
+    startOffsetMs: number;
+  };
+}): MergeableSegment {
+  return {
+    id: segment.id,
+    trackVersionId: segment.trackVersionId,
+    startMs: segment.startMs,
+    endMs: segment.endMs,
+    timelineStartMs: segment.timelineStartMs ?? segment.trackVersion.startOffsetMs + segment.startMs,
+    gainDb: segment.gainDb,
+    fadeInMs: segment.fadeInMs,
+    fadeOutMs: segment.fadeOutMs,
+    isMuted: segment.isMuted,
+    position: segment.position,
+    isImplicit: false,
+  };
+}
+
+function areMergedSegmentsEquivalent(
+  expected: ReturnType<typeof buildMergedSegmentFromPair>,
+  actual: DawSegmentSnapshot,
+) {
+  return (
+    expected.id === actual.id &&
+    expected.trackVersionId === actual.trackVersionId &&
+    expected.startMs === actual.startMs &&
+    expected.endMs === actual.endMs &&
+    expected.timelineStartMs === actual.timelineStartMs &&
+    expected.timelineEndMs === actual.timelineEndMs &&
+    expected.gainDb === actual.gainDb &&
+    expected.fadeInMs === actual.fadeInMs &&
+    expected.fadeOutMs === actual.fadeOutMs &&
+    expected.isMuted === actual.isMuted &&
+    expected.position === actual.position &&
+    (expected.crossfadeInMs ?? null) === (actual.crossfadeInMs ?? null) &&
+    (expected.crossfadeOutMs ?? null) === (actual.crossfadeOutMs ?? null) &&
+    (expected.crossfadeCurve ?? null) === (actual.crossfadeCurve ?? null)
+  );
+}
+
+export function validateSegmentMergeSelection(
+  firstSegment: MergeableSegment,
+  secondSegment: MergeableSegment,
+  mergedSegment: DawSegmentSnapshot,
+) {
+  const validationError = getMergeCandidateError(firstSegment, secondSegment);
+  if (validationError) {
+    return validationError;
+  }
+
+  const expectedMergedSegment = buildMergedSegmentFromPair(firstSegment, secondSegment, {
+    id: mergedSegment.id,
+  });
+
+  if (!areMergedSegmentsEquivalent(expectedMergedSegment, mergedSegment)) {
+    return 'Merged segment does not match the selected clips';
   }
 
   return null;
@@ -1031,8 +1110,25 @@ async function executeOperationMutation(
 
     case 'SEGMENT_MERGED': {
       const payload = request.payload;
-      if (!Array.isArray(payload.segmentIds) || payload.segmentIds.length === 0) {
-        throw new Error('segmentIds must not be empty');
+      if (!Array.isArray(payload.segmentIds) || payload.segmentIds.length !== 2) {
+        throw new Error('Exactly two segmentIds are required');
+      }
+
+      const segmentIds = new Set(payload.segmentIds);
+      if (segmentIds.size !== 2) {
+        throw new Error('segmentIds must contain two different clips');
+      }
+
+      if (!payload.mergedSegment || payload.mergedSegment.trackVersionId !== payload.trackVersionId) {
+        throw new Error('Merged segment must belong to the target track');
+      }
+
+      if (!isNonEmptyString(payload.mergedSegment.id)) {
+        throw new Error('Merged segment id is required');
+      }
+
+      if (segmentIds.has(payload.mergedSegment.id)) {
+        throw new Error('Merged segment id must be new');
       }
 
       const orderedSegments = await client.segment.findMany({
@@ -1061,42 +1157,57 @@ async function executeOperationMutation(
           fadeOutMs: true,
           isMuted: true,
           position: true,
+          trackVersion: {
+            select: {
+              startOffsetMs: true,
+            },
+          },
         },
       });
 
-      const segmentIds = new Set(payload.segmentIds);
-      const mergedIndex = orderedSegments.findIndex((segment) => segment.id === payload.mergedSegment.id);
-      if (mergedIndex < 0 && !segmentIds.has(payload.mergedSegment.id)) {
-        throw new Error('Merged segment not found');
-      }
-
-      const removedIndexes = orderedSegments
-        .map((segment, index) => (segmentIds.has(segment.id) ? index : -1))
-        .filter((index) => index >= 0);
-      if (removedIndexes.length === 0) {
+      const selectedSegments = orderedSegments.filter((segment) => segmentIds.has(segment.id));
+      if (selectedSegments.length !== 2) {
         throw new Error('Segments not found');
       }
 
-      const insertAt = removedIndexes[0];
-      const remaining = orderedSegments.filter((segment) => !segmentIds.has(segment.id) || segment.id === payload.mergedSegment.id);
-      const nextSegments = [...remaining];
-      const mergedSegment = {
-        ...payload.mergedSegment,
-        trackVersionId: payload.trackVersionId,
-      };
-
-      const existingMergedIndex = nextSegments.findIndex((segment) => segment.id === mergedSegment.id);
-      if (existingMergedIndex >= 0) {
-        nextSegments[existingMergedIndex] = mergedSegment;
-      } else {
-        nextSegments.splice(Math.min(insertAt, nextSegments.length), 0, mergedSegment);
+      const [firstSegment, secondSegment] = sortSegmentsForMerge(
+        materializeMergeValidationSegment(selectedSegments[0]!),
+        materializeMergeValidationSegment(selectedSegments[1]!),
+      );
+      const validationError = validateSegmentMergeSelection(firstSegment, secondSegment, payload.mergedSegment);
+      if (validationError) {
+        throw new Error(validationError);
       }
 
-      for (const segment of orderedSegments) {
-        if (segmentIds.has(segment.id) && segment.id !== mergedSegment.id) {
-          await client.segment.delete({ where: { id: segment.id } });
-        }
+      const mergedSegment = buildMergedSegmentFromPair(firstSegment, secondSegment, {
+        id: payload.mergedSegment.id,
+      });
+      const insertAt = Math.min(firstSegment.position, secondSegment.position);
+      const remaining = orderedSegments.filter((segment) => !segmentIds.has(segment.id));
+      const nextSegments: Array<(typeof orderedSegments)[number] | typeof mergedSegment> = [...remaining];
+      nextSegments.splice(Math.min(insertAt, nextSegments.length), 0, mergedSegment);
+
+      for (const segment of selectedSegments) {
+        await client.segment.delete({ where: { id: segment.id } });
       }
+
+      await client.segment.create({
+        data: {
+          id: mergedSegment.id,
+          trackVersionId: mergedSegment.trackVersionId,
+          startMs: mergedSegment.startMs,
+          endMs: mergedSegment.endMs,
+          timelineStartMs: mergedSegment.timelineStartMs,
+          gainDb: mergedSegment.gainDb,
+          fadeInMs: mergedSegment.fadeInMs,
+          fadeOutMs: mergedSegment.fadeOutMs,
+          isMuted: mergedSegment.isMuted,
+          position: insertAt,
+        },
+        select: {
+          id: true,
+        },
+      });
 
       for (let index = 0; index < nextSegments.length; index += 1) {
         const segment = nextSegments[index];
@@ -1128,8 +1239,8 @@ async function executeOperationMutation(
       return {
         logPayload: {
           trackVersionId: payload.trackVersionId,
-          segmentIds: payload.segmentIds,
-          mergedSegment: payload.mergedSegment,
+          segmentIds: [firstSegment.id, secondSegment.id],
+          mergedSegment,
         },
       };
     }
