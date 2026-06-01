@@ -21,14 +21,12 @@ type TrackSegmentClipProps = {
   storageKey: string;
   isSelected: boolean;
   isPendingMerge: boolean;
-  isPendingCrossfade: boolean;
   isFadeSelected: boolean;
   isMuted: boolean;
   isDragging: boolean;
   isMergeSelectable: boolean;
   isFadeSelectable: boolean;
-  isCrossfadeSelectable: boolean;
-  timelineTool: 'select' | 'split' | 'merge' | 'fade' | 'crossfade';
+  timelineTool: 'select' | 'split' | 'merge' | 'fade';
   currentTimeMs: number;
   onDurationReady?: (trackVersionId: string, durationMs: number) => void;
   onPointerDown: (event: React.PointerEvent<HTMLButtonElement>) => void;
@@ -50,13 +48,11 @@ export const TrackSegmentClip = forwardRef<TrackSegmentClipHandle, TrackSegmentC
       storageKey,
       isSelected,
       isPendingMerge,
-      isPendingCrossfade,
       isFadeSelected,
       isMuted,
       isDragging,
       isMergeSelectable,
       isFadeSelectable,
-      isCrossfadeSelectable,
       timelineTool,
       currentTimeMs,
       onDurationReady,
@@ -350,31 +346,19 @@ export const TrackSegmentClip = forwardRef<TrackSegmentClipHandle, TrackSegmentC
                   : isFadeSelectable
                     ? 'Fade tool: click this clip to show its fade dots'
                     : 'This clip cannot be faded'
-                : timelineTool === 'crossfade'
-                  ? isPendingCrossfade
-                    ? 'Crossfade tool: first clip selected. Click a second compatible clip or press Escape to cancel.'
-                    : isCrossfadeSelectable
-                      ? 'Crossfade tool: click this clip as the first selection'
-                      : 'This clip cannot be crossfaded'
-                  : 'Select tool: drag this clip to move it'
+                : 'Select tool: drag this clip to move it'
         }
         className={`absolute top-2 z-10 overflow-visible rounded-md border text-left transition-colors ${
           isPendingMerge
             ? 'border-emerald-400 bg-emerald-500/20 text-emerald-50 shadow-[0_0_0_1px_rgba(16,185,129,0.35)]'
-            : isPendingCrossfade
-              ? 'border-teal-400 bg-teal-500/20 text-teal-50 shadow-[0_0_0_1px_rgba(45,212,191,0.35)]'
-              : isFadeSelected
-                ? 'border-cyan-400 bg-cyan-500/20 text-cyan-50 shadow-[0_0_0_1px_rgba(34,211,238,0.35)]'
+            : isFadeSelected
+              ? 'border-cyan-400 bg-cyan-500/20 text-cyan-50 shadow-[0_0_0_1px_rgba(34,211,238,0.35)]'
             : isSelected
             ? 'border-amber-400 bg-amber-500/20 text-amber-100 shadow-[0_0_0_1px_rgba(251,191,36,0.35)]'
             : timelineTool === 'merge'
               ? isMergeSelectable
                 ? 'border-emerald-500/60 bg-gray-900/70 text-gray-200 hover:border-emerald-400 hover:bg-emerald-500/10'
                 : 'border-gray-700 bg-gray-900/70 text-gray-500 opacity-70'
-              : timelineTool === 'crossfade'
-                ? isCrossfadeSelectable
-                  ? 'border-teal-500/60 bg-gray-900/70 text-gray-200 hover:border-teal-400 hover:bg-teal-500/10'
-                  : 'border-gray-700 bg-gray-900/70 text-gray-500 opacity-70'
               : timelineTool === 'fade'
                   ? isFadeSelectable
                     ? 'border-cyan-500/60 bg-gray-900/70 text-gray-200 hover:border-cyan-400 hover:bg-cyan-500/10'
@@ -391,10 +375,6 @@ export const TrackSegmentClip = forwardRef<TrackSegmentClipHandle, TrackSegmentC
                 ? isMergeSelectable
                   ? 'cursor-pointer'
                   : 'cursor-not-allowed'
-              : timelineTool === 'crossfade'
-                  ? isCrossfadeSelectable
-                    ? 'cursor-pointer'
-                    : 'cursor-not-allowed'
                   : timelineTool === 'fade'
                     ? isFadeSelectable
                       ? 'cursor-pointer'

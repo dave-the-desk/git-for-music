@@ -38,18 +38,13 @@ import {
 } from '@/features/daw/rendering/visual-renderer';
 import {
   buildMergedSegmentFromPair,
-  buildCrossfadePayload,
   EMPTY_TRACK_MIME_TYPE,
-  DEFAULT_CROSSFADE_MS,
-  getCrossfadeCandidateError,
   getMergeCandidateError,
   isFadeSelectableSegment,
   isMergeSelectableSegment,
-  isCrossfadeSelectableSegment,
   isSameMergeSelection,
   isValidSplitTime,
   sortSegmentsForMerge,
-  sortSegmentsForCrossfade,
   type MergeSelection,
 } from '@/features/daw/utils/segments';
 import {
@@ -99,11 +94,6 @@ import {
 } from '@/features/daw/state/selectors';
 
 const DEMO_PAGE_TRACK_HEIGHT = TRACK_HEIGHT;
-
-type OperationDebugEntry = {
-  id: string;
-  operationType: DawOperationCommitRequest['operationType'];
-};
 
 function createBlankTrackBytes(sampleRate = 44100, durationMs = 1, channels = 1) {
   const bitsPerSample = 16;
@@ -214,7 +204,7 @@ type ProjectPresenceRecord = {
   status: 'online' | 'idle' | 'away' | 'offline';
   cursorTimeMs: number | null;
   selectedTrackId: string | null;
-  currentTool: 'select' | 'split' | 'merge' | 'fade' | 'crossfade';
+  currentTool: 'select' | 'split' | 'merge' | 'fade';
   recordingState: 'idle' | 'recording' | 'preview' | 'uploading' | 'error';
   playbackFollowState: boolean;
   updatedAt: string;
@@ -331,19 +321,15 @@ export function DemoDawClient({
   const [offsetOverrides, setOffsetOverrides] = useState<Record<string, number>>({});
   const [segmentLayoutOverrides, setSegmentLayoutOverrides] = useState<Record<string, TrackTimelineSegment[]>>({});
   const [timelineHistory, setTimelineHistory] = useState<TimelineHistoryEntry[]>([]);
-  const [operationDebugEntries, setOperationDebugEntries] = useState<OperationDebugEntry[]>([]);
   const [dragError, setDragError] = useState<string | null>(null);
   const dragRef = useRef<TimelineDragState | null>(null);
-  const [timelineTool, setTimelineTool] = useState<'select' | 'split' | 'merge' | 'fade' | 'crossfade'>('select');
+  const [timelineTool, setTimelineTool] = useState<'select' | 'split' | 'merge' | 'fade'>('select');
   const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(null);
   const [splitHover, setSplitHover] = useState<SplitHoverState>(null);
   const [splitError, setSplitError] = useState<string | null>(null);
   const [pendingMergeSelection, setPendingMergeSelection] = useState<MergeSelection | null>(null);
   const [mergeError, setMergeError] = useState<string | null>(null);
   const [mergeSubmitting, setMergeSubmitting] = useState(false);
-  const [pendingCrossfadeSelection, setPendingCrossfadeSelection] = useState<MergeSelection | null>(null);
-  const [crossfadeError, setCrossfadeError] = useState<string | null>(null);
-  const [crossfadeSubmitting, setCrossfadeSubmitting] = useState(false);
   const [fadeError, setFadeError] = useState<string | null>(null);
 
   const [renameState, setRenameState] = useState<RenameState | null>(null);
@@ -363,7 +349,7 @@ export function DemoDawClient({
   const undoTimelineEditInFlightRef = useRef(false);
   const deleteSelectedClipRef = useRef<() => Promise<boolean>>(async () => false);
   const cancelTimelineDragRef = useRef<() => void>(() => {});
-  const timelineToolRef = useRef<'select' | 'split' | 'merge' | 'fade' | 'crossfade'>('select');
+  const timelineToolRef = useRef<'select' | 'split' | 'merge' | 'fade'>('select');
   const presenceIdRef = useRef(crypto.randomUUID());
   const currentTimeMsRef = useRef(0);
   const selectedTrackIdRef = useRef<string | null>(null);
@@ -963,7 +949,6 @@ export function DemoDawClient({
     setSplitError(null);
     setPendingMergeSelection(null);
     setMergeError(null);
-    clearCrossfadeSelection();
     cancelFadeDrag();
     clearFadeSelection();
     setTimelineTool('select');
@@ -1275,10 +1260,6 @@ export function DemoDawClient({
           cancelFadeDrag();
           clearFadeSelection();
           setTimelineTool('select');
-        } else if (timelineToolRef.current === 'crossfade') {
-          clearCrossfadeSelection();
-          setSelectedSegmentId(null);
-          setTimelineTool('select');
         } else if (timelineToolRef.current === 'merge') {
           setPendingMergeSelection(null);
           setMergeError(null);
@@ -1337,17 +1318,6 @@ export function DemoDawClient({
 
   function pushTimelineHistory(entry: TimelineHistoryEntry) {
     setTimelineHistory((prev) => [...prev, entry]);
-  }
-
-  function pushOperationDebugEntry(operationType: DawOperationCommitRequest['operationType']) {
-    setOperationDebugEntries((prev) => {
-      const nextEntry = {
-        id: crypto.randomUUID(),
-        operationType,
-      };
-
-      return [...prev, nextEntry].slice(-8);
-    });
   }
 
   async function undoLatestTimelineEdit() {
@@ -1896,14 +1866,12 @@ export function DemoDawClient({
     operationType: Exclude<DawOperationType, 'ASSET_ADDED'>,
     payload: DawCommandPayload,
   ): Promise<DawProjectOperationRecord> {
-    pushOperationDebugEntry(operationType);
     return projectSyncEngine.commitOperation(buildCommitRequest(operationType, payload));
   }
 
   async function commitEditingOperation(
     request: DawOperationCommitRequest,
   ) {
-    pushOperationDebugEntry(request.operationType);
     return projectSyncEngine.commitOperation(
       buildCommitRequest(request.operationType, request.payload, request),
     );
@@ -2083,7 +2051,6 @@ export function DemoDawClient({
     setSelectedTrackVersionId(track.trackVersionId);
     setSelectedSegmentId(segment.id);
     setFadeError(null);
-    setCrossfadeError(null);
 
     fadeDragRef.current = {
       trackVersionId: track.trackVersionId,
@@ -2397,11 +2364,6 @@ export function DemoDawClient({
     setMergeError(null);
   }
 
-  function clearCrossfadeSelection() {
-    setPendingCrossfadeSelection(null);
-    setCrossfadeError(null);
-  }
-
   function clearFadeSelection() {
     setSelectedSegmentId(null);
     setFadeError(null);
@@ -2430,9 +2392,8 @@ export function DemoDawClient({
     fadeDragRef.current = null;
   }
 
-  function activateTimelineTool(nextTool: 'select' | 'split' | 'merge' | 'fade' | 'crossfade') {
+  function activateTimelineTool(nextTool: 'select' | 'split' | 'merge' | 'fade') {
     clearMergeSelection();
-    clearCrossfadeSelection();
     cancelFadeDrag();
     clearFadeSelection();
 
@@ -2445,7 +2406,7 @@ export function DemoDawClient({
       setSelectedSegmentId(null);
     }
 
-    if (nextTool === 'fade' || nextTool === 'crossfade') {
+    if (nextTool === 'fade') {
       setSelectedSegmentId(null);
     }
 
@@ -2809,72 +2770,6 @@ export function DemoDawClient({
       setMergeError(error instanceof Error ? error.message : 'Could not merge clips');
     } finally {
       setMergeSubmitting(false);
-    }
-  }
-
-  async function handleCrossfadeSegmentClick(track: DawTrack, clickedSegment: TrackTimelineSegment) {
-    if (timelineTool !== 'crossfade') return;
-    if (crossfadeSubmitting) return;
-
-    setSelectedTrackVersionId(track.trackVersionId);
-
-    if (!isCrossfadeSelectableSegment(clickedSegment)) {
-      setCrossfadeError('Only saved audio clips can be crossfaded.');
-      return;
-    }
-
-    if (isSameMergeSelection(pendingCrossfadeSelection, clickedSegment)) {
-      clearCrossfadeSelection();
-      setSelectedSegmentId(null);
-      return;
-    }
-
-    if (!pendingCrossfadeSelection) {
-      clearCrossfadeSelection();
-      setPendingCrossfadeSelection({
-        trackVersionId: clickedSegment.trackVersionId,
-        segmentId: clickedSegment.id,
-      });
-      setSelectedSegmentId(clickedSegment.id);
-      return;
-    }
-
-    const firstSegment = findSegmentById(
-      pendingCrossfadeSelection.trackVersionId,
-      pendingCrossfadeSelection.segmentId,
-    );
-    if (!firstSegment) {
-      clearCrossfadeSelection();
-      setCrossfadeError('The first clip is no longer available. Please choose another clip.');
-      return;
-    }
-
-    const candidateError = getCrossfadeCandidateError(firstSegment, clickedSegment);
-    if (candidateError) {
-      setCrossfadeError(candidateError);
-      return;
-    }
-
-    const [leftSegment, rightSegment] = sortSegmentsForCrossfade(firstSegment, clickedSegment);
-    let payload: ReturnType<typeof buildCrossfadePayload>;
-    try {
-      payload = buildCrossfadePayload(leftSegment, rightSegment, DEFAULT_CROSSFADE_MS, 'linear');
-    } catch (error) {
-      setCrossfadeError(error instanceof Error ? error.message : 'Could not set crossfade');
-      return;
-    }
-
-    setCrossfadeError(null);
-    setCrossfadeSubmitting(true);
-
-    try {
-      await commitEditingOperation(audioEditingEngine.setCrossfade(payload));
-      clearCrossfadeSelection();
-      setSelectedSegmentId(null);
-    } catch (error) {
-      setCrossfadeError(error instanceof Error ? error.message : 'Could not set crossfade');
-    } finally {
-      setCrossfadeSubmitting(false);
     }
   }
 
@@ -3261,9 +3156,6 @@ export function DemoDawClient({
   const canEnterMergeMode = selectedTracks.some((track) =>
     getDisplayedTrackSegments(track).filter((segment) => !segment.isImplicit).length >= 2,
   );
-  const canEnterCrossfadeMode = selectedTracks.some((track) =>
-    getDisplayedTrackSegments(track).some((segment) => isCrossfadeSelectableSegment(segment)),
-  );
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
@@ -3421,25 +3313,6 @@ export function DemoDawClient({
                     </button>
                     <button
                       type="button"
-                      onClick={() => activateTimelineTool(timelineTool === 'crossfade' ? 'select' : 'crossfade')}
-                      disabled={!canEnterCrossfadeMode}
-                      title={
-                        !canEnterCrossfadeMode
-                          ? 'Add or upload at least one saved clip before using Crossfade'
-                          : timelineTool === 'crossfade'
-                            ? 'Leave crossfade mode'
-                            : 'Click two compatible clips on the same track to apply a crossfade'
-                      }
-                      className={`rounded-md px-3 py-2 text-sm font-medium ${
-                        timelineTool === 'crossfade'
-                          ? 'bg-teal-600 text-white hover:bg-teal-500'
-                          : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
-                      } disabled:cursor-not-allowed disabled:opacity-40`}
-                    >
-                      Crossfade
-                    </button>
-                    <button
-                      type="button"
                       onClick={() => void undoLatestTimelineEditRef.current()}
                       className="rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-slate-300 hover:bg-slate-800"
                     >
@@ -3461,7 +3334,8 @@ export function DemoDawClient({
                     </label>
                   </div>
                   <p className="text-xs text-slate-400">
-                    Select is the main cursor mode. Cut splits clips at the playhead. Merge, Fade, and Crossfade now use explicit clip selections.
+                    Select is the main cursor mode. Cut splits clips at the playhead. Merge uses explicit clip selections,
+                    and Fade lets you drag the fade handles on a clip.
                   </p>
                   {timelineTool === 'merge' ? (
                     <div className="space-y-1 text-xs">
@@ -3483,19 +3357,6 @@ export function DemoDawClient({
                       <p className="text-cyan-300">
                         Click a clip to reveal its fade dots, then drag a dot inward to update the fade.
                       </p>
-                    </div>
-                  ) : null}
-                  {timelineTool === 'crossfade' ? (
-                    <div className="space-y-1 text-xs">
-                      {crossfadeSubmitting ? <p className="text-teal-300">Applying crossfade...</p> : null}
-                      {crossfadeError ? <p className="text-rose-300">{crossfadeError}</p> : null}
-                      {!crossfadeSubmitting && pendingCrossfadeSelection ? (
-                        <p className="text-teal-300">
-                          First clip selected. Click a second compatible clip on the same track, or press Escape to cancel.
-                        </p>
-                      ) : !crossfadeSubmitting ? (
-                        <p className="text-slate-500">Click the first clip you want to crossfade.</p>
-                      ) : null}
                     </div>
                   ) : null}
                 </div>
@@ -4322,12 +4183,7 @@ export function DemoDawClient({
                         const isPendingMerge =
                           pendingMergeSelection?.trackVersionId === track.trackVersionId &&
                           pendingMergeSelection.segmentId === segment.id;
-                        const isPendingCrossfade =
-                          pendingCrossfadeSelection?.trackVersionId === track.trackVersionId &&
-                          pendingCrossfadeSelection.segmentId === segment.id;
                         const isMergeSelectable = isMergeToolActive && isMergeSelectableSegment(segment);
-                        const isCrossfadeSelectable =
-                          timelineTool === 'crossfade' && isCrossfadeSelectableSegment(segment);
                         const isFadeSelected =
                           timelineTool === 'fade' &&
                           selectedTrackVersionId === track.trackVersionId &&
@@ -4346,14 +4202,12 @@ export function DemoDawClient({
                             storageKey={track.storageKey}
                             isSelected={isSelected}
                             isPendingMerge={isPendingMerge}
-                            isPendingCrossfade={isPendingCrossfade}
                             isFadeSelected={isFadeSelected}
                             isMuted={isMuted}
                             isDragging={isDraggingSegment || isDraggingImplicitTrack}
                             timelineTool={timelineTool}
                             isMergeSelectable={isMergeSelectable}
                             isFadeSelectable={isFadeSelectable}
-                            isCrossfadeSelectable={isCrossfadeSelectable}
                             currentTimeMs={currentTimeMs}
                             onDurationReady={handleDurationReady}
                             onPointerDown={(event) => handleSegmentPointerDown(event, track, segment)}
@@ -4395,11 +4249,6 @@ export function DemoDawClient({
                                 void handleMergeSegmentClick(track, segment);
                                 return;
                               }
-                              if (timelineTool === 'crossfade') {
-                                event.stopPropagation();
-                                void handleCrossfadeSegmentClick(track, segment);
-                                return;
-                              }
                               if (timelineTool === 'fade') {
                                 event.stopPropagation();
                                 if (!isFadeSelectableSegment(segment)) {
@@ -4436,24 +4285,12 @@ export function DemoDawClient({
             </div>
           )}
         </section>
-        <div className="fixed bottom-4 left-4 z-[60] flex max-w-xs flex-col gap-2 pointer-events-none">
+        <div className="fixed bottom-4 right-4 z-[60] pointer-events-none">
           {isLocalOnlySync ? (
-            <div className="rounded-md border border-amber-500/40 bg-amber-950/90 px-3 py-2 text-[10px] uppercase tracking-[0.18em] text-amber-100 shadow-lg shadow-black/40 backdrop-blur">
+            <div className="max-w-xs rounded-md border border-amber-500/40 bg-amber-950/90 px-3 py-2 text-[10px] uppercase tracking-[0.18em] text-amber-100 shadow-lg shadow-black/40 backdrop-blur">
               <p className="text-[9px] text-amber-300">Sync status</p>
               <div className="mt-1 text-[11px] font-medium tracking-normal text-amber-50">Offline / local-only</div>
               <p className="mt-1 text-[10px] normal-case tracking-normal text-amber-200/80">{localOnlyStatusText}</p>
-            </div>
-          ) : null}
-          {operationDebugEntries.length > 0 ? (
-            <div className="rounded-md border border-slate-700 bg-slate-950/90 px-3 py-2 text-[10px] uppercase tracking-[0.18em] text-slate-300 shadow-lg shadow-black/40 backdrop-blur">
-              <p className="text-[9px] text-slate-500">Detected operations</p>
-              <div className="mt-2 flex flex-col gap-1 text-[11px] tracking-normal text-slate-100">
-                {operationDebugEntries.slice().reverse().map((entry) => (
-                  <div key={entry.id} className="truncate rounded bg-slate-900/80 px-2 py-1 font-mono">
-                    {entry.operationType}
-                  </div>
-                ))}
-              </div>
             </div>
           ) : null}
         </div>

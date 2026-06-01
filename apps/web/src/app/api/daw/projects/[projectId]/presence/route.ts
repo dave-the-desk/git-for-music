@@ -77,7 +77,7 @@ export async function POST(
     status: 'online' | 'idle' | 'away';
     cursorTimeMs: number | null;
     selectedTrackId: string | null;
-    currentTool: 'select' | 'split' | 'merge' | 'fade' | 'crossfade';
+    currentTool: 'select' | 'split' | 'merge' | 'fade';
     recordingState: 'idle' | 'recording' | 'preview' | 'uploading' | 'error';
     playbackFollowState: boolean;
   }>;
@@ -94,8 +94,7 @@ export async function POST(
     body.currentTool !== 'select' &&
     body.currentTool !== 'split' &&
     body.currentTool !== 'merge' &&
-    body.currentTool !== 'fade' &&
-    body.currentTool !== 'crossfade'
+    body.currentTool !== 'fade'
   ) {
     return NextResponse.json<ApiError>({ error: 'currentTool is required' }, { status: 400 });
   }

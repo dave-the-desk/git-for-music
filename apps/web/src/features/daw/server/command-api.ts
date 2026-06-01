@@ -102,7 +102,6 @@ const TIMELINE_EDIT_OPERATION_TYPES = new Set<DawOperationType>([
 ]);
 const BRANCH_CREATING_OPERATION_TYPES = new Set<DawOperationType>([
   'TRACK_RENAMED',
-  'SEGMENT_DELETED',
   'SEGMENT_TRIMMED',
 ]);
 const VERSION_TREE_MUTATION_OPERATION_TYPES = new Set<DawOperationType>([
