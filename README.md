@@ -6,8 +6,11 @@ Music collaboration and versioning platform.
 
 - [pnpm](https://pnpm.io/) >= 10.33.0
 - [Docker](https://www.docker.com/) (for the Compose stack)
-- [Node.js](https://nodejs.org/) >= 20
-- Python >= 3.11 (for audio workers)
+- [Node.js](https://nodejs.org/) 22.21.1 (managed via `.nvmrc`)
+
+`pnpm` is pinned through the root `packageManager` field and provided by
+Corepack. If the command is missing in a fresh shell, run `corepack enable`
+once after switching to the repo's Node version.
 
 ## Quick start
 
@@ -19,10 +22,15 @@ pnpm install
 
 # 2. Copy env files
 cp .env.example .env
-cp apps/web/.env.example apps/web/.env.local
+cp src/.env.example src/.env.local
+```
 
-# 3. Start Postgres + Redis
-docker compose up -d postgres redis
+The example app env already points asset uploads at local MinIO on
+`http://localhost:9000`.
+
+```bash
+# 3. Start Postgres, Redis, and MinIO
+docker compose up -d postgres redis minio minio-init
 
 # 4. Generate Prisma client and push schema
 pnpm db:generate
@@ -36,31 +44,29 @@ Open [http://localhost:3000](http://localhost:3000).
 
 ## Docker Compose
 
-The containerized stack brings up Postgres, Redis, the Next.js app, and the
-audio worker:
+The containerized stack brings up Postgres, Redis, MinIO, and the Next.js app:
 
 ```bash
 docker compose up --build
 ```
 
-Run that from the repository root. It will start the database, Redis, the web
-app, and the audio worker together.
+Run that from the repository root. It will start the database, Redis, MinIO,
+and the web app together.
 
-The first container startup also runs a one-shot `db-init` job so the Prisma
-schema is pushed into the local Postgres volume automatically. The web service
-uses `postgres` and `redis` as service names inside the Compose network, and
-the worker is pointed at the web service directly so status callbacks work in
-Docker. The Compose file also sets matching dev-only upload and callback
+The first container startup also runs one-shot `db-init` and `minio-init`
+jobs so the Prisma schema is pushed into the local Postgres volume and the
+MinIO bucket + CORS config are created automatically. The web service uses
+`postgres`, `redis`, and `minio` as service names inside the Compose network.
+The Compose file also sets the dev-only upload, callback, and object storage
 secrets so the stack works without extra local env setup.
 
 ## Workspace layout
 
 | Path | Description |
 |---|---|
-| `apps/web` | Next.js frontend + API routes |
+| `src` | Next.js frontend + API routes |
 | `packages/db` | Prisma schema and client singleton |
 | `packages/shared` | Shared TypeScript types |
-| `workers/audio` | Python audio processing worker (placeholder) |
 
 ## Common commands
 
@@ -84,46 +90,6 @@ pnpm db:studio      # Open Prisma Studio
 |---|---|
 | Postgres | 5432 |
 | Redis | 6379 |
+| MinIO API | 9000 |
+| MinIO console | 9001 |
 | Web | 3000 |
-| Audio worker | n/a |
-
-## Audio worker (Python)
-
-```bash
-cd workers/audio
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python main.py
-```
-
-Docker build and run:
-
-```bash
-docker build -t git-for-music-audio-worker ./workers/audio
-docker run --rm \
-  --env-file workers/audio/.env.example \
-  -e DATABASE_URL=postgresql://postgres:postgres@host.docker.internal:5432/git_for_music \
-  -e WEB_PUBLIC_DIR=/data/public \
-  -v "$(pwd)/apps/web/public:/data/public" \
-  git-for-music-audio-worker
-```
-
-If you prefer scripts, use:
-
-```bash
-bash workers/audio/run.sh
-bash workers/audio/build-and-run.sh
-```
-
-The worker uses local DSP libraries for tempo/key analysis and time-stretching.
-It polls the `ProcessingJob` table directly, so queued jobs live in Postgres
-and can be inspected from the app while they are processing.
-You will also want `ffmpeg` installed for decoding compressed audio, and the
-Rubber Band CLI (`rubberband`) for higher-quality time-stretching. The worker
-falls back to librosa's stretcher if Rubber Band is unavailable, but Rubber Band
-is the recommended setup for production-like results.
-
-If you deploy the worker separately from the web app, mount the same uploads
-directory into the container or switch the storage layer to an object-store URL
-that both services can reach.

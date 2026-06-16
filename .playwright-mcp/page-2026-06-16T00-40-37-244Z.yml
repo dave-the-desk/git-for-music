@@ -1,0 +1,30 @@
+- generic [active] [ref=e1]:
+  - navigation [ref=e2]:
+    - generic [ref=e3]:
+      - link "git-for-music" [ref=e4] [cursor=pointer]:
+        - /url: /groups
+      - button "Open notifications" [ref=e7]:
+        - img [ref=e8]
+  - main [ref=e11]:
+    - generic [ref=e12]:
+      - link "Back" [ref=e13] [cursor=pointer]:
+        - /url: /groups/audio-qa-group
+      - generic [ref=e14]:
+        - heading "Audio QA Project" [level=1] [ref=e15]
+        - paragraph [ref=e16]: Temporary project for validating audio playback
+      - generic [ref=e17]:
+        - generic [ref=e18]:
+          - heading "Demos" [level=2] [ref=e19]
+          - button "Create Demo" [ref=e20]
+        - link "Audio QA Demo Temporary demo for validating audio playback Updated Jun 15, 2026, 4:46 PM" [ref=e22] [cursor=pointer]:
+          - /url: /groups/audio-qa-group/projects/audio-qa-project/demos/cmqfv37rb0007rrb7itkjtlkm
+          - paragraph [ref=e23]: Audio QA Demo
+          - paragraph [ref=e24]: Temporary demo for validating audio playback
+          - paragraph [ref=e25]: Updated Jun 15, 2026, 4:46 PM
+      - generic [ref=e26]:
+        - heading "Recent Activity" [level=2] [ref=e27]
+        - generic [ref=e28]: Activity feed placeholder.
+      - generic [ref=e29]:
+        - heading "Equipment Requirements" [level=2] [ref=e30]
+        - generic [ref=e31]: Equipment requirements placeholder.
+  - alert [ref=e32]

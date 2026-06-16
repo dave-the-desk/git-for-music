@@ -1,0 +1,16 @@
+{
+  "name": "@git-for-music/server",
+  "version": "0.0.1",
+  "private": true,
+  "main": "./index.ts",
+  "types": "./index.ts",
+  "dependencies": {
+    "@git-for-music/db": "workspace:*",
+    "@git-for-music/shared": "workspace:*",
+    "next": "^15.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.0.0"
+  }
+}

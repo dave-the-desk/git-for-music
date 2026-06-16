@@ -1,0 +1,20 @@
+- generic [active] [ref=e1]:
+  - main [ref=e2]:
+    - generic [ref=e4]:
+      - heading "Create an account" [level=1] [ref=e5]
+      - paragraph [ref=e6]: Enter your details to create your git-for-music account.
+      - generic [ref=e7]:
+        - generic [ref=e8]:
+          - generic [ref=e9]: Email
+          - textbox "Email" [ref=e10]
+        - generic [ref=e11]:
+          - generic [ref=e12]: Name
+          - textbox "Name" [ref=e13]
+        - generic [ref=e14]:
+          - generic [ref=e15]: Password
+          - textbox "Password" [ref=e16]
+        - generic [ref=e17]:
+          - generic [ref=e18]: Confirm password
+          - textbox "Confirm password" [ref=e19]
+        - button "Create account" [ref=e20]
+  - alert [ref=e21]

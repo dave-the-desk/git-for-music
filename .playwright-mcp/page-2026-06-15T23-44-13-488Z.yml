@@ -1,0 +1,20 @@
+- generic [active] [ref=e1]:
+  - button "Open Next.js Dev Tools" [ref=e27] [cursor=pointer]:
+    - img [ref=e28]
+  - alert [ref=e21]
+  - navigation [ref=e31]:
+    - generic [ref=e32]:
+      - link "git-for-music" [ref=e33] [cursor=pointer]:
+        - /url: /groups
+      - button "Open notifications" [ref=e36]:
+        - img [ref=e37]
+  - main [ref=e40]:
+    - generic [ref=e41]:
+      - generic [ref=e42]:
+        - heading "Groups" [level=1] [ref=e43]
+        - button "New Group" [ref=e44]
+      - link "Audio QA Group Temporary group for validating audio playback 1 member" [ref=e60] [cursor=pointer]:
+        - /url: /groups/audio-qa-group
+        - paragraph [ref=e61]: Audio QA Group
+        - paragraph [ref=e62]: Temporary group for validating audio playback
+        - paragraph [ref=e63]: 1 member

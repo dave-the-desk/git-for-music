@@ -1,0 +1,56 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "lib": [
+      "dom",
+      "dom.iterable",
+      "es2022"
+    ],
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    "jsx": "preserve",
+    "paths": {
+      "@/app/lib/auth": [
+        "../packages/server/app/lib/auth/index.ts"
+      ],
+      "@/app/lib/auth/*": [
+        "../packages/server/app/lib/auth/*"
+      ],
+      "@/app/lib/daw/protocol": [
+        "../packages/server/app/lib/daw/protocol/index.ts"
+      ],
+      "@/app/lib/daw/protocol/*": [
+        "../packages/server/app/lib/daw/protocol/*"
+      ],
+      "@/app/lib/daw/server": [
+        "../packages/server/app/lib/daw/server/index.ts"
+      ],
+      "@/app/lib/daw/server/*": [
+        "../packages/server/app/lib/daw/server/*"
+      ],
+      "@/app/lib/processing": [
+        "../packages/server/app/lib/processing/index.ts"
+      ],
+      "@/app/lib/processing/*": [
+        "../packages/server/app/lib/processing/*"
+      ],
+      "@/*": [
+        "./*"
+      ]
+    },
+    "allowJs": true,
+    "incremental": true
+  },
+  "include": [
+    "next-env.d.ts",
+    "**/*.ts",
+    "**/*.tsx",
+    ".next/types/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
+}

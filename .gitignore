@@ -1,5 +1,6 @@
 # dependencies
 node_modules
+.pnpm-store/
 .pnp
 .pnp.js
 
@@ -19,15 +20,39 @@ dist
 
 # misc
 .DS_Store
-*.pem
 Thumbs.db
-apps/web/public/uploads/
+
+# local secrets / credentials
+.env
+.env.*
+!.env.example
+!.env.production.example
+!**/.env.example
+.envrc
+.direnv/
+.npmrc
+*.local
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*.secret
+*.token
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+*.log
+
+# local media / storage artifacts
+**/public/uploads/
 storage/
 .local-storage/
 tmp/audio/
 tmp/uploads/
-workers/audio/output/
-workers/audio/tmp/
 *.wav
 *.mp3
 *.m4a
@@ -49,13 +74,6 @@ workers/audio/tmp/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-
-# local env files
-.env
-.env.*
-!.env.example
-!.env.production.example
-!**/.env.example
 
 # vercel
 .vercel
@@ -86,3 +104,6 @@ CLAUDE.md
 multiple-user-test.sh
 
 .tmp/chrome-profiles
+
+
+.nvmrc

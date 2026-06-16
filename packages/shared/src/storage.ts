@@ -109,6 +109,10 @@ export function buildAnalysisObjectKey(input: { projectId: string; demoId: strin
   return `${buildAnalysisStoragePrefix(input)}/${sanitizeAssetName(jobId)}.json`;
 }
 
+export function buildTrackVersionAudioUrl(trackVersionId: string) {
+  return `/api/daw/track-versions/${encodeURIComponent(trackVersionId)}/audio`;
+}
+
 export function buildPublicAudioUrl(baseUrl: string, objectKey: string) {
   const trimmedBase = baseUrl.replace(/\/+$/, '');
   const trimmedKey = objectKey.replace(/^\/+/, '');

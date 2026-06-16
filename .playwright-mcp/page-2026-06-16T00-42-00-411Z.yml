@@ -1,0 +1,77 @@
+- generic [active] [ref=e1]:
+  - button "Open Next.js Dev Tools" [ref=e38] [cursor=pointer]:
+    - img [ref=e39]
+  - alert [ref=e32]
+  - main [ref=e61]:
+    - generic [ref=e63]:
+      - generic [ref=e64]:
+        - generic [ref=e65]:
+          - button "Back" [ref=e66]
+          - generic [ref=e67]:
+            - heading "Realtime Demo 2" [level=1] [ref=e68]
+            - paragraph [ref=e69]: Created for realtime validation
+        - generic [ref=e70]:
+          - generic [ref=e71]:
+            - paragraph [ref=e72]: Microphone
+            - paragraph [ref=e73]: Choose a microphone
+          - button "Microphone permission needed" [ref=e75]:
+            - img [ref=e76]
+      - generic [ref=e78]:
+        - generic [ref=e79]:
+          - generic [ref=e81]:
+            - generic [ref=e82]:
+              - paragraph [ref=e83]: Project Timing
+              - paragraph [ref=e84]: Shared demo tempo is fixed. Your local tempo only affects your session.
+            - generic [ref=e85]:
+              - paragraph [ref=e86]: Shared demo tempo
+              - paragraph [ref=e87]: 100 bpm
+              - paragraph [ref=e88]: Visible to everyone and saved with the demo.
+            - generic [ref=e89]:
+              - generic [ref=e90]: Local tempo
+              - spinbutton "Local tempo Local only. Affects your playback, recording, and metronome." [ref=e91]: "100"
+              - paragraph [ref=e92]: Local only. Affects your playback, recording, and metronome.
+          - generic [ref=e93]:
+            - generic [ref=e94]:
+              - button "Record" [disabled] [ref=e95]: Record
+              - paragraph [ref=e97]: Arm a track before recording.
+            - button "Stop" [ref=e99]:
+              - img [ref=e100]
+            - button "Play" [ref=e102]:
+              - img [ref=e103]
+            - generic [ref=e105]: 0:00.00
+            - button "Metronome Off" [ref=e106]
+        - generic [ref=e107]:
+          - generic [ref=e108]:
+            - button "Edit" [pressed] [ref=e109]
+            - button "Upload" [ref=e110]
+            - button "Plugins" [ref=e111]
+            - button "Tree" [ref=e112]
+            - button "Comments" [ref=e113]
+            - button "Members" [ref=e114]
+          - generic [ref=e116]:
+            - generic [ref=e118]:
+              - paragraph [ref=e119]: Tools
+              - paragraph [ref=e120]: Edit and timeline actions live here.
+            - generic [ref=e121]:
+              - button "Select" [ref=e122]
+              - button "Cut" [ref=e123]
+              - button "Merge" [disabled] [ref=e124]
+              - button "Fade" [ref=e125]
+              - button "Undo" [ref=e126]
+              - generic [ref=e127]:
+                - generic [ref=e128]: Snap
+                - combobox "Snap" [ref=e129]:
+                  - option "Off"
+                  - option "Bar"
+                  - option "Beat" [selected]
+                  - option "Half beat"
+                  - option "Quarter beat"
+            - paragraph [ref=e130]: Select is the main cursor mode. Cut splits clips at the playhead. Merge uses explicit clip selections, and Fade lets you drag the fade handles on a clip.
+      - generic [ref=e132]:
+        - generic [ref=e133]:
+          - heading "Timeline" [level=2] [ref=e134]
+          - button "Add Comment" [ref=e135]
+        - paragraph [ref=e136]: Comments can be anchored to the playhead or scoped to a specific track.
+        - generic [ref=e137]:
+          - text: This version has no tracks yet. Upload, record, or add a track to get started.
+          - button "+ Add track" [ref=e139]

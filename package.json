@@ -4,7 +4,10 @@
   "version": "0.0.1",
   "packageManager": "pnpm@10.33.0",
   "scripts": {
+    "postinstall": "pnpm db:generate",
+    "predev": "pnpm db:generate",
     "dev": "pnpm --filter @git-for-music/web dev",
+    "prebuild": "pnpm db:generate",
     "build": "pnpm --filter @git-for-music/web build",
     "lint": "pnpm --filter @git-for-music/web lint",
     "db:generate": "pnpm --filter @git-for-music/db generate",
@@ -15,5 +18,8 @@
   "engines": {
     "node": ">=20",
     "pnpm": ">=10.33.0"
+  },
+  "dependencies": {
+    "@mermaid-js/mermaid-cli": "^11.15.0"
   }
 }

@@ -1,0 +1,94 @@
+- generic [active] [ref=e1]:
+  - main [ref=e2]:
+    - generic [ref=e4]:
+      - generic [ref=e5]:
+        - generic [ref=e6]:
+          - button "Back" [ref=e7]
+          - generic [ref=e8]:
+            - heading "Audio QA Demo" [level=1] [ref=e9]
+            - paragraph [ref=e10]: Temporary demo for validating audio playback
+        - generic [ref=e11]:
+          - generic [ref=e12]:
+            - paragraph [ref=e13]: Microphone
+            - paragraph [ref=e14]: Choose a microphone
+          - button "Microphone permission needed" [ref=e139]:
+            - img [ref=e140]
+      - generic [ref=e18]:
+        - generic [ref=e19]:
+          - generic [ref=e21]:
+            - generic [ref=e22]:
+              - paragraph [ref=e23]: Project Timing
+              - paragraph [ref=e24]: Shared demo tempo is fixed. Your local tempo only affects your session.
+            - generic [ref=e25]:
+              - paragraph [ref=e26]: Shared demo tempo
+              - paragraph [ref=e27]: 100 bpm
+              - paragraph [ref=e28]: Visible to everyone and saved with the demo.
+            - generic [ref=e29]:
+              - generic [ref=e30]: Local tempo
+              - spinbutton "Local tempo Local only. Affects your playback, recording, and metronome." [ref=e31]: "100"
+              - paragraph [ref=e32]: Local only. Affects your playback, recording, and metronome.
+          - generic [ref=e33]:
+            - generic [ref=e142]:
+              - button "Record" [disabled] [ref=e143]: Record
+              - paragraph [ref=e145]: Choose a microphone from the mic button before recording.
+            - button "Stop" [ref=e35]:
+              - img [ref=e36]
+            - button "Play" [ref=e38]:
+              - img [ref=e39]
+            - generic [ref=e41]: 0:00.00
+            - button "Metronome Off" [ref=e42]
+        - generic [ref=e43]:
+          - generic [ref=e44]:
+            - button "Edit" [pressed] [ref=e45]
+            - button "Upload" [ref=e46]
+            - button "Plugins" [ref=e47]
+            - button "Tree" [ref=e48]
+            - button "Comments" [ref=e49]
+            - button "Members" [ref=e50]
+          - generic [ref=e52]:
+            - generic [ref=e54]:
+              - paragraph [ref=e55]: Tools
+              - paragraph [ref=e56]: Edit and timeline actions live here.
+            - generic [ref=e57]:
+              - button "Select" [ref=e58]
+              - button "Cut" [ref=e59]
+              - button "Merge" [disabled] [ref=e60]
+              - button "Fade" [ref=e61]
+              - button "Undo" [ref=e62]
+              - generic [ref=e63]:
+                - generic [ref=e64]: Snap
+                - combobox "Snap" [ref=e65]:
+                  - option "Off"
+                  - option "Bar"
+                  - option "Beat" [selected]
+                  - option "Half beat"
+                  - option "Quarter beat"
+            - paragraph [ref=e66]: Select is the main cursor mode. Cut splits clips at the playhead. Merge uses explicit clip selections, and Fade lets you drag the fade handles on a clip.
+      - generic [ref=e68]:
+        - generic [ref=e69]:
+          - heading "Timeline" [level=2] [ref=e70]
+          - button "Add Comment" [ref=e71]
+        - paragraph [ref=e72]: Comments can be anchored to the playhead or scoped to a specific track.
+        - generic [ref=e73]:
+          - generic [ref=e116]:
+            - generic [ref=e117]:
+              - generic [ref=e118]:
+                - paragraph [ref=e119]: audio-qa
+                - generic [ref=e120]:
+                  - button "Rename track" [ref=e122]:
+                    - img [ref=e123]
+                  - button "R" [pressed] [ref=e125]
+                  - generic [ref=e126]:
+                    - button "M" [ref=e127]
+                    - button "S" [ref=e128]
+              - generic [ref=e130]:
+                - generic [ref=e131]: Vol
+                - slider "Vol" [ref=e132]: "1"
+            - button "Clip 1 1s" [ref=e134]:
+              - generic [ref=e135]:
+                - generic: Clip 1
+                - generic: 1s
+          - button "+ Add track" [ref=e137]
+  - button "Open Next.js Dev Tools" [ref=e151] [cursor=pointer]:
+    - img [ref=e152]
+  - alert [ref=e155]
