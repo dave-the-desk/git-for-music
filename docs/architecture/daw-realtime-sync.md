@@ -1,6 +1,7 @@
 # DAW Realtime Sync Model
 
 This note describes the current DAW realtime sync model as it is implemented in the repo today.
+It covers the DAW editor itself. The surrounding groups and project pages use a separate workspace refresh stream so demo lists and other shell data can refresh without a full reload.
 
 ## 1. Initial load
 
@@ -9,6 +10,15 @@ This note describes the current DAW realtime sync model as it is implemented in 
 - `ProjectSyncEngine` fetches `/api/daw/projects/[projectId]/bootstrap?demoId=...`
 - `LocalProjectState` is created through `createLocalProjectStateFromBootstrap(...)`
 - `operationTail` is applied through `applyAcceptedProjectOperations(...)`
+
+## Workspace-level refresh
+
+- `GroupsClient` listens to `/api/groups/realtime`
+- `GroupPageClient` listens to `/api/groups/[groupSlug]/realtime`
+- `ProjectPageClient` listens to `/api/groups/[groupSlug]/projects/[projectSlug]/realtime`
+- The server emits `workspace_changed` after successful group, project, demo, and member mutations
+- The client hook debounces the signal and calls `router.refresh()` so server-rendered lists stay current
+- Demo creation from a separate session updates the project page demo list through this path, not through `accepted_operation`
 
 ## Shared graph vs per-user checkout
 
@@ -51,6 +61,7 @@ This note describes the current DAW realtime sync model as it is implemented in 
 - Timeline and Version Tree should render from live `LocalProjectState`, not stale server props
 - Presence and transport are realtime but non-durable
 - Local-only settings such as local tempo should not enter durable operation history
+- Workspace refresh events should be emitted for list and detail pages, but not for low-level timeline edits already covered by DAW SSE
 
 ## Before adding new DAW features
 
@@ -60,3 +71,4 @@ This note describes the current DAW realtime sync model as it is implemented in 
 - Does `LocalProjectState` contain the data needed for rendering?
 - Does reconnect replay the operation?
 - Is this durable state, presence state, or local-only state?
+- Does the change affect group/project/demo lists and therefore need a `workspace_changed` event?

@@ -59,7 +59,7 @@ The app uses a split between thin Next.js entrypoints and feature modules:
 - `src/app/layout.tsx` and `src/app/pages/layouts/root-layout.tsx` define the global shell.
 - `src/app/page.tsx` redirects the root path to `/groups`.
 - `src/app/login/page.tsx` and `src/app/signup/page.tsx` re-export auth page modules.
-- `src/app/groups/*` contains the public Next route files.
+- `src/app/groups/...` contains the public Next route files.
 - `src/app/api/.../route.ts` contains Next route handlers.
 - Many API routes simply re-export implementation modules from `src/app/pages/api/...`.
 
@@ -77,6 +77,17 @@ That means the actual page and request logic mostly lives under `src/app/pages`,
 | `/groups/[groupId]` | Group detail, members, and projects |
 | `/groups/[groupId]/projects/[projectId]` | Project detail and demos |
 | `/groups/[groupId]/projects/[projectId]/demos/[demoId]` | DAW workspace |
+
+### Workspace Refresh
+
+The group and project shells use a separate realtime lane from the DAW editor itself:
+
+- `/groups` subscribes to `/api/groups/realtime`
+- `/groups/[groupId]` subscribes to `/api/groups/[groupId]/realtime`
+- `/groups/[groupId]/projects/[projectId]` subscribes to `/api/groups/[groupId]/projects/[projectId]/realtime`
+
+Those endpoints stream `workspace_changed` events from `packages/server/app/lib/workspace-realtime.ts`.
+The client-side hook debounces the signal and calls `router.refresh()` so new groups, projects, demos, and membership changes appear without a manual reload.
 
 ## DAW Client Architecture
 
@@ -134,6 +145,7 @@ This is the main state-management boundary in the app.
 | `app/lib/daw/server/versioning` | Copying and branching demo versions |
 | `app/lib/daw/server/demo-user-active-version` | Per-user active checkout state |
 | `app/lib/daw/server/realtime-gateway` | In-memory realtime pub/sub for accepted operations and presence |
+| `app/lib/workspace-realtime` | In-memory SSE pub/sub for group, project, and demo list refreshes |
 | `app/lib/daw/server/assets` | Signed upload/download URLs and upload completion |
 | `app/lib/daw/server/jobs` | Processing-job creation and orchestration |
 | `app/lib/processing` | Generic processing job queue abstraction |
@@ -146,6 +158,7 @@ The DAW backend follows a command/snapshot/realtime pattern:
 - command endpoints validate auth and write through server command handlers
 - successful writes create operation log records, update snapshots/checkpoints when needed, and emit realtime events
 - the client listens for `accepted_operation` and other events to stay in sync
+- surrounding group/project pages refresh through the workspace SSE lane when their data changes
 
 ## Persistence Model
 
@@ -193,6 +206,8 @@ Derived media is split by purpose:
 - `analysis`
 
 This matters because `TrackVersion.storageKey` is treated as the source of truth for the exact object to load.
+Browser-facing audio playback should use the same-origin audio route rather than the raw storage key.
+The durable key still identifies the object in storage, but the browser should reach it through the audio proxy so it receives regular HTTP audio bytes.
 
 ## Architectural Rules Of Thumb
 
@@ -206,5 +221,5 @@ This matters because `TrackVersion.storageKey` is treated as the source of truth
 
 This document is the top-level map. More focused notes live in:
 
-- `docs/architecture/file-organization.md`
+- `src/app/lib/daw/README.md`
 - `docs/architecture/daw-realtime-sync.md`

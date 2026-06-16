@@ -12,3 +12,4 @@ New DAW logic should go here first.
 - `utils/` for pure timing, segment, recording, and label helpers.
 - `server/` for server-side feature helpers used by routes and loaders.
 - `protocol/` for message and type definitions shared across browser and server code.
+- Browser audio should use the same-origin audio route and shared URL helpers, not raw storage keys.

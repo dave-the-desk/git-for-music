@@ -66,6 +66,7 @@ secrets so the stack works without extra local env setup.
 |---|---|
 | `src` | Next.js frontend + API routes |
 | `packages/db` | Prisma schema and client singleton |
+| `packages/server` | Server-side auth, DAW domain logic, realtime, and jobs |
 | `packages/shared` | Shared TypeScript types |
 
 ## Common commands
