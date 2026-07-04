@@ -1,3 +1,5 @@
+import type { DemoVersionKind } from '..';
+
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
 
@@ -149,6 +151,8 @@ export interface ProjectVersionBranch {
   parentVersionId: string | null;
   createdById: string | null;
   isMerge: boolean;
+  kind?: DemoVersionKind;
+  operationSeq?: number | null;
   createdAt: string;
 }
 

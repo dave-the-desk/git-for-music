@@ -167,6 +167,7 @@ export async function uploadTrackCommand(input: {
       demoId: demo.id,
       sourceVersionId: sourceVersion.id,
       parentId: sourceVersion.id,
+      kind: 'BRANCH',
       label: branchLabel,
       description: branchDescription,
     });
@@ -209,6 +210,7 @@ export async function uploadTrackCommand(input: {
             musicalKey: branchVersion.musicalKey,
             tempoSource: branchVersion.tempoSource,
             keySource: branchVersion.keySource,
+            kind: branchVersion.kind,
             isCurrent: true,
             tracks: branchVersion.tracks,
           }),

@@ -1,4 +1,4 @@
-import type { DemoAnnotation, DemoComment, TimingSource } from '@git-for-music/shared';
+import type { DemoAnnotation, DemoComment, DemoVersionKind, TimingSource } from '@git-for-music/shared';
 import type { DawOperationType } from '@git-for-music/server/app/lib/daw/protocol';
 
 export type TrackTimelineSegment = {
@@ -50,7 +50,8 @@ export type DawVersion = {
   parentId: string | null;
   parentVersionId?: string | null;
   createdAt: string;
-  operationSeq?: number;
+  kind?: DemoVersionKind;
+  operationSeq?: number | null;
   isCurrent: boolean;
   tempoBpm: number | null;
   timeSignatureNum: number;

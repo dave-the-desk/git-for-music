@@ -50,25 +50,13 @@ Key gaps vs the design doc:
 Goal: make every `DemoVersion` a well-formed commit node with provenance and
 merge-ready shape.
 
-- [ ] Add a `kind`/`provenance` enum to `DemoVersion` in
-      `packages/db/prisma/schema.prisma` (`AUTO` | `SEMANTIC` | `EXPLICIT` |
-      `REVERT` | `BRANCH` | `MERGE`); default to `EXPLICIT` for back-compat.
-- [ ] Record the `operationSeq` at which each version was created on
-      `DemoVersion` (new nullable column) so the Tree tab can order without
-      re-deriving from the log.
-- [ ] Decide merge shape: keep single `parentId` now but add a
-      `DemoVersionParent` join (versionId, parentId, order) to allow multiple
-      parents later; keep `isMerge` in sync. Do not implement merge logic yet.
-- [ ] Create the Prisma migration and update `DEMO_VERSION_FIELDS` /
-      `serializeCreatedDemoVersionTreeNode` in
-      `packages/server/app/lib/daw/server/versioning.ts`.
-- [ ] Thread `kind` through `createDemoVersionWithCopiedTracks` and every call
-      site (`create-version.ts`, `command-api.ts` branch paths).
-- [ ] Extend `DawVersion` in `src/app/lib/daw/state/local-project-state.ts` and
-      the version tree node types in `packages/shared` with `kind` +
-      `operationSeq`.
-- [ ] Tests: DAG integrity (every non-root version resolves its parent; no
-      cycles) in `packages/server/app/lib/daw/server/versioning.test.ts`.
+- [x] Add a `kind`/`provenance` enum to `DemoVersion` in `packages/db/prisma/schema.prisma` (`AUTO` | `SEMANTIC` | `EXPLICIT` | `REVERT` | `BRANCH` | `MERGE`); default to `EXPLICIT` for back-compat.
+- [x] Record the `operationSeq` at which each version was created on `DemoVersion` (new nullable column) so the Tree tab can order without re-deriving from the log.
+- [x] Add a forward-compatible merge storage shape: keep the existing single `parentId` as the canonical parent for now, add a `DemoVersionParent` join table (`versionId`, `parentId`, `order`) so multi-parent history can be represented later, and keep `isMerge` in sync with merge nodes. Do not implement merge behavior yet.
+- [x] Create the Prisma migration and update `DEMO_VERSION_FIELDS` / `serializeCreatedDemoVersionTreeNode` in `packages/server/app/lib/daw/server/versioning.ts`.
+- [x] Thread `kind` through `createDemoVersionWithCopiedTracks` and every call site (`create-version.ts`, `command-api.ts` branch paths).
+- [x] Extend `DawVersion` in `src/app/lib/daw/state/local-project-state.ts` and the version tree node types in `packages/shared` with `kind` + `operationSeq`.
+- [x] Tests: DAG integrity (every non-root version resolves its parent; no cycles) in `packages/server/app/lib/daw/server/versioning.test.ts`.
 
 ## Phase B - Automatic Version Saving (Checkpointing)
 
@@ -238,11 +226,19 @@ Tests in this repo are `node:test` files (`*.test.ts` importing `node:test` and
 relevant suites directly with Node's test runner and a TS loader, for example:
 
 ```bash
-# from repo root; adjust the loader to match local setup (tsx/ts-node)
+# from repo root
 node --import tsx --test packages/server/app/lib/daw/server/command-api.test.ts
 node --import tsx --test src/app/pages/groups/demo/components/daw/version-history-tree.test.ts
 node --import tsx --test src/app/lib/daw/state/operation-reducer.test.ts
 ```
+
+Validation loop:
+
+1. Run the relevant `node --import tsx --test ...` suite for the code you
+   touched.
+2. If a test fails, fix the implementation or fixture.
+3. Rerun the same test until it passes.
+4. Record the passing result in the daily log for the work date.
 
 New tests added by this work should follow the same `node:test` pattern and sit
 next to the code they cover (for example `versioning.test.ts`,

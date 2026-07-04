@@ -123,6 +123,7 @@ export async function createDemoVersionCommand(input: {
       demoId: demo.id,
       sourceVersionId: sourceVersion.id,
       parentId: sourceVersion.id,
+      kind: 'EXPLICIT',
       label: label || `Snapshot from ${sourceVersion.label}`,
       description: description || null,
     });
@@ -165,6 +166,7 @@ export async function createDemoVersionCommand(input: {
             musicalKey: version.musicalKey,
             tempoSource: version.tempoSource,
             keySource: version.keySource,
+            kind: version.kind,
             isCurrent: true,
             tracks: version.tracks,
           }),

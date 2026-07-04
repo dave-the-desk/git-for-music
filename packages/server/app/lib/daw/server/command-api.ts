@@ -2416,6 +2416,7 @@ export async function commitDawProjectOperation(
             demoId: workspace.demo.id,
             sourceVersionId: sourceVersion.id,
             parentId: sourceVersion.id,
+            kind: 'BRANCH',
             label: `${sourceVersion.label} branch`,
             description: `Branch created from ${sourceVersion.label}.`,
           });
@@ -2463,6 +2464,7 @@ export async function commitDawProjectOperation(
                 demoId: workspace.demo.id,
                 sourceVersionId: currentVersion.id,
                 parentId: currentVersion.id,
+                kind: 'BRANCH',
                 label: `${currentVersion.label} conflict`,
                 description: `Conflict branch created while applying ${effectiveRequest.operationType}.`,
               });
@@ -2517,6 +2519,7 @@ export async function commitDawProjectOperation(
           demoId: workspace.demo.id,
           sourceVersionId: branchSourceVersion.id,
           parentId: branchSourceVersion.id,
+          kind: 'BRANCH',
           label: branchLabel,
           description: `${branchLabel} from ${branchSourceVersion.label}`,
         });
@@ -2559,6 +2562,7 @@ export async function commitDawProjectOperation(
                 musicalKey: branchVersion.musicalKey,
                 tempoSource: branchVersion.tempoSource,
                 keySource: branchVersion.keySource,
+                kind: branchVersion.kind,
                 isCurrent: true,
                 tracks: branchVersion.tracks,
               }),

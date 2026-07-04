@@ -1,10 +1,10 @@
 import type { Prisma } from '@git-for-music/db';
 import { buildTrackVersionAudioUrl } from '@git-for-music/shared';
-import { loadSnapshotStateForDemo, type DemoDawSnapshotData } from '@/app/lib/daw/server/snapshot-builder';
 import type {
   DawVersionTreeNodeSnapshot,
   DawVersionTreeTrackSnapshot,
 } from '@/app/lib/daw/protocol';
+import type { DemoDawSnapshotData } from './snapshot-builder';
 
 type DemoDawTimingSource = 'MANUAL' | 'ANALYZED' | 'IMPORTED';
 
@@ -49,6 +49,8 @@ const TRACK_VERSION_FIELDS = {
 
 const DEMO_VERSION_FIELDS = {
   description: true,
+  kind: true,
+  operationSeq: true,
   tempoBpm: true,
   timeSignatureNum: true,
   timeSignatureDen: true,
@@ -81,6 +83,7 @@ async function loadSourceVersionSnapshotState(
   }
 
   try {
+    const { loadSnapshotStateForDemo } = await import('./snapshot-builder');
     return await loadSnapshotStateForDemo(tx, {
       projectId: demo.projectId,
       demoId,
@@ -258,13 +261,20 @@ export async function createDemoVersionWithCopiedTracks(
     label,
     description,
     parentId,
+    kind,
     sourceVersionId,
+    loadSourceSnapshotState = loadSourceVersionSnapshotState,
   }: {
     demoId: string;
     label: string;
     description?: string | null;
     parentId?: string | null;
+    kind?: 'AUTO' | 'SEMANTIC' | 'EXPLICIT' | 'REVERT' | 'BRANCH' | 'MERGE';
     sourceVersionId?: string | null;
+    loadSourceSnapshotState?: (
+      tx: Prisma.TransactionClient,
+      demoId: string,
+    ) => Promise<DemoDawSnapshotData | null>;
   },
 ) {
   const sourceVersion = sourceVersionId
@@ -279,6 +289,7 @@ export async function createDemoVersionWithCopiedTracks(
       demoId,
       label,
       description: description ?? null,
+      kind: kind ?? 'EXPLICIT',
       ...(sourceVersion
         ? {
             tempoBpm: sourceVersion.tempoBpm,
@@ -295,12 +306,15 @@ export async function createDemoVersionWithCopiedTracks(
       id: true,
       label: true,
       description: true,
+      kind: true,
+      operationSeq: true,
       tempoBpm: true,
       timeSignatureNum: true,
       timeSignatureDen: true,
       musicalKey: true,
       tempoSource: true,
       keySource: true,
+      isMerge: true,
       createdAt: true,
       parentId: true,
     },
@@ -308,10 +322,16 @@ export async function createDemoVersionWithCopiedTracks(
 
   if (sourceVersionId) {
     const cloneMap = await cloneTrackVersionsToDemoVersion(tx, sourceVersionId, version.id);
+    const sourceSnapshotState = await loadSourceSnapshotState(tx, demoId);
+    const hydratedTracks = hydrateClonedTrackCrossfades(
+      cloneMap.tracks,
+      sourceSnapshotState,
+      sourceVersionId,
+    );
     return {
       ...version,
       cloneMap,
-      tracks: cloneMap.tracks,
+      tracks: hydratedTracks,
     };
   }
 
@@ -333,12 +353,15 @@ export function serializeCreatedDemoVersionTreeNode(input: {
   parentId?: string | null;
   createdAt: string | Date;
   branchMode?: 'continue' | 'fork';
+  kind?: 'AUTO' | 'SEMANTIC' | 'EXPLICIT' | 'REVERT' | 'BRANCH' | 'MERGE';
+  operationSeq?: number | null;
   tempoBpm?: number | null;
   timeSignatureNum?: number;
   timeSignatureDen?: number;
   musicalKey?: string | null;
   tempoSource?: DemoDawTimingSource;
   keySource?: DemoDawTimingSource;
+  isMerge?: boolean;
   isCurrent?: boolean;
   tracks?: DawVersionTreeTrackSnapshot[];
 }): DawVersionTreeNodeSnapshot {
@@ -347,16 +370,19 @@ export function serializeCreatedDemoVersionTreeNode(input: {
     label: input.label,
     description: input.description ?? null,
     parentId: input.parentId ?? null,
+    kind: input.kind ?? 'EXPLICIT',
     createdAt:
       typeof input.createdAt === 'string' ? input.createdAt : input.createdAt.toISOString(),
     isCurrent: input.isCurrent ?? false,
     branchMode: input.branchMode,
+    operationSeq: input.operationSeq ?? null,
     tempoBpm: input.tempoBpm ?? null,
     timeSignatureNum: input.timeSignatureNum ?? 4,
     timeSignatureDen: input.timeSignatureDen ?? 4,
     musicalKey: input.musicalKey ?? null,
     tempoSource: input.tempoSource ?? 'MANUAL',
     keySource: input.keySource ?? 'MANUAL',
+    isMerge: input.isMerge ?? false,
     tracks: input.tracks ?? [],
   };
 }

@@ -112,6 +112,8 @@ model DemoVersion {
   id          String   @id @default(cuid())
   label       String
   description String?
+  kind        DemoVersionKind @default(EXPLICIT)
+  operationSeq Int?
   tempoBpm    Float?
   timeSignatureNum Int @default(4)
   timeSignatureDen Int @default(4)
@@ -126,11 +128,26 @@ model DemoVersion {
   demoId String
   currentForDemos Demo[] @relation("CurrentDemoVersion")
   activeVersionStates DemoUserActiveVersion[]
+  parentLinks  DemoVersionParent[] @relation("DemoVersionAsVersion")
+  childLinks   DemoVersionParent[] @relation("DemoVersionAsParent")
 
   parent   DemoVersion?  @relation("VersionTree", fields: [parentId], references: [id])
   children DemoVersion[] @relation("VersionTree")
 
   trackVersions TrackVersion[]
+}
+
+model DemoVersionParent {
+  versionId String
+  parentId String
+  order    Int
+
+  version DemoVersion @relation("DemoVersionAsVersion", fields: [versionId], references: [id], onDelete: Cascade)
+  parent  DemoVersion @relation("DemoVersionAsParent", fields: [parentId], references: [id], onDelete: Cascade)
+
+  @@id([versionId, parentId, order])
+  @@index([versionId, order])
+  @@index([parentId, order])
 }
 
 // ─── Track / Audio ───────────────────────────────────────────────────────────
@@ -237,6 +254,15 @@ enum KeySource {
   MANUAL
   ANALYZED
   IMPORTED
+}
+
+enum DemoVersionKind {
+  AUTO
+  SEMANTIC
+  EXPLICIT
+  REVERT
+  BRANCH
+  MERGE
 }
 
 model ProcessingJob {

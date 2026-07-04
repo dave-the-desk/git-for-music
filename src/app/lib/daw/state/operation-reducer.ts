@@ -205,6 +205,7 @@ type VersionTreeNodeLike = {
   parentVersionId?: string | null;
   createdAt?: string;
   createdBy?: string | null;
+  kind?: DawVersion['kind'];
   operationSeq?: number;
   isCurrent?: boolean;
   tempoBpm?: number | null;
@@ -237,6 +238,7 @@ function normalizeVersionNode(
     parentId: parentVersionId,
     parentVersionId,
     createdAt,
+    kind: node.kind ?? existing?.kind,
     operationSeq: node.operationSeq ?? existing?.operationSeq,
     isCurrent,
     tempoBpm: node.tempoBpm ?? existing?.tempoBpm ?? null,

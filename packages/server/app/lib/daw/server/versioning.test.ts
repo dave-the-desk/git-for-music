@@ -1,6 +1,37 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createDemoVersionWithCopiedTracks } from '@/app/lib/daw/server/versioning';
+import { createDemoVersionWithCopiedTracks } from './versioning';
+
+type CreatedVersion = {
+  id: string;
+  parentId: string | null;
+};
+
+function assertAcyclicVersionDag(versions: CreatedVersion[]) {
+  const versionsById = new Map(versions.map((version) => [version.id, version]));
+
+  for (const version of versions) {
+    if (version.parentId === null) {
+      continue;
+    }
+
+    assert.equal(versionsById.has(version.parentId), true, `Missing parent for ${version.id}`);
+  }
+
+  for (const version of versions) {
+    const seen = new Set<string>();
+    let current: CreatedVersion | undefined = version;
+
+    while (current.parentId !== null) {
+      assert.equal(seen.has(current.id), false, `Cycle detected at ${current.id}`);
+      seen.add(current.id);
+
+      const next = versionsById.get(current.parentId);
+      assert.ok(next, `Missing ancestor ${current.parentId} for ${current.id}`);
+      current = next;
+    }
+  }
+}
 
 test('createDemoVersionWithCopiedTracks preserves moved segment placement when cloning a version', async () => {
   const createdSegments: Array<Record<string, unknown>> = [];
@@ -161,6 +192,17 @@ test('createDemoVersionWithCopiedTracks preserves crossfade metadata from the so
         isMuted: false,
         position: 0,
       },
+      {
+        id: 'segment-2',
+        startMs: 900,
+        endMs: 1700,
+        timelineStartMs: 4300,
+        gainDb: 0,
+        fadeInMs: 0,
+        fadeOutMs: 0,
+        isMuted: false,
+        position: 1,
+      },
     ],
   };
 
@@ -223,8 +265,8 @@ test('createDemoVersionWithCopiedTracks preserves crossfade metadata from the so
                   isMuted: false,
                   position: 0,
                   crossfadeInMs: null,
-                  crossfadeOutMs: null,
-                  crossfadeCurve: null,
+                  crossfadeOutMs: 250,
+                  crossfadeCurve: 'linear',
                 },
                 {
                   id: 'segment-2',
@@ -237,9 +279,9 @@ test('createDemoVersionWithCopiedTracks preserves crossfade metadata from the so
                   fadeOutMs: 0,
                   isMuted: false,
                   position: 1,
-                  crossfadeInMs: null,
+                  crossfadeInMs: 250,
                   crossfadeOutMs: null,
-                  crossfadeCurve: null,
+                  crossfadeCurve: 'linear',
                 },
               ],
             },
@@ -357,6 +399,7 @@ test('createDemoVersionWithCopiedTracks preserves crossfade metadata from the so
     label: 'Branch clone',
     sourceVersionId: 'version-root',
     parentId: 'version-root',
+    loadSourceSnapshotState: async () => sourceSnapshot.snapshot as never,
   });
 
   assert.equal(result.tracks.length, 1);
@@ -373,4 +416,119 @@ test('createDemoVersionWithCopiedTracks preserves crossfade metadata from the so
   assert.equal(createdSegments[1]?.crossfadeInMs, undefined);
   assert.equal(createdSegments[1]?.crossfadeOutMs, undefined);
   assert.equal(createdSegments[1]?.crossfadeCurve, undefined);
+});
+
+test('createDemoVersionWithCopiedTracks produces a DAG where every non-root version resolves its parent and cycles are absent', async () => {
+  const createdVersions: CreatedVersion[] = [];
+  let nextVersionId = 0;
+
+  const tx = {
+    demo: {
+      findFirst: async () => ({
+        projectId: 'project-1',
+      }),
+    },
+    demoVersion: {
+      findFirst: async () => ({
+        description: 'Source version',
+        tempoBpm: 120,
+        timeSignatureNum: 4,
+        timeSignatureDen: 4,
+        musicalKey: null,
+        tempoSource: 'MANUAL',
+        keySource: 'MANUAL',
+      }),
+      create: async (args: {
+        data: {
+          demoId: string;
+          label: string;
+          description: string | null;
+          kind?: 'AUTO' | 'SEMANTIC' | 'EXPLICIT' | 'REVERT' | 'BRANCH' | 'MERGE';
+          tempoBpm?: number | null;
+          timeSignatureNum?: number;
+          timeSignatureDen?: number;
+          musicalKey?: string | null;
+          tempoSource?: 'MANUAL' | 'ANALYZED' | 'IMPORTED';
+          keySource?: 'MANUAL' | 'ANALYZED' | 'IMPORTED';
+          parentId: string | null;
+        };
+      }) => {
+        const id = `version-${++nextVersionId}`;
+        const version = {
+          id,
+          label: args.data.label,
+          description: args.data.description,
+          kind: args.data.kind ?? 'EXPLICIT',
+          tempoBpm: args.data.tempoBpm ?? 120,
+          timeSignatureNum: args.data.timeSignatureNum ?? 4,
+          timeSignatureDen: args.data.timeSignatureDen ?? 4,
+          musicalKey: args.data.musicalKey ?? null,
+          tempoSource: args.data.tempoSource ?? 'MANUAL',
+          keySource: args.data.keySource ?? 'MANUAL',
+          createdAt: new Date(`2025-01-0${nextVersionId}T00:00:00.000Z`),
+          parentId: args.data.parentId,
+        };
+
+        createdVersions.push({
+          id: version.id,
+          parentId: version.parentId,
+        });
+
+        return version;
+      },
+    },
+    trackVersion: {
+      findMany: async () => [],
+      create: async (args: { data: Record<string, unknown> }) => ({
+        id: `track-version-${createdVersions.length + 1}`,
+        createdAt: new Date('2025-01-03T00:00:00.000Z'),
+        data: args.data,
+      }),
+    },
+    segment: {
+      create: async (args: { data: Record<string, unknown> }) => ({
+        id: `segment-${Object.keys(args.data).length}`,
+      }),
+    },
+  } as const;
+
+  await createDemoVersionWithCopiedTracks(tx as never, {
+    demoId: 'demo-1',
+    label: 'Root',
+    sourceVersionId: null,
+    parentId: null,
+  });
+
+  const root = createdVersions[0];
+  assert.ok(root);
+
+  await createDemoVersionWithCopiedTracks(tx as never, {
+    demoId: 'demo-1',
+    label: 'Child',
+    sourceVersionId: null,
+    parentId: root.id,
+  });
+
+  const child = createdVersions[1];
+  assert.ok(child);
+
+  await createDemoVersionWithCopiedTracks(tx as never, {
+    demoId: 'demo-1',
+    label: 'Branch',
+    sourceVersionId: null,
+    parentId: root.id,
+  });
+
+  const branch = createdVersions[2];
+  assert.ok(branch);
+
+  await createDemoVersionWithCopiedTracks(tx as never, {
+    demoId: 'demo-1',
+    label: 'Grandchild',
+    sourceVersionId: null,
+    parentId: child.id,
+  });
+
+  assertAcyclicVersionDag(createdVersions);
+  assert.equal(createdVersions.filter((version) => version.parentId === null).length, 1);
 });

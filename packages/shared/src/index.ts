@@ -15,6 +15,7 @@ export type ProcessingJobType =
   | 'PROJECT_RETEMPO_FROM_TRACK';
 
 export type TimingSource = 'MANUAL' | 'ANALYZED' | 'IMPORTED';
+export type DemoVersionKind = 'AUTO' | 'SEMANTIC' | 'EXPLICIT' | 'REVERT' | 'BRANCH' | 'MERGE';
 
 export interface TimeSignature {
   num: number;

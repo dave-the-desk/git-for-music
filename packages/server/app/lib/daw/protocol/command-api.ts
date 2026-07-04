@@ -140,12 +140,15 @@ export interface DawVersionTreeNodeSnapshot {
   createdAt: string;
   isCurrent: boolean;
   branchMode?: 'continue' | 'fork';
+  kind?: 'AUTO' | 'SEMANTIC' | 'EXPLICIT' | 'REVERT' | 'BRANCH' | 'MERGE';
+  operationSeq?: number | null;
   tempoBpm: number | null;
   timeSignatureNum: number;
   timeSignatureDen: number;
   musicalKey: string | null;
   tempoSource: TimingSource;
   keySource: TimingSource;
+  isMerge?: boolean;
   tracks: DawVersionTreeTrackSnapshot[];
 }
 
