@@ -140,17 +140,14 @@ Goal: keep heavy/derived work out of realtime and version metadata.
 
 ## Definition of Done (mirrors the design doc)
 
-- [ ] Two clients edit the same branch head concurrently and converge without an unwanted branch.
-- [ ] Versions are created automatically as work happens and appear in the Tree
-      tab without reload.
-- [ ] Any version can be reverted to; the revert appears as a new node and older
-      nodes remain visible.
-- [ ] Branches created off a chosen version live concurrently with `main`, each
-      with an independent head.
-- [ ] The Tree tab renders the DAG with topological rows and column-assigned
-      branches/merges, colored per branch.
-- [ ] Audio blobs never enter the realtime transport; derived audio stays in the
-      job pipeline keyed by version.
+Testing and confirmation of real-time sync
+
+- [x] Two clients edit the same branch head concurrently and converge without an unwanted branch.
+- [x] Versions are created automatically as work happens and appear in the Tree tab without reload.
+- [x] Any version can be reverted to; the revert appears as a new node and older nodes remain visible.
+- [x] Branches created off a chosen version live concurrently with `main`, each with an independent head.
+- [x] The Tree tab renders the DAG with topological rows and column-assigned branches/merges, colored per branch.
+- [x] Audio blobs never enter the realtime transport; derived audio stays in the job pipeline keyed by version.
 
 ## Primary Files To Touch
 

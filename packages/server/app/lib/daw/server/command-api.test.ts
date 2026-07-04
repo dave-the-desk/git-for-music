@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  commitDawProjectOperation,
   maybeCreateAutoDemoVersionAfterAcceptedOperation,
   getTimelineEditBranchLabel,
   isTimelineEditOperation,
@@ -13,6 +14,7 @@ import {
   validateSegmentCrossfadeSelection,
   validateSegmentMergeSelection,
 } from '@/app/lib/daw/server/command-api';
+import { loadSnapshotStateForDemo } from '@/app/lib/daw/server/snapshot-builder';
 
 function makeMergeSegment(overrides: Partial<{
   id: string;
@@ -47,6 +49,62 @@ function makeMergeSegment(overrides: Partial<{
     position: overrides.position ?? 0,
     isImplicit: overrides.isImplicit ?? false,
   };
+}
+
+function cloneSnapshot<T>(value: T): T {
+  return structuredClone(value);
+}
+
+function findVersionTrack(snapshot: {
+  versions: Array<{
+    id: string;
+    tracks: Array<{
+      trackId: string;
+      trackName: string;
+      trackVersionId: string;
+      segments: Array<{
+        id: string;
+      }>;
+    }>;
+  }>;
+}, trackId: string) {
+  for (const version of snapshot.versions) {
+    const track = version.tracks.find((candidate) => candidate.trackId === trackId);
+    if (track) {
+      return track;
+    }
+  }
+
+  return null;
+}
+
+function findVersionSegment(snapshot: {
+  versions: Array<{
+    id: string;
+    tracks: Array<{
+      trackId: string;
+      trackVersionId: string;
+      segments: Array<{
+        id: string;
+        startMs: number;
+        endMs: number;
+        timelineStartMs: number | null;
+        timelineEndMs: number | null;
+        position: number;
+      }>;
+    }>;
+  }>;
+}, segmentId: string) {
+  for (const version of snapshot.versions) {
+    for (const track of version.tracks) {
+      const segment = track.segments.find((candidate) => candidate.id === segmentId);
+      if (segment) {
+        return { version, track, segment };
+      }
+    }
+  }
+
+  return null;
 }
 
 test('setUserActiveVersion preserves an explicit pinned checkout without moving the shared head', async () => {
@@ -267,6 +325,466 @@ test('per-edit branching can be disabled for ordinary edits behind a flag', () =
     assert.equal(shouldCreatePerEditBranchForOperation(operationType, false), true, operationType);
     assert.equal(shouldCreatePerEditBranchForOperation(operationType, true), false, operationType);
   }
+});
+
+test('safe concurrent edits on the same branch head converge without creating an unwanted branch', async () => {
+  const rootVersionId = 'version-root';
+  const rootSnapshot = {
+    id: 'snapshot-0',
+    projectId: 'project-1',
+    demoId: 'demo-1',
+    operationSeq: 0,
+    snapshot: {
+      id: 'demo-1',
+      name: 'Demo',
+      description: null,
+      currentVersionId: rootVersionId,
+      project: {
+        id: 'project-1',
+        slug: 'project-1',
+        group: {
+          id: 'group-1',
+          slug: 'group',
+        },
+      },
+      versions: [
+        {
+          id: rootVersionId,
+          label: 'Root',
+          description: null,
+          tempoBpm: 120,
+          timeSignatureNum: 4,
+          timeSignatureDen: 4,
+          musicalKey: null,
+          tempoSource: 'MANUAL',
+          keySource: 'MANUAL',
+          parentId: null,
+          createdAt: '2025-01-01T00:00:00.000Z',
+          tracks: [
+            {
+              trackId: 'track-a',
+              trackName: 'Track A',
+              trackPosition: 0,
+              trackVersionId: 'track-version-a',
+              storageKey: '/tracks/track-version-a.wav',
+              mimeType: 'audio/wav',
+              durationMs: 3000,
+              startOffsetMs: 0,
+              createdAt: '2025-01-01T00:00:00.000Z',
+              isDerived: false,
+              operationType: 'ORIGINAL',
+              parentTrackVersionId: null,
+              segments: [
+                {
+                  id: 'segment-a',
+                  trackVersionId: 'track-version-a',
+                  startMs: 0,
+                  endMs: 1000,
+                  timelineStartMs: 0,
+                  timelineEndMs: 1000,
+                  gainDb: 0,
+                  fadeInMs: 0,
+                  fadeOutMs: 0,
+                  isMuted: false,
+                  position: 0,
+                },
+                {
+                  id: 'segment-b',
+                  trackVersionId: 'track-version-a',
+                  startMs: 1200,
+                  endMs: 2200,
+                  timelineStartMs: 1200,
+                  timelineEndMs: 2200,
+                  gainDb: 0,
+                  fadeInMs: 0,
+                  fadeOutMs: 0,
+                  isMuted: false,
+                  position: 1,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      comments: [],
+      annotations: [],
+      operationHistory: [],
+    },
+    createdById: 'user-a',
+    createdAt: '2025-01-01T00:00:00.000Z',
+  } as const;
+
+  const liveSnapshot = cloneSnapshot(rootSnapshot.snapshot);
+  const snapshotRows = [rootSnapshot] as Array<typeof rootSnapshot>;
+  const operationRows: Array<{
+    id: string;
+    projectId: string;
+    demoId: string;
+    operationType: string;
+    createdAt: Date;
+    actorUserId: string;
+    baseSnapshotId: string | null;
+    baseOperationSeq: number;
+    operationSeq: number;
+    payload: unknown;
+    idempotencyKey: string;
+    clientOperationId: string;
+  }> = [];
+  const createdVersionRows: Array<{ id: string; label: string }> = [];
+  const activeVersionRows = new Map<string, { activeVersionId: string; isFollowingHead: boolean }>();
+
+  const tx = {
+    demo: {
+      findFirst: async () => ({
+        id: 'demo-1',
+        name: 'Demo',
+        description: null,
+        currentVersionId: rootVersionId,
+        versions: [
+          {
+            id: rootVersionId,
+            label: 'Root',
+            parentId: null,
+            createdAt: '2025-01-01T00:00:00.000Z',
+          },
+        ],
+        project: {
+          id: 'project-1',
+          slug: 'project-1',
+          name: 'Project',
+          description: null,
+          group: {
+            id: 'group-1',
+            slug: 'group',
+          },
+        },
+      }),
+    },
+    groupMember: {
+      findFirst: async () => ({
+        role: 'MEMBER',
+      }),
+    },
+    demoVersion: {
+      findFirst: async (args: { where: { id: string } }) => {
+        if (args.where.id === rootVersionId) {
+          return {
+            id: rootVersionId,
+            label: 'Root',
+            operationSeq: 0,
+          };
+        }
+
+        return createdVersionRows.find((version) => version.id === args.where.id) ?? null;
+      },
+      create: async (args: { data: { label: string } }) => {
+        const created = {
+          id: `version-${createdVersionRows.length + 1}`,
+          label: args.data.label,
+        };
+        createdVersionRows.push(created);
+        return {
+          id: created.id,
+          label: created.label,
+          description: null,
+          kind: 'BRANCH',
+          operationSeq: 0,
+          tempoBpm: 120,
+          timeSignatureNum: 4,
+          timeSignatureDen: 4,
+          musicalKey: null,
+          tempoSource: 'MANUAL',
+          keySource: 'MANUAL',
+          createdAt: new Date('2025-01-01T00:00:00.000Z'),
+          parentId: rootVersionId,
+          isMerge: false,
+          tracks: [],
+        };
+      },
+    },
+    demoUserActiveVersion: {
+      findFirst: async (args: { where: { userId: string } }) => {
+        const existing = activeVersionRows.get(args.where.userId);
+        return existing
+          ? {
+              activeVersionId: existing.activeVersionId,
+              isFollowingHead: existing.isFollowingHead,
+            }
+          : null;
+      },
+      upsert: async (args: {
+        where: { demoId_userId: { userId: string } };
+        create: { activeVersionId: string; isFollowingHead: boolean };
+        update: { activeVersionId: string; isFollowingHead: boolean };
+      }) => {
+        const userId = args.where.demoId_userId.userId;
+        const row = {
+          activeVersionId: args.update.activeVersionId,
+          isFollowingHead: args.update.isFollowingHead,
+        };
+        activeVersionRows.set(userId, row);
+        return {
+          activeVersionId: row.activeVersionId,
+          isFollowingHead: row.isFollowingHead,
+          activeVersion: {
+            label: row.activeVersionId === rootVersionId ? 'Root' : 'Branch',
+          },
+        };
+      },
+    },
+    projectSnapshot: {
+      findFirst: async (args: { where: { demoId: string; operationSeq?: { lte: number } } }) => {
+        if (args.where.operationSeq?.lte !== undefined) {
+          const candidate = snapshotRows
+            .filter((row) => row.operationSeq <= args.where.operationSeq!.lte)
+            .sort((a, b) => b.operationSeq - a.operationSeq)[0];
+          return candidate ? cloneSnapshot(candidate) : null;
+        }
+
+        const latest = [...snapshotRows].sort((a, b) => b.operationSeq - a.operationSeq)[0];
+        return latest ? cloneSnapshot(latest) : null;
+      },
+      create: async (args: { data: { operationSeq: number; snapshot: typeof liveSnapshot; createdById: string } }) => {
+        const created = {
+          id: `snapshot-${snapshotRows.length}`,
+          projectId: 'project-1',
+          demoId: 'demo-1',
+          operationSeq: args.data.operationSeq,
+          snapshot: cloneSnapshot(args.data.snapshot),
+          createdById: args.data.createdById,
+          createdAt: new Date('2025-01-01T00:00:00.000Z'),
+        };
+        snapshotRows.push(created);
+        return cloneSnapshot(created);
+      },
+    },
+    projectOperationLog: {
+      findFirst: async (args: {
+        where: { demoId: string; idempotencyKey?: string; clientOperationId?: string };
+        orderBy?: { operationSeq: 'desc' };
+      }) => {
+        if (args.where.idempotencyKey) {
+          return (
+            operationRows.find(
+              (row) => row.demoId === args.where.demoId && row.idempotencyKey === args.where.idempotencyKey,
+            ) ?? null
+          );
+        }
+
+        if (args.where.clientOperationId) {
+          return (
+            operationRows.find(
+              (row) => row.demoId === args.where.demoId && row.clientOperationId === args.where.clientOperationId,
+            ) ?? null
+          );
+        }
+
+        return [...operationRows].sort((a, b) => b.operationSeq - a.operationSeq)[0] ?? null;
+      },
+      findMany: async (args: { where: { demoId: string; operationSeq?: { gt: number } } }) => {
+        return [...operationRows]
+          .filter((row) => row.demoId === args.where.demoId && row.operationSeq > (args.where.operationSeq?.gt ?? 0))
+          .sort((a, b) => a.operationSeq - b.operationSeq);
+      },
+      findUnique: async (args: {
+        where:
+          | { demoId_operationSeq: { demoId: string; operationSeq: number } }
+          | { demoId_idempotencyKey: { demoId: string; idempotencyKey: string } }
+          | { demoId_clientOperationId: { demoId: string; clientOperationId: string } };
+      }) => {
+        if ('demoId_operationSeq' in args.where) {
+          return (
+            operationRows.find(
+              (row) =>
+                row.demoId === args.where.demoId_operationSeq.demoId &&
+                row.operationSeq === args.where.demoId_operationSeq.operationSeq,
+            ) ?? null
+          );
+        }
+
+        if ('demoId_idempotencyKey' in args.where) {
+          return (
+            operationRows.find(
+              (row) =>
+                row.demoId === args.where.demoId_idempotencyKey.demoId &&
+                row.idempotencyKey === args.where.demoId_idempotencyKey.idempotencyKey,
+            ) ?? null
+          );
+        }
+
+        return (
+          operationRows.find(
+            (row) =>
+              row.demoId === args.where.demoId_clientOperationId.demoId &&
+              row.clientOperationId === args.where.demoId_clientOperationId.clientOperationId,
+          ) ?? null
+        );
+      },
+      create: async (args: {
+        data: {
+          projectId: string;
+          demoId: string;
+          actorUserId: string;
+          baseSnapshotId: string | null;
+          baseOperationSeq: number;
+          operationSeq: number;
+          operationType: string;
+          payload: unknown;
+          idempotencyKey: string;
+          clientOperationId: string;
+        };
+      }) => {
+        const created = {
+          id: `operation-${args.data.operationSeq}`,
+          projectId: args.data.projectId,
+          demoId: args.data.demoId,
+          operationType: args.data.operationType,
+          createdAt: new Date(`2025-01-02T00:00:0${args.data.operationSeq}.000Z`),
+          actorUserId: args.data.actorUserId,
+          baseSnapshotId: args.data.baseSnapshotId,
+          baseOperationSeq: args.data.baseOperationSeq,
+          operationSeq: args.data.operationSeq,
+          payload: args.data.payload,
+          idempotencyKey: args.data.idempotencyKey,
+          clientOperationId: args.data.clientOperationId,
+        };
+        operationRows.push(created);
+        return {
+          id: created.id,
+          operationSeq: created.operationSeq,
+          createdAt: created.createdAt,
+        };
+      },
+    },
+    track: {
+      findFirst: async (args: { where: { id: string } }) => {
+        const track = findVersionTrack(liveSnapshot, args.where.id);
+        return track ? { id: args.where.id } : null;
+      },
+      update: async (args: { where: { id: string }; data: { name: string } }) => {
+        const track = findVersionTrack(liveSnapshot, args.where.id);
+        if (track) {
+          track.trackName = args.data.name;
+        }
+        return { id: args.where.id };
+      },
+    },
+    trackVersion: {
+      findFirst: async () => null,
+    },
+    segment: {
+      findFirst: async (args: { where: { id: string; trackVersionId: string } }) => {
+        const segment = findVersionSegment(liveSnapshot, args.where.id);
+        if (!segment || segment.track.trackVersionId !== args.where.trackVersionId) {
+          return null;
+        }
+
+        return {
+          id: segment.segment.id,
+          startMs: segment.segment.startMs,
+          endMs: segment.segment.endMs,
+          timelineStartMs: segment.segment.timelineStartMs,
+          position: segment.segment.position,
+          trackVersion: {
+            startOffsetMs: 0,
+          },
+        };
+      },
+      update: async (args: { where: { id: string }; data: { startMs?: number; endMs?: number; timelineStartMs?: number } }) => {
+        const segment = findVersionSegment(liveSnapshot, args.where.id);
+        if (segment) {
+          if (typeof args.data.startMs === 'number') {
+            segment.segment.startMs = args.data.startMs;
+          }
+          if (typeof args.data.endMs === 'number') {
+            segment.segment.endMs = args.data.endMs;
+          }
+          if (typeof args.data.timelineStartMs === 'number') {
+            segment.segment.timelineStartMs = args.data.timelineStartMs;
+          }
+          segment.segment.timelineEndMs =
+            segment.segment.timelineStartMs === null
+              ? null
+              : segment.segment.timelineStartMs + (segment.segment.endMs - segment.segment.startMs);
+        }
+        return { id: args.where.id };
+      },
+      updateMany: async () => ({ count: 0 }),
+      count: async () => 0,
+      create: async () => ({ id: 'segment-created' }),
+    },
+  } as const;
+
+  const client = {
+    $transaction: async <T>(callback: (tx: typeof tx) => Promise<T>) => callback(tx),
+    demo: tx.demo,
+    groupMember: tx.groupMember,
+    demoVersion: tx.demoVersion,
+    demoUserActiveVersion: tx.demoUserActiveVersion,
+    projectSnapshot: tx.projectSnapshot,
+    projectOperationLog: tx.projectOperationLog,
+    track: tx.track,
+    trackVersion: tx.trackVersion,
+    segment: tx.segment,
+  } as const;
+
+  const trimSegment = (segmentId: string, fromStartMs: number, fromEndMs: number, toStartMs: number, toEndMs: number) =>
+    ({
+      demoId: 'demo-1',
+      operationType: 'SEGMENT_TRIMMED' as const,
+      payload: {
+        trackVersionId: 'track-version-a',
+        segmentId,
+        from: {
+          startMs: fromStartMs,
+          endMs: fromEndMs,
+        },
+        to: {
+          startMs: toStartMs,
+          endMs: toEndMs,
+        },
+      },
+      baseSnapshotId: 'snapshot-0',
+      baseOperationSeq: 0,
+      targetTrackId: 'track-a',
+      targetSegmentId: segmentId,
+      affectedTimeRange: {
+        startMs: fromStartMs,
+        endMs: fromEndMs,
+      },
+      idempotencyKey: `${segmentId}-idempotency`,
+      clientOperationId: `${segmentId}-client`,
+    }) satisfies Parameters<typeof commitDawProjectOperation>[1]['request'];
+
+  const first = await commitDawProjectOperation(client as never, {
+    projectId: 'project-1',
+    userId: 'user-a',
+    request: trimSegment('segment-a', 0, 1000, 100, 900),
+  });
+
+  const second = await commitDawProjectOperation(client as never, {
+    projectId: 'project-1',
+    userId: 'user-b',
+    request: trimSegment('segment-b', 1200, 2200, 1300, 2100),
+  });
+
+  const mergedState = await loadSnapshotStateForDemo(client as never, {
+    projectId: 'project-1',
+    demoId: 'demo-1',
+  });
+
+  assert.equal(first.conflict, null);
+  assert.equal(second.conflict, null);
+  assert.equal(first.operation?.type, 'SEGMENT_TRIMMED');
+  assert.equal(second.operation?.type, 'SEGMENT_TRIMMED');
+  assert.equal(createdVersionRows.length, 0);
+  assert.equal(operationRows.some((row) => row.operationType === 'VERSION_BRANCH_CREATED'), false);
+  assert.equal(operationRows.length, 2);
+  assert.equal(findVersionTrack(mergedState, 'track-a')?.trackName, 'Track A');
+  assert.equal(findVersionSegment(mergedState, 'segment-a')?.segment.startMs, 100);
+  assert.equal(findVersionSegment(mergedState, 'segment-a')?.segment.endMs, 900);
+  assert.equal(findVersionSegment(mergedState, 'segment-b')?.segment.startMs, 1300);
+  assert.equal(findVersionSegment(mergedState, 'segment-b')?.segment.endMs, 2100);
 });
 
 test('validateSegmentFadeSelection accepts valid fades and rejects invalid durations', () => {

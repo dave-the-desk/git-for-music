@@ -108,3 +108,99 @@ describe('VersionHistoryTree revert action', () => {
     });
   });
 });
+
+describe('VersionHistoryTree live version updates', () => {
+  it('shows a newly created revert version while keeping older versions visible', async () => {
+    const root = makeVersion('version-root', {
+      isCurrent: true,
+      operationSeq: 1,
+      createdAt: '2025-01-01T00:00:00.000Z',
+    });
+    const head = makeVersion('version-head', {
+      parentId: root.id,
+      parentVersionId: root.id,
+      operationSeq: 2,
+      createdAt: '2025-01-02T00:00:00.000Z',
+      label: 'Work in progress',
+      name: 'Work in progress',
+      branchName: 'Work in progress',
+      isCurrent: true,
+      kind: 'EXPLICIT',
+    });
+    const revertVersion = makeVersion('version-revert', {
+      parentId: head.id,
+      parentVersionId: head.id,
+      isCurrent: true,
+      operationSeq: 3,
+      createdAt: '2025-01-03T00:00:00.000Z',
+      label: 'Revert to root',
+      name: 'Revert to root',
+      branchName: 'Revert to root',
+      kind: 'REVERT',
+    });
+
+    const onSelectVersion = vi.fn();
+    const onCheckoutSelectedVersion = vi.fn();
+    const onSelectHistoryOperation = vi.fn();
+    const onCreateBranch = vi.fn().mockResolvedValue(null);
+    const onRevertToVersion = vi.fn().mockResolvedValue(null);
+
+    const user = userEvent.setup();
+    const { rerender } = render(
+      createElement(VersionHistoryTree, {
+        projectId: 'project-1',
+        demoId: 'demo-1',
+        baseOperationSeq: 1,
+        liveVersions: [root],
+        operationHistory: [],
+        currentVersionId: root.id,
+        activeVersionId: root.id,
+        selectedVersionId: root.id,
+        selectedHistoryOperationSeq: null,
+        isFollowingHead: true,
+        isHistoryViewActive: false,
+        highlightedVersionId: null,
+        highlightedVersionCreatedAt: null,
+        onSelectVersion,
+        onCheckoutSelectedVersion,
+        onSelectHistoryOperation,
+        onCreateBranch,
+        onRevertToVersion,
+      }),
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Maximize version tree' }));
+    expect(screen.queryByText('Revert to root')).toBeNull();
+
+    rerender(
+      createElement(VersionHistoryTree, {
+        projectId: 'project-1',
+        demoId: 'demo-1',
+        baseOperationSeq: 3,
+        liveVersions: [root, head, revertVersion],
+        operationHistory: [],
+        currentVersionId: revertVersion.id,
+        activeVersionId: revertVersion.id,
+        selectedVersionId: revertVersion.id,
+        selectedHistoryOperationSeq: null,
+        isFollowingHead: true,
+        isHistoryViewActive: false,
+        highlightedVersionId: revertVersion.id,
+        highlightedVersionCreatedAt: revertVersion.createdAt,
+        onSelectVersion,
+        onCheckoutSelectedVersion,
+        onSelectHistoryOperation,
+        onCreateBranch,
+        onRevertToVersion,
+      }),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Revert to root')).toBeTruthy();
+    });
+    expect(screen.getByText('Work in progress')).toBeTruthy();
+    expect(screen.getByText('version-root')).toBeTruthy();
+    expect(onSelectVersion).not.toHaveBeenCalledWith(revertVersion.id);
+    expect(onCheckoutSelectedVersion).not.toHaveBeenCalled();
+  });
+});
