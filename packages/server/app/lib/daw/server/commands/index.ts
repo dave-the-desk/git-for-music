@@ -3,6 +3,7 @@ export { createDemoCommand } from './create-demo';
 export { checkpointDemoCommand, recordDemoCommand } from './demo-commands';
 export { deleteSegmentCommand } from './delete-segment';
 export { moveSegmentCommand } from './move-segment';
+export { revertToVersionCommand } from './revert-version';
 export { renameTrackCommand } from './rename-track';
 export { splitSegmentCommand } from './split-segment';
 export { updateDemoVersionTimingCommand } from './update-version-timing';

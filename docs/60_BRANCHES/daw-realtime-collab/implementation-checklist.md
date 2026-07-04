@@ -83,17 +83,12 @@ audio.
 Goal: revert-to-version creates a NEW version equal to an ancestor; history is
 preserved.
 
-- [ ] Add a server command `revertToVersionCommand(...)` (new `packages/server/app/lib/daw/server/commands/revert-version.ts`) that clones the target ancestor's tracks into a new `DemoVersion` (`kind = REVERT`, `parentId` = current branch head).
-- [ ] Add an API route (e.g. `POST /api/versions/revert`) mirroring `create-version.ts` auth + validation.
-- [ ] Record a `VERSION_REVERTED_FROM` operation whose payload carries the new version node (like `VERSION_BRANCH_CREATED` does), and update the reducer case in `src/app/lib/daw/state/operation-reducer.ts` to upsert the new version node instead of only moving `currentVersionId`.
-- [ ] In a live session, commit the revert like any accepted operation so all
-      clients converge; move the branch head and let followers follow, without
-      yanking pinned checkouts (respect `isFollowingHead`).
-- [ ] Add `revertToVersion(...)` to `ProjectSyncEngine` and wire a "Revert to
-      this version" action in `VersionHistoryTree.tsx` (reuse the existing
-      history-lane / branch-from-point surface).
-- [ ] Tests: revert produces a new node whose content equals the ancestor;
-      older nodes remain; follow-head vs pinned checkout behavior is correct.
+- [x] Add a server command `revertToVersionCommand(...)` (new `packages/server/app/lib/daw/server/commands/revert-version.ts`) that clones the target ancestor's tracks into a new `DemoVersion` (`kind = REVERT`, `parentId` = current branch head).
+- [x] Add an API route (e.g. `POST /api/versions/revert`) mirroring `create-version.ts` auth + validation.
+- [x] Record a `VERSION_REVERTED_FROM` operation whose payload carries the new version node (like `VERSION_BRANCH_CREATED` does), and update the reducer case in `src/app/lib/daw/state/operation-reducer.ts` to upsert the new version node instead of only moving `currentVersionId`.
+- [x] In a live session, commit the revert like any accepted operation so all clients converge; move the branch head and let followers follow, without yanking pinned checkouts (respect `isFollowingHead`).
+- [x] Add `revertToVersion(...)` to `ProjectSyncEngine` and wire a "Revert to this version" action in `VersionHistoryTree.tsx` (reuse the existing history-lane / branch-from-point surface).
+- [x] Tests: revert produces a new node whose content equals the ancestor; older nodes remain; follow-head vs pinned checkout behavior is correct.
 
 ## Phase D - Tree Tab Commit-Graph (DoltHub layout)
 

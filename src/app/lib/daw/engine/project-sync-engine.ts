@@ -6,6 +6,7 @@ import type {
   DawProjectOperationRecord,
   DawSetUserActiveVersionResponse,
 } from '@git-for-music/server/app/lib/daw/protocol';
+import type { CreateVersionResponse, RevertVersionRequest } from '@git-for-music/shared';
 import { dawLocalCache } from '@/app/lib/daw/engine/daw-local-cache';
 import {
   applyAcceptedProjectOperation,
@@ -23,7 +24,6 @@ import type {
   LocalProjectState,
   TempoMetadataEntry,
 } from '@/app/lib/daw/state/local-project-state';
-import type { CreateVersionResponse } from '@git-for-music/shared';
 
 type SyncableOperationType = Exclude<DawOperationType, 'ASSET_ADDED'>;
 
@@ -435,6 +435,72 @@ export class ProjectSyncEngine {
       this.setState({
         isOnline: isBrowserOnline(),
         lastError: error instanceof Error ? error.message : 'Could not create branch',
+      });
+      return null;
+    }
+  }
+
+  async revertToVersion(input: {
+    sourceVersionId: string;
+    label?: string | null;
+    description?: string | null;
+  }) {
+    if (!this.projectId || !this.demoId || !this.state.projectState) return null;
+
+    try {
+      const response = await fetch('/api/versions/revert', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          demoId: this.demoId,
+          sourceVersionId: input.sourceVersionId,
+          label: input.label ?? undefined,
+          description: input.description ?? undefined,
+        } satisfies RevertVersionRequest),
+      });
+
+      const data = (await response.json()) as CreateVersionResponse | { error?: string };
+      if (!response.ok) {
+        const message = 'error' in data ? data.error ?? 'Could not revert to version' : 'Could not revert to version';
+        this.setState({
+          isOnline: isBrowserOnline(),
+          lastError: message,
+        });
+        return null;
+      }
+
+      const responseData = data as CreateVersionResponse;
+      const nextActiveVersionId = responseData.activeVersionId ?? responseData.id;
+      const nextIsFollowingHead = responseData.isFollowingHead ?? true;
+
+      this.setState({
+        projectState: {
+          ...this.state.projectState,
+          activeVersionId: nextActiveVersionId,
+          isFollowingHead: nextIsFollowingHead,
+        },
+        isOnline: true,
+        lastError: null,
+      });
+
+      this.bootstrapResponse = this.bootstrapResponse
+        ? {
+            ...this.bootstrapResponse,
+            activeVersionId: nextActiveVersionId,
+            isFollowingHead: nextIsFollowingHead,
+            activeBranchName: responseData.activeBranchName ?? responseData.label ?? null,
+          }
+        : this.bootstrapResponse;
+
+      await this.persistProjectState();
+      await this.refreshVersionTreeFromServer();
+      return responseData;
+    } catch (error) {
+      this.setState({
+        isOnline: isBrowserOnline(),
+        lastError: error instanceof Error ? error.message : 'Could not revert to version',
       });
       return null;
     }

@@ -1610,6 +1610,22 @@ export function DemoDawClient({
     [projectSyncEngine, stopTransport],
   );
 
+  const revertToSelectedVersion = useCallback(
+    async (sourceVersionId: string) => {
+      stopTransport();
+      const result = await projectSyncEngine.revertToVersion({
+        sourceVersionId,
+      });
+      return result
+        ? {
+            versionId: result.id,
+            label: result.label,
+          }
+        : null;
+    },
+    [projectSyncEngine, stopTransport],
+  );
+
   function seekAllTracks(timeMs: number) {
     playbackEngine.seek(timeMs);
   }
@@ -3501,6 +3517,7 @@ export function DemoDawClient({
                     onCheckoutSelectedVersion={checkoutSelectedVersion}
                     onSelectHistoryOperation={jumpToHistoryOperation}
                     onCreateBranch={createBranchFromSelectedVersion}
+                    onRevertToVersion={revertToSelectedVersion}
                   />
                 </div>
               ) : null}

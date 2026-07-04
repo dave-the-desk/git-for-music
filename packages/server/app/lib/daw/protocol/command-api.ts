@@ -191,9 +191,16 @@ export interface DawOperationPayloadVersionBranchCreated {
 }
 
 export interface DawOperationPayloadVersionRevertedFrom {
-  versionId: string;
+  versionId?: string;
   revertedFromVersionId: string;
   currentVersionId: string;
+  branchMode?: 'continue' | 'fork';
+  branchName?: string | null;
+  label?: string | null;
+  createdAt?: string;
+  createdBy?: string;
+  operationSummary?: string | null;
+  version: DawVersionTreeNodeSnapshot;
 }
 
 /** @deprecated Legacy compatibility only. Use the per-user active-version API instead. */

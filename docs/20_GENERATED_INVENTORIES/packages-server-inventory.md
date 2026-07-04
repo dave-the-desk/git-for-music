@@ -20,6 +20,8 @@ packages/server/app/lib/daw/server/commands/delete-segment.ts
 packages/server/app/lib/daw/server/commands/demo-commands.ts
 packages/server/app/lib/daw/server/commands/index.ts
 packages/server/app/lib/daw/server/commands/move-segment.ts
+packages/server/app/lib/daw/server/commands/revert-version.test.ts
+packages/server/app/lib/daw/server/commands/revert-version.ts
 packages/server/app/lib/daw/server/commands/rename-track.ts
 packages/server/app/lib/daw/server/commands/split-segment.ts
 packages/server/app/lib/daw/server/commands/update-track-offset.ts
@@ -49,4 +51,3 @@ packages/server/index.ts
 packages/server/package.json
 packages/server/tsconfig.json
 ```
-

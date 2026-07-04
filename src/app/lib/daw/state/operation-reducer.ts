@@ -1273,6 +1273,7 @@ export function applyAcceptedProjectOperation(
     }
     case 'VERSION_CREATED':
     case 'VERSION_BRANCH_CREATED':
+    case 'VERSION_REVERTED_FROM':
     case 'VERSION_NODE_ADDED': {
       const payload = operation.payload as {
         version?: VersionTreeNodeLike;
@@ -1286,10 +1287,30 @@ export function applyAcceptedProjectOperation(
         createdAt?: string;
         createdBy?: string | null;
         operationSummary?: string | null;
+        currentVersionId?: string | null;
       };
       const version = payload.version;
-      const versionId = version?.id ?? payload.versionId;
+      const versionId = version?.id ?? payload.versionId ?? payload.currentVersionId;
       if (!versionId) {
+        if (operation.type === 'VERSION_REVERTED_FROM') {
+          const currentVersionId = payload.currentVersionId;
+          if (!currentVersionId) {
+            return state;
+          }
+          return {
+            ...state,
+            ...touchVersionTree(state, operation),
+            currentVersionId,
+            activeVersionId: state.activeVersionId ?? currentVersionId,
+            versions: state.versions.map((existingVersion) => ({
+              ...existingVersion,
+              isCurrent: existingVersion.id === currentVersionId,
+              operationSeq:
+                existingVersion.id === currentVersionId ? operation.operationSeq : existingVersion.operationSeq,
+            })),
+          };
+        }
+
         return state;
       }
       const versionParentId = getVersionParentId(version, payload);
@@ -1319,7 +1340,10 @@ export function applyAcceptedProjectOperation(
         state.currentVersionId,
       );
       const nextCurrentVersionId =
-        version?.isCurrent || operation.type === 'VERSION_CREATED' || operation.type === 'VERSION_BRANCH_CREATED'
+        version?.isCurrent ||
+        operation.type === 'VERSION_CREATED' ||
+        operation.type === 'VERSION_BRANCH_CREATED' ||
+        operation.type === 'VERSION_REVERTED_FROM'
           ? versionId
           : state.currentVersionId;
       const shouldAdvanceActiveVersion = shouldAutoAdvanceVersionOperation(

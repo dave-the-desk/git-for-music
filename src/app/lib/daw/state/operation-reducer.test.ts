@@ -453,6 +453,54 @@ test('VERSION_BRANCH_CREATED on another branch updates the tree without moving t
   assert.equal(created.versions.find((version) => version.id === branchVersion.id)?.parentId, root.id);
 });
 
+test('VERSION_REVERTED_FROM on the active head inserts the revert node and advances the checkout', () => {
+  const root = makeVersion('version-root', { isCurrent: true });
+  const ancestor = makeVersion('version-ancestor', {
+    parentId: root.id,
+    parentVersionId: root.id,
+    createdAt: '2025-01-02T00:00:00.000Z',
+    operationSeq: 2,
+  });
+  const head = makeVersion('version-head', {
+    parentId: ancestor.id,
+    parentVersionId: ancestor.id,
+    createdAt: '2025-01-03T00:00:00.000Z',
+    operationSeq: 3,
+    isCurrent: true,
+  });
+  const initial = createLocalProjectStateFromBootstrap(makeBootstrap([root, ancestor, head], head.id));
+
+  const revertVersion = makeVersion('version-revert', {
+    label: 'Revert to root',
+    name: 'Revert to root',
+    branchName: 'Revert to root',
+    parentId: head.id,
+    parentVersionId: head.id,
+    createdAt: '2025-01-03T00:00:00.000Z',
+    isCurrent: true,
+    operationSeq: 3,
+  });
+
+  const created = applyAcceptedProjectOperation(
+    initial,
+    makeOperation('VERSION_REVERTED_FROM', 3, {
+      versionId: revertVersion.id,
+      revertedFromVersionId: root.id,
+      currentVersionId: revertVersion.id,
+      branchMode: 'continue',
+      version: revertVersion,
+    }),
+  );
+
+  assert.equal(created.versions.length, 4);
+  assert.equal(created.currentVersionId, revertVersion.id);
+  assert.equal(created.activeVersionId, revertVersion.id);
+  assert.equal(created.versions.find((version) => version.id === revertVersion.id)?.parentId, head.id);
+  assert.equal(created.versions.find((version) => version.id === root.id)?.isCurrent, false);
+  assert.equal(created.versions.find((version) => version.id === ancestor.id)?.parentId, root.id);
+  assert.equal(created.versions.find((version) => version.id === head.id)?.parentId, ancestor.id);
+});
+
 test('bootstrap keeps shared current version separate from active checkout', () => {
   const root = makeVersion('version-root', { isCurrent: true });
   const branch = makeVersion('version-branch', {

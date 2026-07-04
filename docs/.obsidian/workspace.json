@@ -11,10 +11,14 @@
             "id": "1ef58a2afad3a794",
             "type": "leaf",
             "state": {
-              "type": "graph",
-              "state": {},
-              "icon": "lucide-git-fork",
-              "title": "Graph view"
+              "type": "markdown",
+              "state": {
+                "file": "01_PROTOCOLS/operating-protocol.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "operating-protocol"
             }
           }
         ]
@@ -202,9 +206,14 @@
   },
   "active": "0c277a4707285d99",
   "lastOpenFiles": [
+    "60_BRANCHES/daw-realtime-collab/implementation-checklist.md",
+    "01_PROTOCOLS/operating-protocol.md",
+    "01_PROTOCOLS/non-negotiable-rules.md",
+    "01_PROTOCOLS/architecture-decision-log.md",
+    "01_PROTOCOLS/ai-start-here.md",
+    "01_PROTOCOLS/agent-implementation-guide.md",
     "architecture/codebase-architecture.md",
     "architecture/daw-realtime-sync.md",
-    "60_BRANCHES/daw-realtime-collab/implementation-checklist.md",
     "daily-logging/2026-07-04.md",
     "60_BRANCHES/daw-realtime-collab/realtime-versioning-and-tree.md",
     "60_BRANCHES/daw-realtime-collab/README.md",
@@ -232,11 +241,6 @@
     "40_FEATURES/branching-and-revert-rules.md",
     "40_FEATURES/processing-job-philosophy.md",
     "40_FEATURES/timeline-editing-model.md",
-    "40_FEATURES/active-problems.md",
-    "40_FEATURES/what-good-looks-like.md",
-    "01_PROTOCOLS/ai-start-here.md",
-    "01_PROTOCOLS/architecture-decision-log.md",
-    "40_FEATURES/mvp-scope.md",
-    "01_PROTOCOLS/agent-implementation-guide.md"
+    "40_FEATURES/active-problems.md"
   ]
 }

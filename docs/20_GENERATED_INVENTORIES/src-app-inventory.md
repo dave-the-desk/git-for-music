@@ -112,6 +112,7 @@ src/app/pages/api/tracks/versions/[trackVersionId]/offset/index.ts
 src/app/pages/api/tracks/versions/[trackVersionId]/segments/[segmentId]/index.ts
 src/app/pages/api/tracks/versions/[trackVersionId]/segments/[segmentId]/position/index.ts
 src/app/pages/api/tracks/versions/[trackVersionId]/segments/split/index.ts
+src/app/pages/api/versions/revert/index.ts
 src/app/pages/api/versions/[versionId]/index.ts
 src/app/pages/api/versions/index.ts
 src/app/pages/auth/login-page.tsx
@@ -129,6 +130,7 @@ src/app/pages/groups/demo/components/daw/TrackSegmentClip.tsx
 src/app/pages/groups/demo/components/daw/TrackWaveform.tsx
 src/app/pages/groups/demo/components/daw/TransportControls.tsx
 src/app/pages/groups/demo/components/daw/VersionHistoryTree.tsx
+src/app/pages/groups/demo/components/daw/VersionHistoryTree.interaction.test.tsx
 src/app/pages/groups/demo/components/daw/version-history-tree.test.ts
 src/app/pages/groups/demo/components/daw/version-tree-layout.ts
 src/app/pages/groups/demo/demo-page.tsx
@@ -146,4 +148,3 @@ src/app/pages/not-found-page.tsx
 src/app/pages/root-page.tsx
 src/app/signup/page.tsx
 ```
-

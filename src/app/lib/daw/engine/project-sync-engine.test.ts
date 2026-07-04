@@ -423,6 +423,185 @@ test('ProjectSyncEngine createVersionBranch updates the creator checkout locally
   }
 });
 
+test('ProjectSyncEngine revertToVersion updates the follow-head checkout locally', async () => {
+  const root = makeVersion('version-root', { isCurrent: true });
+  const branch = makeVersion('version-branch', {
+    parentId: root.id,
+    parentVersionId: root.id,
+    isCurrent: false,
+  });
+  const revert = makeVersion('version-revert', {
+    parentId: branch.id,
+    parentVersionId: branch.id,
+    isCurrent: true,
+  });
+  const bootstrap = makeBootstrap([root, branch], branch.id);
+  const engine = new ProjectSyncEngine();
+  const harness = engine as unknown as {
+    projectId: string | null;
+    demoId: string | null;
+    bootstrapResponse: DawProjectBootstrapResponse | null;
+    state: ReturnType<ProjectSyncEngine['getState']>;
+    persistProjectState: () => Promise<void>;
+    refreshVersionTreeFromServer: () => Promise<void>;
+  };
+  harness.projectId = 'project-1';
+  harness.demoId = 'demo-1';
+  harness.bootstrapResponse = bootstrap;
+  harness.state = {
+    projectState: createLocalProjectStateFromBootstrap({
+      ...bootstrap,
+      activeVersionId: branch.id,
+      isFollowingHead: true,
+    }),
+    queue: { entries: [] },
+    baseSnapshotId: 'snapshot-1',
+    lastSyncedOperationSeq: 1,
+    isBootstrapping: false,
+    isOnline: true,
+    isSyncing: false,
+    lastError: null,
+  };
+
+  let persistCalls = 0;
+  let refreshCalls = 0;
+  harness.persistProjectState = async () => {
+    persistCalls += 1;
+  };
+  harness.refreshVersionTreeFromServer = async () => {
+    refreshCalls += 1;
+  };
+
+  const originalFetch = globalThis.fetch;
+  let capturedUrl: string | null = null;
+  let capturedBody: string | null = null;
+  (globalThis as typeof globalThis & { fetch: typeof fetch }).fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    capturedUrl = typeof input === 'string' ? input : input.toString();
+    capturedBody = typeof init?.body === 'string' ? init.body : null;
+    return new Response(
+      JSON.stringify({
+        id: revert.id,
+        label: revert.label,
+        demoId: 'demo-1',
+        activeVersionId: revert.id,
+        isFollowingHead: true,
+        activeBranchName: revert.label,
+      }),
+      {
+        status: 201,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      },
+    );
+  };
+
+  try {
+    const result = await engine.revertToVersion({
+      sourceVersionId: root.id,
+      label: revert.label,
+    });
+
+    assert.equal(capturedUrl, '/api/versions/revert');
+    assert.ok(capturedBody);
+    assert.deepEqual(JSON.parse(capturedBody ?? '{}'), {
+      demoId: 'demo-1',
+      sourceVersionId: root.id,
+      label: revert.label,
+    });
+    assert.equal(result?.id, revert.id);
+    assert.equal(engine.getState().projectState?.activeVersionId, revert.id);
+    assert.equal(engine.getState().projectState?.isFollowingHead, true);
+    assert.equal(refreshCalls, 1);
+    assert.equal(persistCalls, 1);
+  } finally {
+    (globalThis as typeof globalThis & { fetch: typeof fetch }).fetch = originalFetch;
+  }
+});
+
+test('ProjectSyncEngine revertToVersion preserves a pinned checkout locally', async () => {
+  const root = makeVersion('version-root', { isCurrent: true });
+  const branch = makeVersion('version-branch', {
+    parentId: root.id,
+    parentVersionId: root.id,
+    isCurrent: false,
+  });
+  const pinned = makeVersion('version-pinned', {
+    parentId: branch.id,
+    parentVersionId: branch.id,
+    isCurrent: false,
+  });
+  const bootstrap = makeBootstrap([root, branch], branch.id);
+  const engine = new ProjectSyncEngine();
+  const harness = engine as unknown as {
+    projectId: string | null;
+    demoId: string | null;
+    bootstrapResponse: DawProjectBootstrapResponse | null;
+    state: ReturnType<ProjectSyncEngine['getState']>;
+    persistProjectState: () => Promise<void>;
+    refreshVersionTreeFromServer: () => Promise<void>;
+  };
+  harness.projectId = 'project-1';
+  harness.demoId = 'demo-1';
+  harness.bootstrapResponse = bootstrap;
+  harness.state = {
+    projectState: createLocalProjectStateFromBootstrap({
+      ...bootstrap,
+      activeVersionId: pinned.id,
+      isFollowingHead: false,
+    }),
+    queue: { entries: [] },
+    baseSnapshotId: 'snapshot-1',
+    lastSyncedOperationSeq: 1,
+    isBootstrapping: false,
+    isOnline: true,
+    isSyncing: false,
+    lastError: null,
+  };
+
+  let persistCalls = 0;
+  let refreshCalls = 0;
+  harness.persistProjectState = async () => {
+    persistCalls += 1;
+  };
+  harness.refreshVersionTreeFromServer = async () => {
+    refreshCalls += 1;
+  };
+
+  const originalFetch = globalThis.fetch;
+  (globalThis as typeof globalThis & { fetch: typeof fetch }).fetch = async () =>
+    new Response(
+      JSON.stringify({
+        id: 'version-revert',
+        label: 'Revert to branch',
+        demoId: 'demo-1',
+        activeVersionId: pinned.id,
+        isFollowingHead: false,
+        activeBranchName: 'Pinned branch',
+      }),
+      {
+        status: 201,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      },
+    );
+
+  try {
+    const result = await engine.revertToVersion({
+      sourceVersionId: root.id,
+    });
+
+    assert.equal(result?.id, 'version-revert');
+    assert.equal(engine.getState().projectState?.activeVersionId, pinned.id);
+    assert.equal(engine.getState().projectState?.isFollowingHead, false);
+    assert.equal(persistCalls, 1);
+    assert.equal(refreshCalls, 1);
+  } finally {
+    (globalThis as typeof globalThis & { fetch: typeof fetch }).fetch = originalFetch;
+  }
+});
+
 test.skip('ProjectSyncEngine replays pending segment moves into bootstrap state and persists them', async () => {
   const sourceSegment: TrackTimelineSegment = {
     id: 'segment-1',

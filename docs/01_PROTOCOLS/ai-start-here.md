@@ -17,10 +17,10 @@ Before coding, read:
 Do not treat the app as a normal CRUD app.
 
 The core challenge is preserving musical intent across collaboration, version history, offline changes, and async audio processing.
+For browser-style React interaction tests, prefer the lightweight Vitest harness in `src/` (`pnpm --filter @git-for-music/web test` or `pnpm test:web`) with `jsdom` and Testing Library.
 
 ## Related Context
 
 - [[00_MAPS/git-for-music-context-index]]
 - [[01_PROTOCOLS/agent-implementation-guide]]
 - [[40_FEATURES/what-good-looks-like]]
-

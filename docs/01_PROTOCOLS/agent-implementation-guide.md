@@ -12,6 +12,7 @@ When modifying the codebase:
 8. Add tests for reducer, merge, and sync logic when behavior changes.
 9. Treat offline sync as a first-class path, not an edge case.
 10. Avoid adding UI that cannot be represented in the version graph.
+11. For browser-style React interaction coverage, use the web Vitest harness in `src/` (`pnpm --filter @git-for-music/web test` or `pnpm test:web`) with `jsdom` and Testing Library.
 
 Before implementing a feature, answer:
 
@@ -31,4 +32,3 @@ Before implementing a feature, answer:
 - [[40_FEATURES/versioning-mental-model]]
 - [[40_FEATURES/merge-and-conflict-guide]]
 - [[40_FEATURES/offline-sync-model]]
-

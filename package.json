@@ -10,6 +10,7 @@
     "prebuild": "pnpm db:generate",
     "build": "pnpm --filter @git-for-music/web build",
     "lint": "pnpm --filter @git-for-music/web lint",
+    "test:web": "pnpm --filter @git-for-music/web test",
     "db:generate": "pnpm --filter @git-for-music/db generate",
     "db:push": "pnpm --filter @git-for-music/db db:push",
     "db:migrate": "pnpm --filter @git-for-music/db migrate",

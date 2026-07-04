@@ -37,6 +37,13 @@ type BranchState = {
   error: string | null;
 };
 
+type RevertState = {
+  sourceVersionId: string;
+  sourceVersionLabel: string;
+  saving: boolean;
+  error: string | null;
+};
+
 type GraphNode = {
   id: string;
   version: DawVersion;
@@ -216,6 +223,7 @@ export type VersionHistoryTreeProps = {
   onCheckoutSelectedVersion: () => void;
   onSelectHistoryOperation: (operationSeq: number | null) => void;
   onCreateBranch: (sourceVersionId: string, label: string) => Promise<{ versionId: string; label: string } | null>;
+  onRevertToVersion: (sourceVersionId: string) => Promise<{ versionId: string; label: string } | null>;
 };
 
 export function VersionHistoryTree({
@@ -234,15 +242,18 @@ export function VersionHistoryTree({
   onCheckoutSelectedVersion,
   onSelectHistoryOperation,
   onCreateBranch,
+  onRevertToVersion,
 }: VersionHistoryTreeProps) {
   const [renameState, setRenameState] = useState<RenameState | null>(null);
   const [branchState, setBranchState] = useState<BranchState | null>(null);
+  const [revertState, setRevertState] = useState<RevertState | null>(null);
   const [isExpanded, setIsExpanded] = useState(false);
 
   useEffect(() => {
     if (isHistoryViewActive) {
       setRenameState(null);
       setBranchState(null);
+      setRevertState(null);
     }
   }, [isHistoryViewActive]);
 
@@ -280,6 +291,39 @@ export function VersionHistoryTree({
       saving: false,
       error: null,
     });
+  }
+
+  async function commitRevert() {
+    const sourceVersion = branchSourceVersion;
+    if (!sourceVersion) return;
+
+    setRevertState({
+      sourceVersionId: sourceVersion.id,
+      sourceVersionLabel: getVersionDisplayLabel(sourceVersion, versionsById),
+      saving: true,
+      error: null,
+    });
+    setBranchState(null);
+
+    try {
+      const result = await onRevertToVersion(sourceVersion.id);
+      if (!result) {
+        setRevertState((prev) =>
+          prev ? { ...prev, saving: false, error: 'Could not revert to this version' } : null,
+        );
+        return;
+      }
+
+      setRevertState(null);
+      if (isHistoryViewActive) {
+        onSelectHistoryOperation(null);
+      }
+      onSelectVersion(result.versionId);
+    } catch {
+      setRevertState((prev) =>
+        prev ? { ...prev, saving: false, error: 'Something went wrong' } : null,
+      );
+    }
   }
 
   async function commitBranchCreation() {
@@ -465,6 +509,14 @@ export function VersionHistoryTree({
             >
               {branchState ? 'Cancel branch' : isHistoryViewActive ? 'Branch from this point' : 'Create Branch'}
             </button>
+            <button
+              type="button"
+              onClick={() => void commitRevert()}
+              disabled={!branchSourceVersion || revertState?.saving === true}
+              className="rounded-full border border-rose-500/40 bg-rose-500/10 px-3 py-1 text-[11px] font-semibold text-rose-200 transition-colors hover:bg-rose-500/20 hover:text-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {revertState?.saving ? 'Reverting…' : 'Revert to this version'}
+            </button>
           </div>
           {branchState ? (
             <div className="mt-3 rounded-lg border border-cyan-500/20 bg-cyan-500/5 px-4 py-3">
@@ -512,6 +564,29 @@ export function VersionHistoryTree({
                 </button>
               </div>
               {branchState.error ? <p className="mt-2 text-sm text-red-400">{branchState.error}</p> : null}
+            </div>
+          ) : null}
+          {revertState ? (
+            <div className="mt-3 rounded-lg border border-rose-500/20 bg-rose-500/5 px-4 py-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-rose-200/70">
+                    Revert to version
+                  </p>
+                  <p className="mt-1 text-xs text-slate-300">
+                    Reverting to <span className="font-semibold text-white">{revertState.sourceVersionLabel}</span>{' '}
+                    creates a new version at the current branch head and preserves history.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setRevertState(null)}
+                  className="text-xs font-semibold text-slate-400 hover:text-slate-200"
+                >
+                  Close
+                </button>
+              </div>
+              {revertState.error ? <p className="mt-2 text-sm text-red-400">{revertState.error}</p> : null}
             </div>
           ) : null}
 

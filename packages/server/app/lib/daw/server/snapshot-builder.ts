@@ -295,9 +295,16 @@ export type DemoDawOperationPayload =
       sourceVersionId: string;
     }
   | {
-      versionId: string;
+      versionId?: string;
       revertedFromVersionId: string;
       currentVersionId: string;
+      branchMode?: 'continue' | 'fork';
+      branchName?: string | null;
+      label?: string | null;
+      createdAt?: string;
+      createdBy?: string;
+      operationSummary?: string | null;
+      version: DemoDawSnapshotVersion;
     }
   | {
       previousVersionId: string | null;
@@ -1257,12 +1264,17 @@ function applyDemoOperation(snapshot: DemoDawSnapshotData, operation: DemoDawSna
       );
       return snapshot;
     case 'VERSION_BRANCH_CREATED':
+    case 'VERSION_REVERTED_FROM':
       {
         const payload = operation.payload as Extract<
           DemoDawOperationPayload,
-          { version: DemoDawSnapshotVersion; sourceVersionId: string }
+          { version?: DemoDawSnapshotVersion; versionId?: string; currentVersionId?: string }
         >;
-        upsertVersion(snapshot, payload.version);
+        if (payload.version) {
+          upsertVersion(snapshot, payload.version);
+        } else if (payload.currentVersionId) {
+          setCurrentVersion(snapshot, payload.currentVersionId);
+        }
       }
       return snapshot;
     case 'VERSION_RENAMED':
@@ -1274,10 +1286,8 @@ function applyDemoOperation(snapshot: DemoDawSnapshotData, operation: DemoDawSna
         }
       }
       return snapshot;
-    // Legacy replay only: checkout mutations are not part of the shared graph.
     case 'VERSION_SELECTED':
     case 'CURRENT_VERSION_CHANGED':
-    case 'VERSION_REVERTED_FROM':
       return snapshot;
     case 'TRACK_VERSION_CREATED':
       {

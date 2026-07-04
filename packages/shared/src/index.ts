@@ -95,6 +95,13 @@ export interface CreateVersionRequest {
   sourceVersionId?: string;
 }
 
+export interface RevertVersionRequest {
+  demoId: string;
+  sourceVersionId: string;
+  label?: string;
+  description?: string;
+}
+
 export interface CreateVersionResponse {
   id: string;
   label: string;
