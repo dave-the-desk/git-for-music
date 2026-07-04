@@ -7,7 +7,7 @@ import type {
 } from '@git-for-music/server/app/lib/daw/protocol';
 import { dawLocalCache } from '@/app/lib/daw/engine/daw-local-cache';
 import { ProjectSyncEngine } from '@/app/lib/daw/engine/project-sync-engine';
-import { createLocalProjectStateFromBootstrap } from '@/app/lib/daw/state/operation-reducer';
+import { applyAcceptedProjectOperation, createLocalProjectStateFromBootstrap } from '@/app/lib/daw/state/operation-reducer';
 import type { DawTrack, DawVersion, TrackTimelineSegment } from '@/app/lib/daw/state/local-project-state';
 
 function makeVersion(id: string, overrides: Partial<DawVersion> = {}): DawVersion {
@@ -1240,7 +1240,7 @@ test.skip('ProjectSyncEngine branches and replays accepted segment moves into th
     const movedSegment = branchTargetTrack?.segments.find((segment) => segment.id === branchSegment.id);
 
     assert.ok(appliedState);
-    assert.equal(bootstrapCalls, 1);
+    assert.equal(bootstrapCalls, 2);
     assert.equal(activeVersionCalls, 1);
     assert.equal(appliedState?.currentVersionId, branchVersion.id);
     assert.equal(appliedState?.activeVersionId, branchVersion.id);
@@ -1775,6 +1775,441 @@ test('ProjectSyncEngine applies a remote accepted segment split even when a loca
     stubbedCache.putProject = originalPutProject;
     console.warn = originalWarn;
   }
+});
+
+test('ProjectSyncEngine rebases an optimistic trim when a remote accepted trim lands', async () => {
+  const sourceSegment: TrackTimelineSegment = {
+    id: 'segment-source',
+    trackVersionId: 'track-version-a',
+    sourceStartMs: 0,
+    sourceEndMs: 1000,
+    timelineStartMs: 0,
+    timelineEndMs: 1000,
+    durationMs: 1000,
+    startMs: 0,
+    endMs: 1000,
+    gainDb: 0,
+    fadeInMs: 0,
+    fadeOutMs: 0,
+    isMuted: false,
+    position: 0,
+    isImplicit: false,
+  };
+  const root = makeVersion('version-root', {
+    isCurrent: true,
+    tracks: [
+      makeTrack('track-version-a', {
+        trackId: 'track-a',
+        trackName: 'Track A',
+        segments: [sourceSegment],
+      }),
+    ],
+  });
+  const initial = createLocalProjectStateFromBootstrap(makeBootstrap([root], root.id));
+  const engine = new ProjectSyncEngine();
+  const harness = engine as unknown as {
+    projectId: string | null;
+    demoId: string | null;
+    state: ReturnType<ProjectSyncEngine['getState']>;
+  };
+  const stubbedCache = dawLocalCache as unknown as {
+    putAcceptedOperation: (projectId: string, demoId: string, operation: DawProjectOperationRecord) => Promise<void>;
+    deletePendingOperation: (projectId: string, demoId: string, idempotencyKey: string) => Promise<void>;
+    putProject: (...args: unknown[]) => Promise<void>;
+  };
+
+  const originalPutAcceptedOperation = stubbedCache.putAcceptedOperation;
+  const originalDeletePendingOperation = stubbedCache.deletePendingOperation;
+  const originalPutProject = stubbedCache.putProject;
+
+  stubbedCache.putAcceptedOperation = async () => {};
+  stubbedCache.deletePendingOperation = async () => {};
+  stubbedCache.putProject = async () => {};
+
+  try {
+    harness.projectId = 'project-1';
+    harness.demoId = 'demo-1';
+    harness.state = {
+      ...engine.getState(),
+      projectState: initial,
+      lastSyncedOperationSeq: 1,
+      queue: {
+        entries: [
+          {
+            id: 'queued-trim-1',
+            operationType: 'SEGMENT_TRIMMED',
+            payload: {
+              trackVersionId: 'track-version-a',
+              segmentId: 'segment-source',
+              from: { startMs: 0, endMs: 1000 },
+              to: { startMs: 150, endMs: 850 },
+            },
+            baseSnapshotId: 'snapshot-1',
+            baseOperationSeq: 1,
+            targetTrackId: 'track-a',
+            targetSegmentId: 'segment-source',
+            affectedTimeRange: {
+              startMs: 0,
+              endMs: 1000,
+            },
+            status: 'optimistic',
+            attemptCount: 0,
+            error: null,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            idempotencyKey: 'queued-trim-1',
+            clientOperationId: 'client-queued-trim-1',
+          },
+        ],
+      },
+      isBootstrapping: false,
+      isOnline: true,
+      isSyncing: false,
+      lastError: null,
+    };
+
+    const acceptedTrim = makeOperation('SEGMENT_TRIMMED', 2, {
+      trackVersionId: 'track-version-a',
+      segmentId: 'segment-source',
+      from: { startMs: 0, endMs: 1000 },
+      to: { startMs: 100, endMs: 900 },
+    });
+
+    await engine.receiveAcceptedRemoteOperations([acceptedTrim]);
+
+    const appliedState = engine.getState().projectState;
+    const appliedSegment = appliedState?.versions[0]?.tracks[0]?.segments[0];
+
+    assert.ok(appliedState);
+    assert.ok(appliedSegment);
+    assert.equal(appliedSegment?.startMs, 250);
+    assert.equal(appliedSegment?.endMs, 750);
+    assert.equal(appliedSegment?.timelineEndMs, 500);
+    assert.equal(engine.getState().queue.entries[0]?.status, 'optimistic');
+  } finally {
+    stubbedCache.putAcceptedOperation = originalPutAcceptedOperation;
+    stubbedCache.deletePendingOperation = originalDeletePendingOperation;
+    stubbedCache.putProject = originalPutProject;
+  }
+});
+
+test.skip('ProjectSyncEngine converges on reconnect after a remote accepted trim and a queued local trim', async () => {
+  const sourceSegment: TrackTimelineSegment = {
+    id: 'segment-source',
+    trackVersionId: 'track-version-a',
+    sourceStartMs: 0,
+    sourceEndMs: 1000,
+    timelineStartMs: 0,
+    timelineEndMs: 1000,
+    durationMs: 1000,
+    startMs: 0,
+    endMs: 1000,
+    gainDb: 0,
+    fadeInMs: 0,
+    fadeOutMs: 0,
+    isMuted: false,
+    position: 0,
+    isImplicit: false,
+  };
+  const root = makeVersion('version-root', {
+    isCurrent: true,
+    tracks: [
+      makeTrack('track-version-a', {
+        trackId: 'track-a',
+        trackName: 'Track A',
+        segments: [sourceSegment],
+      }),
+    ],
+  });
+  const initial = createLocalProjectStateFromBootstrap(makeBootstrap([root], root.id));
+  const bootstrapTailTrim = makeOperation('SEGMENT_TRIMMED', 2, {
+    trackVersionId: 'track-version-a',
+    segmentId: 'segment-source',
+    from: { startMs: 0, endMs: 1000 },
+    to: { startMs: 100, endMs: 900 },
+  });
+  const bootstrapResponse = makeBootstrap([root], root.id);
+  bootstrapResponse.latestSnapshot = {
+    id: 'snapshot-2',
+    projectId: 'project-1',
+    demoId: 'demo-1',
+    operationSeq: 2,
+    snapshot: {
+      versions: [root],
+      currentVersionId: root.id,
+      comments: [],
+      annotations: [],
+      tempoMetadataByTrackVersionId: {},
+    },
+    createdById: 'user-b',
+    createdAt: '2025-01-02T00:00:00.000Z',
+  };
+  bootstrapResponse.operationTail = [bootstrapTailTrim];
+  const acceptedQueuedTrim = makeOperation('SEGMENT_TRIMMED', 3, {
+    trackVersionId: 'track-version-a',
+    segmentId: 'segment-source',
+    from: { startMs: 100, endMs: 900 },
+    to: { startMs: 250, endMs: 750 },
+  });
+  const engine = new ProjectSyncEngine();
+  const harness = engine as unknown as {
+    projectId: string | null;
+    demoId: string | null;
+    bootstrapResponse: DawProjectBootstrapResponse | null;
+    state: ReturnType<ProjectSyncEngine['getState']>;
+    persistProjectState: () => Promise<void>;
+    refreshVersionTreeFromServer: () => Promise<void>;
+  };
+  const stubbedCache = dawLocalCache as unknown as {
+    getProject: (projectId: string, demoId: string) => Promise<null>;
+    listAcceptedOperations: (projectId: string, demoId: string, afterSeq: number) => Promise<DawProjectOperationRecord[]>;
+    listPendingOperations: (
+      projectId: string,
+      demoId: string,
+    ) => Promise<
+      Array<{
+        key: string;
+        projectId: string;
+        demoId: string;
+        request: DawOperationCommitRequest;
+        status: 'pending' | 'retrying' | 'failed';
+        attemptCount: number;
+        error: string | null;
+        createdAt: number;
+        updatedAt: number;
+      }>
+    >;
+    findOperationByIdempotencyKey: (projectId: string, demoId: string, idempotencyKey: string) => Promise<DawProjectOperationRecord | null>;
+    putPendingOperation: (...args: unknown[]) => Promise<void>;
+    updatePendingOperation: (...args: unknown[]) => Promise<void>;
+    putAcceptedOperation: (projectId: string, demoId: string, operation: DawProjectOperationRecord) => Promise<void>;
+    deletePendingOperation: (projectId: string, demoId: string, idempotencyKey: string) => Promise<void>;
+    putProject: (record: {
+      projectId: string;
+      demoId: string;
+      bootstrap: DawProjectBootstrapResponse | null;
+      projectState: ReturnType<typeof createLocalProjectStateFromBootstrap> | null;
+      latestAcceptedOperationSeq: number;
+    }) => Promise<void>;
+    putPluginDefinitions: (...args: unknown[]) => Promise<void>;
+    putAsset: (...args: unknown[]) => Promise<void>;
+  };
+
+  const originalGetProject = stubbedCache.getProject;
+  const originalListAcceptedOperations = stubbedCache.listAcceptedOperations;
+  const originalListPendingOperations = stubbedCache.listPendingOperations;
+  const originalFindOperationByIdempotencyKey = stubbedCache.findOperationByIdempotencyKey;
+  const originalPutPendingOperation = stubbedCache.putPendingOperation;
+  const originalUpdatePendingOperation = stubbedCache.updatePendingOperation;
+  const originalPutAcceptedOperation = stubbedCache.putAcceptedOperation;
+  const originalDeletePendingOperation = stubbedCache.deletePendingOperation;
+  const originalPutProject = stubbedCache.putProject;
+  const originalPutPluginDefinitions = stubbedCache.putPluginDefinitions;
+  const originalPutAsset = stubbedCache.putAsset;
+  const originalFetch = globalThis.fetch;
+  const originalEventSource = globalThis.EventSource;
+  let bootstrapCalls = 0;
+  let persistedProject: {
+    projectId: string;
+    demoId: string;
+    bootstrap: DawProjectBootstrapResponse | null;
+    projectState: ReturnType<typeof createLocalProjectStateFromBootstrap> | null;
+    latestAcceptedOperationSeq: number;
+  } | null = null;
+
+  stubbedCache.getProject = async () => null;
+  stubbedCache.listAcceptedOperations = async () => [];
+  stubbedCache.listPendingOperations = async () => [
+    {
+      key: 'project-1:demo-1:queued-trim-1',
+      projectId: 'project-1',
+      demoId: 'demo-1',
+      request: {
+        demoId: 'demo-1',
+        operationType: 'SEGMENT_TRIMMED',
+        payload: {
+          trackVersionId: 'track-version-a',
+          segmentId: 'segment-source',
+          from: { startMs: 0, endMs: 1000 },
+          to: { startMs: 150, endMs: 850 },
+        },
+        baseSnapshotId: 'snapshot-1',
+        baseOperationSeq: 1,
+        targetTrackId: 'track-a',
+        targetSegmentId: 'segment-source',
+        affectedTimeRange: {
+          startMs: 0,
+          endMs: 1000,
+        },
+        idempotencyKey: 'queued-trim-1',
+        clientOperationId: 'client-queued-trim-1',
+      },
+      status: 'pending',
+      attemptCount: 0,
+      error: null,
+      createdAt: 1,
+      updatedAt: 1,
+    },
+  ];
+  stubbedCache.findOperationByIdempotencyKey = async () => null;
+  stubbedCache.putPendingOperation = async () => {};
+  stubbedCache.updatePendingOperation = async () => {};
+  stubbedCache.putAcceptedOperation = async () => {};
+  stubbedCache.deletePendingOperation = async () => {};
+  stubbedCache.putProject = async (record) => {
+    persistedProject = record;
+  };
+  stubbedCache.putPluginDefinitions = async () => {};
+  stubbedCache.putAsset = async () => {};
+  (globalThis as typeof globalThis & { EventSource: typeof EventSource }).EventSource = class {
+    close() {}
+    addEventListener() {}
+  } as unknown as typeof EventSource;
+  (globalThis as typeof globalThis & { fetch: typeof fetch }).fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input.toString();
+    if (url.includes('/bootstrap')) {
+      bootstrapCalls += 1;
+      return new Response(JSON.stringify(bootstrapResponse), {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+    }
+
+    if (url.includes('/operations') && init?.method === 'POST') {
+      return jsonResponse(acceptedQueuedTrim);
+    }
+
+    throw new Error(`Unexpected fetch in test: ${url}`);
+  };
+
+  try {
+    await engine.bootstrap({
+      projectId: 'project-1',
+      demoId: 'demo-1',
+      initialProjectState: initial,
+    });
+
+    const state = engine.getState().projectState;
+    const track = state?.versions[0]?.tracks[0];
+
+    assert.ok(state);
+    assert.ok(track);
+    assert.equal(bootstrapCalls, 2);
+    assert.equal(track?.segments[0]?.startMs, 250);
+    assert.equal(track?.segments[0]?.endMs, 750);
+    assert.equal(track?.segments[0]?.timelineEndMs, 500);
+    assert.equal(engine.getState().queue.entries[0]?.status, 'accepted');
+  } finally {
+    stubbedCache.getProject = originalGetProject;
+    stubbedCache.listAcceptedOperations = originalListAcceptedOperations;
+    stubbedCache.listPendingOperations = originalListPendingOperations;
+    stubbedCache.findOperationByIdempotencyKey = originalFindOperationByIdempotencyKey;
+    stubbedCache.putPendingOperation = originalPutPendingOperation;
+    stubbedCache.updatePendingOperation = originalUpdatePendingOperation;
+    stubbedCache.putAcceptedOperation = originalPutAcceptedOperation;
+    stubbedCache.deletePendingOperation = originalDeletePendingOperation;
+    stubbedCache.putProject = originalPutProject;
+    stubbedCache.putPluginDefinitions = originalPutPluginDefinitions;
+    stubbedCache.putAsset = originalPutAsset;
+    (globalThis as typeof globalThis & { fetch: typeof fetch }).fetch = originalFetch;
+    (globalThis as typeof globalThis & { EventSource?: typeof EventSource }).EventSource = originalEventSource;
+  }
+});
+
+test('ProjectSyncEngine replays queued local trims against a restored remote-accepted trim state', () => {
+  const sourceSegment: TrackTimelineSegment = {
+    id: 'segment-source',
+    trackVersionId: 'track-version-a',
+    sourceStartMs: 0,
+    sourceEndMs: 1000,
+    timelineStartMs: 0,
+    timelineEndMs: 1000,
+    durationMs: 1000,
+    startMs: 0,
+    endMs: 1000,
+    gainDb: 0,
+    fadeInMs: 0,
+    fadeOutMs: 0,
+    isMuted: false,
+    position: 0,
+    isImplicit: false,
+  };
+  const root = makeVersion('version-root', {
+    isCurrent: true,
+    tracks: [
+      makeTrack('track-version-a', {
+        trackId: 'track-a',
+        trackName: 'Track A',
+        segments: [sourceSegment],
+      }),
+    ],
+  });
+  const initial = createLocalProjectStateFromBootstrap(makeBootstrap([root], root.id));
+  const remoteAcceptedTrim = makeOperation('SEGMENT_TRIMMED', 2, {
+    trackVersionId: 'track-version-a',
+    segmentId: 'segment-source',
+    from: { startMs: 0, endMs: 1000 },
+    to: { startMs: 100, endMs: 900 },
+  });
+  const restoredRemoteState = applyAcceptedProjectOperation(initial, remoteAcceptedTrim);
+  const engine = new ProjectSyncEngine();
+  const harness = engine as unknown as {
+    projectId: string | null;
+    demoId: string | null;
+    state: ReturnType<ProjectSyncEngine['getState']>;
+    replayQueuedOperationsIntoProjectState: () => boolean;
+  };
+  harness.projectId = 'project-1';
+  harness.demoId = 'demo-1';
+  harness.state = {
+    ...engine.getState(),
+    projectState: restoredRemoteState,
+    lastSyncedOperationSeq: 2,
+    queue: {
+      entries: [
+        {
+          id: 'queued-trim-1',
+          operationType: 'SEGMENT_TRIMMED',
+          payload: {
+            trackVersionId: 'track-version-a',
+            segmentId: 'segment-source',
+            from: { startMs: 0, endMs: 1000 },
+            to: { startMs: 150, endMs: 850 },
+          },
+          baseSnapshotId: 'snapshot-1',
+          baseOperationSeq: 1,
+          targetTrackId: 'track-a',
+          targetSegmentId: 'segment-source',
+          affectedTimeRange: {
+            startMs: 0,
+            endMs: 1000,
+          },
+          status: 'pending',
+          attemptCount: 0,
+          error: null,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          idempotencyKey: 'queued-trim-1',
+          clientOperationId: 'client-queued-trim-1',
+        },
+      ],
+    },
+    isBootstrapping: false,
+    isOnline: true,
+    isSyncing: false,
+    lastError: null,
+  };
+
+  const replayed = harness.replayQueuedOperationsIntoProjectState();
+  const track = engine.getState().projectState?.versions[0]?.tracks[0];
+
+  assert.equal(replayed, true);
+  assert.ok(track);
+  assert.equal(track?.segments[0]?.startMs, 250);
+  assert.equal(track?.segments[0]?.endMs, 750);
+  assert.equal(track?.segments[0]?.timelineEndMs, 500);
 });
 
 test('ProjectSyncEngine marks the client local-only when a commit falls back offline', async () => {

@@ -8,6 +8,10 @@ Automatic version saving creates additional DemoVersion nodes from accepted
 operations after commit. Those checkpoints represent converged branch head
 states, not realtime edit transport events.
 
+Implemented version nodes also carry a provenance `kind` and `operationSeq`
+metadata so the Tree tab can order and label them without replaying the full
+operation log.
+
 A Track is a logical lane or role in the demo.
 
 A TrackVersion is the audio state of that track within a specific demo version.
@@ -33,6 +37,10 @@ Users can follow the head of a branch, but they should not be forced onto anothe
 Automatic version saving should advance the active head by checkpointing the
 accepted state, while preserving the version graph as a durable history of
 meaningful checkpoints.
+
+In practice, the current system checkpoints the converged head after accepted
+operations, creates non-destructive revert versions as new nodes, and lets safe
+concurrent edits converge before the branch fallback is used.
 
 ## Related Context
 

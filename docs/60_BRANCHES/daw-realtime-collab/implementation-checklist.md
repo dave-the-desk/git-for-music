@@ -12,8 +12,9 @@ tests green after each phase.
 
 What already exists (do not rebuild):
 
-- **Version DAG:** `DemoVersion` has `parentId`, `isMerge`, `createdAt`,
-  tempo/key metadata (`packages/db/prisma/schema.prisma`). Single parent only.
+- **Version DAG:** `DemoVersion` now carries `parentId`, `isMerge`,
+  `createdAt`, `kind`, and `operationSeq` (`packages/db/prisma/schema.prisma`),
+  with the merge parent join table in place for future multi-parent history.
 - **Per-user checkout:** `DemoUserActiveVersion` (`activeVersionId`,
   `isFollowingHead`); `activeBranchName` is derived, not a column.
 - **Durable log:** `ProjectOperationLog` (`operationSeq`, `baseSnapshotId`,
@@ -27,21 +28,19 @@ What already exists (do not rebuild):
   (currently only `TRACK_RENAMED`, `SEGMENT_TRIMMED`). Explicit branch via
   `/api/versions` -> `createDemoVersionCommand`.
 - **Client sync:** `ProjectSyncEngine` optimistic queue + `accepted_operation`
-  replay through `operation-reducer.ts`.
-- **Tree tab:** `VersionHistoryTree.tsx` + `version-tree-layout.ts` use a
-  depth-based left-to-right layout with branches dropped to lower rows.
-- **Realtime events:** `accepted_operation`, `version_tree_changed`, presence,
-  transport, asset, comment (`realtime-gateway.ts`). No semantic
-  `version_created` / `head_moved` / `reverted` events.
+  replay through `operation-reducer.ts`, with timeline edits replayed through
+  the same transform/rebase helpers used on the server.
+- **Tree tab:** `VersionHistoryTree.tsx` + `version-tree-layout.ts` render the
+  live `LocalProjectState.versions` graph with commit-graph row/column layout.
+- **Realtime events:** `accepted_operation`, `version_tree_changed`,
+  `version_created`, presence, transport, asset, comment
+  (`realtime-gateway.ts`). Semantic `head_moved` / `reverted` events are still
+  part of the later sync-event phase.
 
 Key gaps vs the design doc:
 
-- No automatic DemoVersion checkpointing policy (only replay snapshots).
-- No non-destructive revert-as-new-version (`VERSION_REVERTED_FROM` is a legacy
-  pointer move in the reducer).
-- No OT/transform layer; concurrency resolves by branch or 409.
-- Tree tab does not use the DoltHub topological-row/column commit-graph model,
-  has no per-branch color, and cannot render merges (`isMerge` unused).
+- Realtime semantic sync events are still narrower than the final event model.
+- Processing-jobs alignment still needs the explicit phase-G audit.
 
 ---
 
@@ -114,35 +113,20 @@ Goal: safe concurrent edits converge without an unwanted branch; branching stays
 the unsafe-overlap fallback. (Tracks the phased
 [realtime collaboration plan](../../papers/realtime-collaboration-plan.md).)
 
-- [ ] Add pure transform helpers for the timeline ops in
-      `TIMELINE_EDIT_OPERATION_TYPES` (move, trim, split, merge, fade,
-      crossfade, rename) under `src/app/lib/daw/state/`.
-- [ ] Rebase an incoming edit against intervening accepted operations in
-      `commitDawProjectOperation` before finalizing; only fall back to
-      `analyzeDawOperationConflict` branch/409 when a transform cannot preserve
-      intent.
-- [ ] Replay the optimistic local queue through the same transform logic in
-      `ProjectSyncEngine` so remote accepted ops preserve pending local intent.
-- [ ] Tests: two safe concurrent edits converge to identical state (reducer +
-      command-api); unsafe overlap still branches/conflicts deterministically;
-      reconnect after concurrent local+remote edits converges.
+- [x] Add pure transform helpers for the timeline ops in `TIMELINE_EDIT_OPERATION_TYPES` (move, trim, split, merge, fade,  crossfade, rename) under `src/app/lib/daw/state/`.
+- [x] Rebase an incoming edit against intervening accepted operations in `commitDawProjectOperation` before finalizing; only fall back to `analyzeDawOperationConflict` branch/409 when a transform cannot preserve intent.
+- [x] Replay the optimistic local queue through the same transform logic in `ProjectSyncEngine` so remote accepted ops preserve pending local intent.
+- [x] Tests: two safe concurrent edits converge to identical state (reducer + command-api); unsafe overlap still branches/conflicts deterministically; reconnect after concurrent local+remote edits converges on the queue-replay path.
 
 ## Phase F - Realtime Events + Reconnect
 
 Goal: make version/branch/revert changes first-class realtime signals.
 
-- [ ] Add semantic events in
-      `packages/server/app/lib/daw/server/realtime-gateway.ts`:
-      `version_created`, `branch_created`, `head_moved`, `reverted` (or extend
-      `version_tree_changed` with a `reason`). Update `DawRealtimeEventType`.
+- [ ] Add semantic events in `packages/server/app/lib/daw/server/realtime-gateway.ts`: `version_created`, `branch_created`, `head_moved`, `reverted` (or extend  `version_tree_changed` with a `reason`). Update `DawRealtimeEventType`.
 - [ ] Emit them from the create/branch/revert/auto-checkpoint paths.
-- [ ] Handle them in `ProjectSyncEngine` (refresh version tree, animate new
-      node) and confirm `operation-reducer` upserts nodes for the corresponding
-      accepted operations.
-- [ ] Confirm reconnect (`lastSeenOperationSeq`, `rebootstrapRequired`) replays
-      new version/revert operations and preserves the viewer checkout.
-- [ ] Tests: reconnect after a remote auto-version/branch/revert shows the new
-      node and keeps the local checkout.
+- [ ] Handle them in `ProjectSyncEngine` (refresh version tree, animate new node) and confirm `operation-reducer` upserts nodes for the corresponding accepted operations.
+- [ ] Confirm reconnect (`lastSeenOperationSeq`, `rebootstrapRequired`) replays new version/revert operations and preserves the viewer checkout.
+- [ ] Tests: reconnect after a remote auto-version/branch/revert shows the new node and keeps the local checkout.
 
 ## Phase G - Processing-Jobs Alignment
 

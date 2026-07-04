@@ -12,6 +12,31 @@ import type {
   DawSegmentSnapshot,
 } from '@git-for-music/server/app/lib/daw/protocol';
 import { selectLatestVersionOrNull } from './selectors';
+import {
+  applyCrossfadeSet,
+  applySegmentDelete,
+  applySegmentFadeSet,
+  applySegmentMerge,
+  applySegmentMove,
+  applySegmentMoveLegacy,
+  applySegmentSplit,
+  applySegmentTrim,
+  applyTrackOffsetUpdate,
+  applyTrackRename,
+} from './timeline-edit-transforms';
+
+export {
+  applyCrossfadeSet,
+  applySegmentDelete,
+  applySegmentFadeSet,
+  applySegmentMerge,
+  applySegmentMove,
+  applySegmentMoveLegacy,
+  applySegmentSplit,
+  applySegmentTrim,
+  applyTrackOffsetUpdate,
+  applyTrackRename,
+} from './timeline-edit-transforms';
 
 export type TimelineHistoryEntry =
   | {
@@ -110,16 +135,6 @@ type CommentOrAnnotationLike = {
   updatedAt?: string;
   author?: NestedAuthorLike;
 };
-
-function updateSegments(
-  track: DawTrack,
-  updater: (segments: TrackTimelineSegment[]) => TrackTimelineSegment[],
-) {
-  return {
-    ...track,
-    segments: updater(track.segments),
-  };
-}
 
 function upsertVersionTrack(versions: DawVersion[], versionId: string, track: DawTrack) {
   return versions.map((version) => {
@@ -585,158 +600,6 @@ function buildOperationHistoryEntry(
   }
 }
 
-export function applyTrackOffsetUpdate(
-  tracks: DawTrack[],
-  trackVersionId: string,
-  startOffsetMs: number,
-) {
-  return tracks.map((track) =>
-    track.trackVersionId === trackVersionId ? { ...track, startOffsetMs } : track,
-  );
-}
-
-export function applyTrackRename(tracks: DawTrack[], trackId: string, trackName: string) {
-  return tracks.map((track) => (track.trackId === trackId ? { ...track, trackName } : track));
-}
-
-function normalizeTrackSegments(segments: TrackTimelineSegment[]) {
-  return segments.map((segment, index) => ({
-    ...segment,
-    position: index,
-  }));
-}
-
-function moveSegmentBetweenTracks(
-  tracks: DawTrack[],
-  payload: {
-    segmentId: string;
-    fromTrackVersionId: string;
-    toTrackVersionId: string;
-    fromTimelineStartMs: number;
-    fromTimelineEndMs: number;
-    toTimelineStartMs: number;
-    toTimelineEndMs: number;
-  },
-) {
-  const sourceTrackIndex = tracks.findIndex((track) => track.trackVersionId === payload.fromTrackVersionId);
-  const targetTrackIndex = tracks.findIndex((track) => track.trackVersionId === payload.toTrackVersionId);
-
-  if (targetTrackIndex === -1) {
-    return tracks;
-  }
-
-  const sourceTrack = sourceTrackIndex >= 0 ? tracks[sourceTrackIndex] : null;
-  const targetTrack = tracks[targetTrackIndex] ?? null;
-  if (!targetTrack) {
-    return tracks;
-  }
-
-  const occurrences = tracks.flatMap((track) =>
-    track.segments
-      .filter((segment) => segment.id === payload.segmentId)
-      .map((segment) => ({
-        track,
-        segment,
-      })),
-  );
-
-  const sourceSegment = sourceTrack?.segments.find((segment) => segment.id === payload.segmentId) ?? null;
-  const targetSegment = targetTrack.segments.find((segment) => segment.id === payload.segmentId) ?? null;
-  const existingSegment = sourceSegment ?? targetSegment ?? occurrences[0]?.segment ?? null;
-
-  if (!existingSegment) {
-    return tracks;
-  }
-
-  if (
-    occurrences.length === 1 &&
-    targetSegment &&
-    targetSegment.trackVersionId === payload.toTrackVersionId &&
-    targetSegment.timelineStartMs === payload.toTimelineStartMs &&
-    targetSegment.timelineEndMs === payload.toTimelineEndMs
-  ) {
-    return tracks;
-  }
-
-  const cleanedTracks = tracks.map((track) => ({
-    ...track,
-    segments: normalizeTrackSegments(track.segments.filter((segment) => segment.id !== payload.segmentId)),
-  }));
-  const cleanedTargetTrack = cleanedTracks.find((track) => track.trackVersionId === payload.toTrackVersionId);
-  if (!cleanedTargetTrack) {
-    return tracks;
-  }
-
-  const insertionIndex =
-    payload.fromTrackVersionId === payload.toTrackVersionId
-      ? Math.min(existingSegment.position, cleanedTargetTrack.segments.length)
-      : cleanedTargetTrack.segments.length;
-
-  const movedSegment: TrackTimelineSegment = {
-    ...existingSegment,
-    trackVersionId: payload.toTrackVersionId,
-    timelineStartMs: payload.toTimelineStartMs,
-    timelineEndMs: payload.toTimelineEndMs,
-    position: insertionIndex,
-  };
-
-  const nextTargetSegments = normalizeTrackSegments(
-    [
-      ...cleanedTargetTrack.segments.slice(0, insertionIndex),
-      movedSegment,
-      ...cleanedTargetTrack.segments.slice(insertionIndex),
-    ].map((segment) => ({
-      ...segment,
-      trackVersionId: payload.toTrackVersionId,
-    })),
-  );
-
-  return cleanedTracks.map((track) =>
-    track.trackVersionId === payload.toTrackVersionId
-      ? {
-          ...track,
-          segments: nextTargetSegments,
-        }
-      : track,
-  );
-}
-
-export function applySegmentMove(
-  tracks: DawTrack[],
-  payload: {
-    segmentId: string;
-    fromTrackVersionId: string;
-    toTrackVersionId: string;
-    fromTimelineStartMs: number;
-    fromTimelineEndMs: number;
-    toTimelineStartMs: number;
-    toTimelineEndMs: number;
-  },
-) {
-  return moveSegmentBetweenTracks(tracks, payload);
-}
-
-export function applySegmentMoveLegacy(
-  tracks: DawTrack[],
-  trackVersionId: string,
-  segmentId: string,
-  timelineStartMs: number,
-) {
-  const track = tracks.find((candidate) => candidate.trackVersionId === trackVersionId);
-  const segment = track?.segments.find((candidate) => candidate.id === segmentId);
-  if (!track || !segment) return tracks;
-
-  return applySegmentMove(tracks, {
-    segmentId,
-    fromTrackVersionId: trackVersionId,
-    toTrackVersionId: trackVersionId,
-    fromTimelineStartMs: segment.timelineStartMs,
-    fromTimelineEndMs: segment.timelineEndMs,
-    toTimelineStartMs: timelineStartMs,
-    toTimelineEndMs: timelineStartMs + (segment.timelineEndMs - segment.timelineStartMs),
-  });
-}
-
 function normalizeOperationHistory(input: unknown): ProjectOperationHistoryEntry[] {
   if (!Array.isArray(input)) return [];
   return input.flatMap((entry) => {
@@ -769,97 +632,6 @@ function normalizeOperationHistory(input: unknown): ProjectOperationHistoryEntry
         createdAt: value.createdAt,
       } satisfies ProjectOperationHistoryEntry,
     ];
-  });
-}
-
-export function applySegmentDelete(tracks: DawTrack[], trackVersionId: string, segmentId: string) {
-  return tracks.map((track) => {
-    if (track.trackVersionId !== trackVersionId) return track;
-    return updateSegments(track, (segments) =>
-      segments
-        .filter((segment) => segment.id !== segmentId)
-        .map((segment, index) => ({
-          ...segment,
-          position: index,
-        })),
-    );
-  });
-}
-
-export function applySegmentTrim(
-  tracks: DawTrack[],
-  trackVersionId: string,
-  segmentId: string,
-  nextStartMs: number,
-  nextEndMs: number,
-) {
-  return tracks.map((track) => {
-    if (track.trackVersionId !== trackVersionId) return track;
-    return updateSegments(track, (segments) =>
-      segments.map((segment) =>
-        segment.id === segmentId
-          ? {
-              ...segment,
-              startMs: nextStartMs,
-              endMs: nextEndMs,
-              sourceStartMs: nextStartMs,
-              sourceEndMs: nextEndMs,
-              durationMs: nextEndMs - nextStartMs,
-              timelineEndMs: segment.timelineStartMs + (nextEndMs - nextStartMs),
-            }
-          : segment,
-      ),
-    );
-  });
-}
-
-export function applySegmentMerge(
-  tracks: DawTrack[],
-  trackVersionId: string,
-  segmentIds: string[],
-  mergedSegment: TrackTimelineSegment,
-) {
-  return tracks.map((track) => {
-    if (track.trackVersionId !== trackVersionId) return track;
-    return updateSegments(track, (segments) =>
-      segments
-        .filter((segment) => !segmentIds.includes(segment.id))
-        .concat(mergedSegment)
-        .sort((left, right) => left.position - right.position),
-    );
-  });
-}
-
-export function applyCrossfadeSet(
-  tracks: DawTrack[],
-  trackVersionId: string,
-  leftSegmentId: string,
-  rightSegmentId: string,
-  crossfadeInMs: number,
-  crossfadeOutMs: number,
-  curve: string | null,
-) {
-  return tracks.map((track) => {
-    if (track.trackVersionId !== trackVersionId) return track;
-    return updateSegments(track, (segments) =>
-      segments.map((segment) => {
-        if (segment.id === leftSegmentId) {
-          return {
-            ...segment,
-            crossfadeOutMs,
-            crossfadeCurve: curve,
-          };
-        }
-        if (segment.id === rightSegmentId) {
-          return {
-            ...segment,
-            crossfadeInMs,
-            crossfadeCurve: curve,
-          };
-        }
-        return segment;
-      }),
-    );
   });
 }
 
@@ -995,9 +767,7 @@ export function applyAcceptedProjectOperation(
         ...state,
         versions: state.versions.map((version) => ({
           ...version,
-          tracks: version.tracks.map((track) =>
-            track.trackId === payload.trackId ? { ...track, trackName: payload.trackName } : track,
-          ),
+          tracks: applyTrackRename(version.tracks, payload.trackId, payload.trackName),
         })),
       }, operation);
     }
@@ -1007,11 +777,7 @@ export function applyAcceptedProjectOperation(
         ...state,
         versions: state.versions.map((version) => ({
           ...version,
-          tracks: version.tracks.map((track) =>
-            track.trackVersionId === payload.trackVersionId
-              ? { ...track, startOffsetMs: payload.startOffsetMs }
-              : track,
-          ),
+          tracks: applyTrackOffsetUpdate(version.tracks, payload.trackVersionId, payload.startOffsetMs),
         })),
       }, operation);
     }
@@ -1029,7 +795,7 @@ export function applyAcceptedProjectOperation(
         ...state,
         versions: state.versions.map((version) => ({
           ...version,
-          tracks: moveSegmentBetweenTracks(version.tracks, payload),
+          tracks: applySegmentMove(version.tracks, payload),
         })),
       }, operation);
     }
@@ -1039,16 +805,7 @@ export function applyAcceptedProjectOperation(
         ...state,
         versions: state.versions.map((version) => ({
           ...version,
-          tracks: version.tracks.map((track) =>
-            track.trackVersionId !== payload.trackVersionId
-              ? track
-              : {
-                  ...track,
-                  segments: track.segments
-                    .filter((segment) => segment.id !== payload.segmentId)
-                  .map((segment, index) => ({ ...segment, position: index })),
-                },
-          ),
+          tracks: applySegmentDelete(version.tracks, payload.trackVersionId, payload.segmentId),
         })),
       }, operation);
     }
@@ -1062,27 +819,12 @@ export function applyAcceptedProjectOperation(
         ...state,
         versions: state.versions.map((version) => ({
           ...version,
-          tracks: version.tracks.map((track) =>
-            track.trackVersionId !== payload.trackVersionId
-              ? track
-              : {
-                  ...track,
-                  segments: track.segments.map((segment) =>
-                    segment.id === payload.segmentId
-                      ? {
-                          ...segment,
-                          startMs: payload.to.startMs,
-                          endMs: payload.to.endMs,
-                          sourceStartMs: payload.to.startMs,
-                          sourceEndMs: payload.to.endMs,
-                          durationMs: payload.to.endMs - payload.to.startMs,
-                          timelineEndMs:
-                            (segment.timelineStartMs ?? track.startOffsetMs + payload.to.startMs) +
-                            (payload.to.endMs - payload.to.startMs),
-                        }
-                      : segment,
-                  ),
-                },
+          tracks: applySegmentTrim(
+            version.tracks,
+            payload.trackVersionId,
+            payload.segmentId,
+            payload.to.startMs,
+            payload.to.endMs,
           ),
         })),
       }, operation);
@@ -1097,30 +839,11 @@ export function applyAcceptedProjectOperation(
         ...state,
         versions: state.versions.map((version) => ({
           ...version,
-          tracks: version.tracks.map((track) =>
-            track.trackVersionId !== payload.trackVersionId
-              ? track
-              : {
-                  ...track,
-                  segments: track.segments
-                    // The merge is applied optimistically and then replayed again once the accepted op arrives.
-                    // Remove any previously inserted merged clip so the operation stays idempotent.
-                    .filter((segment) => segment.id !== payload.mergedSegment.id)
-                    .filter((segment) => !payload.segmentIds.includes(segment.id))
-                    .concat({
-                      ...payload.mergedSegment,
-                      trackVersionId: payload.trackVersionId,
-                      sourceStartMs: payload.mergedSegment.startMs,
-                      sourceEndMs: payload.mergedSegment.endMs,
-                      timelineStartMs: payload.mergedSegment.timelineStartMs ?? track.startOffsetMs + payload.mergedSegment.startMs,
-                      timelineEndMs:
-                        (payload.mergedSegment.timelineStartMs ?? track.startOffsetMs + payload.mergedSegment.startMs) +
-                        (payload.mergedSegment.endMs - payload.mergedSegment.startMs),
-                      durationMs: payload.mergedSegment.endMs - payload.mergedSegment.startMs,
-                      isImplicit: false,
-                    })
-                  .sort((left, right) => left.position - right.position),
-                },
+          tracks: applySegmentMerge(
+            version.tracks,
+            payload.trackVersionId,
+            payload.segmentIds,
+            payload.mergedSegment,
           ),
         })),
       }, operation);
@@ -1137,21 +860,12 @@ export function applyAcceptedProjectOperation(
           ...state,
           versions: state.versions.map((version) => ({
             ...version,
-            tracks: version.tracks.map((track) =>
-              track.trackVersionId !== payload.trackVersionId
-                ? track
-                : {
-                    ...track,
-                    segments: track.segments.map((segment) =>
-                      segment.id === payload.segmentId
-                        ? {
-                            ...segment,
-                            fadeInMs: payload.fadeInMs,
-                            fadeOutMs: payload.fadeOutMs,
-                          }
-                        : segment,
-                    ),
-                  },
+            tracks: applySegmentFadeSet(
+              version.tracks,
+              payload.trackVersionId,
+              payload.segmentId,
+              payload.fadeInMs,
+              payload.fadeOutMs,
             ),
           })),
         },
@@ -1172,29 +886,14 @@ export function applyAcceptedProjectOperation(
           ...state,
           versions: state.versions.map((version) => ({
             ...version,
-            tracks: version.tracks.map((track) =>
-              track.trackVersionId !== payload.trackVersionId
-                ? track
-                : {
-                    ...track,
-                    segments: track.segments.map((segment) => {
-                      if (segment.id === payload.leftSegmentId) {
-                        return {
-                          ...segment,
-                          crossfadeOutMs: payload.crossfadeOutMs,
-                          crossfadeCurve: payload.curve,
-                        };
-                      }
-                      if (segment.id === payload.rightSegmentId) {
-                        return {
-                          ...segment,
-                          crossfadeInMs: payload.crossfadeInMs,
-                          crossfadeCurve: payload.curve,
-                        };
-                      }
-                      return segment;
-                    }),
-                  },
+            tracks: applyCrossfadeSet(
+              version.tracks,
+              payload.trackVersionId,
+              payload.leftSegmentId,
+              payload.rightSegmentId,
+              payload.crossfadeInMs,
+              payload.crossfadeOutMs,
+              payload.curve,
             ),
           })),
         },
@@ -1217,55 +916,13 @@ export function applyAcceptedProjectOperation(
           ...state,
           versions: state.versions.map((version) => ({
             ...version,
-            tracks: version.tracks.map((track) => {
-              if (track.trackVersionId !== payload.trackVersionId) return track;
-
-              const leftSegment: TrackTimelineSegment = {
-                id: payload.leftSegment.id,
-                trackVersionId: payload.trackVersionId,
-                startMs: payload.leftSegment.startMs,
-                endMs: payload.leftSegment.endMs,
-                timelineStartMs:
-                  payload.leftSegment.timelineStartMs ?? track.startOffsetMs + payload.leftSegment.startMs,
-                timelineEndMs:
-                  payload.leftSegment.timelineEndMs ?? track.startOffsetMs + payload.leftSegment.endMs,
-                durationMs: payload.leftSegment.endMs - payload.leftSegment.startMs,
-                sourceStartMs: payload.leftSegment.startMs,
-                sourceEndMs: payload.leftSegment.endMs,
-                gainDb: payload.leftSegment.gainDb,
-                fadeInMs: payload.leftSegment.fadeInMs,
-                fadeOutMs: payload.leftSegment.fadeOutMs,
-                isMuted: payload.leftSegment.isMuted,
-                position: payload.leftSegment.position,
-                isImplicit: false,
-                crossfadeInMs: payload.leftSegment.crossfadeInMs ?? null,
-                crossfadeOutMs: payload.leftSegment.crossfadeOutMs ?? null,
-                crossfadeCurve: payload.leftSegment.crossfadeCurve ?? null,
-              };
-              const rightSegment: TrackTimelineSegment = {
-                id: payload.rightSegment.id,
-                trackVersionId: payload.trackVersionId,
-                startMs: payload.rightSegment.startMs,
-                endMs: payload.rightSegment.endMs,
-                timelineStartMs:
-                  payload.rightSegment.timelineStartMs ?? track.startOffsetMs + payload.rightSegment.startMs,
-                timelineEndMs:
-                  payload.rightSegment.timelineEndMs ?? track.startOffsetMs + payload.rightSegment.endMs,
-                durationMs: payload.rightSegment.endMs - payload.rightSegment.startMs,
-                sourceStartMs: payload.rightSegment.startMs,
-                sourceEndMs: payload.rightSegment.endMs,
-                gainDb: payload.rightSegment.gainDb,
-                fadeInMs: payload.rightSegment.fadeInMs,
-                fadeOutMs: payload.rightSegment.fadeOutMs,
-                isMuted: payload.rightSegment.isMuted,
-                position: payload.rightSegment.position,
-                isImplicit: false,
-                crossfadeInMs: payload.rightSegment.crossfadeInMs ?? null,
-                crossfadeOutMs: payload.rightSegment.crossfadeOutMs ?? null,
-                crossfadeCurve: payload.rightSegment.crossfadeCurve ?? null,
-              };
-              return applySegmentSplit([track], payload.trackVersionId, leftSegment, rightSegment, payload.sourceSegmentId)[0] ?? track;
-            }),
+            tracks: applySegmentSplit(
+              version.tracks,
+              payload.trackVersionId,
+              payload.leftSegment,
+              payload.rightSegment,
+              payload.sourceSegmentId ?? null,
+            ),
           })),
         },
         operation,
@@ -1592,23 +1249,4 @@ export function applyAcceptedProjectOperations(
   operations: AcceptedDawProjectOperation[],
 ) {
   return operations.reduce((next, operation) => applyAcceptedProjectOperation(next, operation), state);
-}
-
-export function applySegmentSplit(
-  tracks: DawTrack[],
-  trackVersionId: string,
-  leftSegment: TrackTimelineSegment,
-  rightSegment: TrackTimelineSegment,
-  sourceSegmentId: string | null,
-) {
-  return tracks.map((track) => {
-    if (track.trackVersionId !== trackVersionId) return track;
-    return updateSegments(track, (segments) =>
-      segments
-        .filter((segment) => segment.id !== sourceSegmentId)
-        .filter((segment) => segment.id !== leftSegment.id && segment.id !== rightSegment.id)
-        .concat([leftSegment, rightSegment])
-        .sort((left, right) => left.position - right.position),
-    );
-  });
 }

@@ -14,6 +14,7 @@ import {
   applyAcceptedProjectOperations,
   createLocalProjectStateFromBootstrap,
 } from '@/app/lib/daw/state/operation-reducer';
+import { rebaseTimelineEditRequest } from '@/app/lib/daw/state/timeline-edit-rebase';
 import {
   createLocalOperationQueue,
   type LocalOperationQueueEntry,
@@ -251,6 +252,24 @@ function toReplayableAcceptedOperationRecord(
 function shouldReplayQueuedOperationEntry(entry: LocalOperationQueueEntry) {
   // SEGMENT_SPLIT requests are queued in request shape and must wait for the server's accepted payload.
   return isReplayableQueuedOperationStatus(entry.status) && entry.operationType !== 'SEGMENT_SPLIT';
+}
+
+function queueEntryToRebaseableRequest(
+  entry: LocalOperationQueueEntry,
+  demoId: string,
+): DawOperationCommitRequest & { clientOperationId: string } {
+  return {
+    demoId,
+    operationType: entry.operationType,
+    payload: entry.payload as DawOperationCommitRequest['payload'],
+    baseSnapshotId: entry.baseSnapshotId,
+    baseOperationSeq: entry.baseOperationSeq,
+    targetTrackId: entry.targetTrackId,
+    targetSegmentId: entry.targetSegmentId,
+    affectedTimeRange: entry.affectedTimeRange,
+    idempotencyKey: entry.idempotencyKey,
+    clientOperationId: entry.clientOperationId,
+  };
 }
 
 function toPersistedPendingStatus(status: LocalOperationQueueEntry['status']) {
@@ -706,7 +725,31 @@ export class ProjectSyncEngine {
     let nextProjectState = this.state.projectState;
 
     for (const [index, entry] of optimisticReplayEntries.entries()) {
-      const replayOperation = toReplayableAcceptedOperationRecord(entry, this.projectId, this.demoId, baseOperationSeq + index + 1);
+      const rebasedRequest = rebaseTimelineEditRequest(
+        nextProjectState,
+        queueEntryToRebaseableRequest(entry, this.demoId),
+      );
+      if (!rebasedRequest) {
+        continue;
+      }
+
+      const replayOperation = toReplayableAcceptedOperationRecord(
+        {
+          ...entry,
+          operationType: rebasedRequest.operationType,
+          payload: rebasedRequest.payload,
+          baseSnapshotId: rebasedRequest.baseSnapshotId ?? entry.baseSnapshotId,
+          baseOperationSeq: rebasedRequest.baseOperationSeq ?? entry.baseOperationSeq,
+          targetTrackId: rebasedRequest.targetTrackId ?? entry.targetTrackId,
+          targetSegmentId: rebasedRequest.targetSegmentId ?? entry.targetSegmentId,
+          affectedTimeRange: rebasedRequest.affectedTimeRange ?? entry.affectedTimeRange,
+          idempotencyKey: rebasedRequest.idempotencyKey ?? entry.idempotencyKey,
+          clientOperationId: rebasedRequest.clientOperationId,
+        },
+        this.projectId,
+        this.demoId,
+        baseOperationSeq + index + 1,
+      );
       nextProjectState = applyAcceptedProjectOperationWithoutHistory(nextProjectState, replayOperation);
     }
 

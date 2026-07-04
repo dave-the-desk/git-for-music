@@ -988,6 +988,93 @@ test('SEGMENT_MOVED across tracks rehomes the segment without changing its sourc
   assert.equal(appliedTwice.operationHistory.length, 1);
 });
 
+test('independent concurrent timeline edits converge to the same reducer state in either order', () => {
+  const root = makeVersion('version-root', {
+    isCurrent: true,
+    tracks: [
+      makeTrack('track-version-a', {
+        trackId: 'track-a',
+        trackName: 'Track A',
+        segments: [
+          {
+            id: 'segment-a',
+            trackVersionId: 'track-version-a',
+            sourceStartMs: 100,
+            sourceEndMs: 900,
+            timelineStartMs: 1200,
+            timelineEndMs: 2000,
+            durationMs: 800,
+            startMs: 100,
+            endMs: 900,
+            gainDb: 0,
+            fadeInMs: 0,
+            fadeOutMs: 0,
+            isMuted: false,
+            position: 0,
+            isImplicit: false,
+          },
+          {
+            id: 'segment-b',
+            trackVersionId: 'track-version-a',
+            sourceStartMs: 900,
+            sourceEndMs: 1500,
+            timelineStartMs: 2100,
+            timelineEndMs: 2700,
+            durationMs: 600,
+            startMs: 900,
+            endMs: 1500,
+            gainDb: 0,
+            fadeInMs: 0,
+            fadeOutMs: 0,
+            isMuted: false,
+            position: 1,
+            isImplicit: false,
+          },
+        ],
+      }),
+      makeTrack('track-version-b', {
+        trackId: 'track-b',
+        trackName: 'Track B',
+        segments: [],
+      }),
+    ],
+  });
+  const initial = createLocalProjectStateFromBootstrap(makeBootstrap([root], root.id));
+  const move = makeOperation('SEGMENT_MOVED', 2, {
+    segmentId: 'segment-a',
+    fromTrackVersionId: 'track-version-a',
+    toTrackVersionId: 'track-version-b',
+    fromTimelineStartMs: 1200,
+    fromTimelineEndMs: 2000,
+    toTimelineStartMs: 3500,
+    toTimelineEndMs: 4300,
+  });
+  const trim = makeOperation('SEGMENT_TRIMMED', 3, {
+    trackVersionId: 'track-version-a',
+    segmentId: 'segment-b',
+    from: { startMs: 900, endMs: 1500 },
+    to: { startMs: 1000, endMs: 1400 },
+  });
+
+  const moveThenTrim = applyAcceptedProjectOperation(applyAcceptedProjectOperation(initial, move), trim);
+  const trimThenMove = applyAcceptedProjectOperation(applyAcceptedProjectOperation(initial, trim), move);
+
+  assert.deepEqual(
+    {
+      versions: moveThenTrim.versions,
+      currentVersionId: moveThenTrim.currentVersionId,
+      activeVersionId: moveThenTrim.activeVersionId,
+      isFollowingHead: moveThenTrim.isFollowingHead,
+    },
+    {
+      versions: trimThenMove.versions,
+      currentVersionId: trimThenMove.currentVersionId,
+      activeVersionId: trimThenMove.activeVersionId,
+      isFollowingHead: trimThenMove.isFollowingHead,
+    },
+  );
+});
+
 test('SEGMENT_MOVED optimistic replay and accepted operation do not duplicate the clip', () => {
   const root = makeVersion('version-root', {
     isCurrent: true,
@@ -1272,6 +1359,9 @@ test('SEGMENT_MERGED replays by removing the source clips and inserting the merg
     sourceEndMs: 2000,
     durationMs: 2000,
     isImplicit: false,
+    crossfadeInMs: null,
+    crossfadeOutMs: null,
+    crossfadeCurve: null,
   });
   assert.equal(applied.operationHistory.length, 1);
   assert.equal(applied.operationHistory[0]?.summary, 'Merged clips on Track 1');
@@ -1356,6 +1446,9 @@ test('SEGMENT_MERGED stays idempotent when the same merge is replayed twice', ()
     sourceEndMs: 2000,
     durationMs: 2000,
     isImplicit: false,
+    crossfadeInMs: null,
+    crossfadeOutMs: null,
+    crossfadeCurve: null,
   });
   assert.equal(appliedTwice.operationHistory.length, 1);
 });

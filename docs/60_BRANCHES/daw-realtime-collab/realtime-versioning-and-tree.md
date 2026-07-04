@@ -7,6 +7,13 @@ version saving, revert, and branches that exist concurrently with `main`) while
 moving the DAW toward real-time collaborative editing, and for visually
 representing versions and branches in the **Tree** tab of the DAW page.
 
+The implementation has now landed through phases A-E of the branch checklist:
+version nodes carry provenance and operation ordering, accepted operations can
+auto-checkpoint the converged head, revert creates a new version node, the Tree
+tab renders a commit-graph layout from live state, and safe concurrent timeline
+edits replay through transform/rebase logic before the server falls back to a
+branching conflict.
+
 It extends, and does not replace, the existing plans:
 
 - [processing-jobs](../../processing-jobs.md)

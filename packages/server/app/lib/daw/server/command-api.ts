@@ -37,6 +37,8 @@ import {
 } from '@/app/lib/daw/server/realtime-gateway';
 import { createDemoVersionWithCopiedTracks } from '@/app/lib/daw/server/versions';
 import { createAutoDemoVersion, serializeCreatedDemoVersionTreeNode } from '@/app/lib/daw/server/versioning';
+import { rebaseTimelineEditRequest } from '@/app/lib/daw/state/timeline-edit-rebase';
+import type { LocalProjectState } from '@/app/lib/daw/state/local-project-state';
 import type {
   DawOperationCommitRequest,
   DawOperationLogPayload,
@@ -2500,13 +2502,26 @@ export async function commitDawProjectOperation(
   try {
     result = await client.$transaction(async (tx) => {
       let effectiveRequest = request;
+      let requestWasRebased = false;
       let branchedFromHistoricalBase = false;
       const baseSnapshotId = request.baseSnapshotId ?? null;
       const shouldCreateBranchForRequest = shouldCreatePerEditBranchForOperation(
         effectiveRequest.operationType,
       );
+      const projectState = (await loadSnapshotStateForDemo(tx, {
+        projectId: workspace.project.id,
+        demoId: workspace.demo.id,
+      })) as LocalProjectState;
+      const rebasedRequest = isTimelineEditOperation(request.operationType)
+        ? rebaseTimelineEditRequest(projectState, request)
+        : request;
+      if (rebasedRequest) {
+        effectiveRequest = rebasedRequest;
+        requestWasRebased = true;
+      }
 
       if (
+        !requestWasRebased &&
         shouldCreateBranchForRequest &&
         baseSnapshotId &&
         shouldBranchFromHistoricalBase({ baseSnapshotId, latestSnapshotId })
@@ -2548,7 +2563,7 @@ export async function commitDawProjectOperation(
         }
       }
 
-      if (!branchedFromHistoricalBase) {
+      if (!branchedFromHistoricalBase && !requestWasRebased) {
         const conflict = await analyzeDawOperationConflict(tx, workspace, effectiveRequest);
         if (conflict) {
           let branchVersion:
@@ -2604,7 +2619,7 @@ export async function commitDawProjectOperation(
         }
       }
 
-      if (shouldCreateBranchForRequest && isTimelineEditOperation(effectiveRequest.operationType)) {
+      if (!requestWasRebased && shouldCreateBranchForRequest && isTimelineEditOperation(effectiveRequest.operationType)) {
         if (!checkoutVersionId) {
           throw new Error('No active version available to branch from');
         }

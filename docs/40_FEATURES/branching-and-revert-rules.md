@@ -8,6 +8,8 @@ The version model is a graph, not a linear undo stack.
 - Revert is not destructive.
 - Revert creates a new version based on a previous version.
 - The reverted state should still be represented in history.
+- In the current implementation, revert is committed as a new accepted version
+  node so history keeps the old state and the new head.
 
 ## Branching
 
@@ -16,6 +18,9 @@ The version model is a graph, not a linear undo stack.
 - Branches should be visible in version history and comparison views.
 - Ordinary accepted edits should checkpoint the current head after commit
   instead of forking a new realtime edit branch for every mutation.
+- Safe concurrent timeline edits should rebase and converge on the same branch
+  head; branch/409 fallback is reserved for overlap the transform layer cannot
+  preserve.
 - Use a separate explicit branch flow when the user intentionally asks to fork,
   or when legacy behavior is required behind a rollout flag.
 
