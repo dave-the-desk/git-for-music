@@ -41,14 +41,14 @@ export type AudioAssetKind = 'ORIGINAL' | 'DERIVED' | 'PEAKS' | 'ANALYSIS';
 
 export interface TempoAnalysisJobPayload {
   demoId: string;
-  demoVersionId?: string;
+  demoVersionId: string;
   trackVersionId: string;
   updateDemoTiming?: boolean;
 }
 
 export interface KeyAnalysisJobPayload {
   demoId: string;
-  demoVersionId?: string;
+  demoVersionId: string;
   trackVersionId: string;
   updateDemoTiming?: boolean;
 }

@@ -132,9 +132,9 @@ Goal: make version/branch/revert changes first-class realtime signals.
 
 Goal: keep heavy/derived work out of realtime and version metadata.
 
-- [ ] Confirm version checkpointing is app/server metadata, NOT a processing job (see `docs/processing-jobs.md`).
-- [ ] Ensure derived audio jobs remain keyed by `demoVersionId` / `trackVersionId` so each version node can reference derived outputs without entering realtime.
-- [ ] Confirm original audio stays immutable; versions/branches add pointers only (verify `cloneTrackVersionsToDemoVersion` copies keys, not blobs).
+- [x] Confirm version checkpointing is app/server metadata, NOT a processing job (see `docs/processing-jobs.md`).
+- [x] Ensure derived audio jobs remain keyed by `demoVersionId` / `trackVersionId` so each version node can reference derived outputs without entering realtime.
+- [x] Confirm original audio stays immutable; versions/branches add pointers only (verify `cloneTrackVersionsToDemoVersion` copies keys, not blobs).
 
 ---
 

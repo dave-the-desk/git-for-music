@@ -8,6 +8,10 @@ import type {
 import { enqueueProcessingJob } from '@/app/lib/daw/server/jobs';
 
 const QUEUABLE_JOB_TYPES = new Set<ProcessingJobType>([
+  'WAVEFORM',
+  'TRANSCODE',
+  'NORMALIZE',
+  'STEM_SPLIT',
   'TEMPO_ANALYSIS',
   'KEY_ANALYSIS',
   'TIME_STRETCH_TO_PROJECT',
@@ -56,15 +60,31 @@ export async function createProcessingJobCommand(input: {
 
   const payload = input.payload ?? undefined;
 
-  if (
-    (input.type === 'TIME_STRETCH_TO_PROJECT' || input.type === 'PROJECT_RETEMPO_FROM_TRACK') &&
-    (!payload ||
-      typeof payload !== 'object' ||
-      !('demoVersionId' in payload) ||
-      typeof (payload as { demoVersionId?: unknown }).demoVersionId !== 'string')
-  ) {
+  if (payload) {
+    const versionedPayload = payload as { demoVersionId?: unknown; trackVersionId?: unknown };
+    const demoVersionId = versionedPayload.demoVersionId;
+    const trackVersionId = versionedPayload.trackVersionId;
+    if (
+      typeof demoVersionId !== 'string' ||
+      demoVersionId.trim().length === 0 ||
+      typeof trackVersionId !== 'string' ||
+      trackVersionId.trim().length === 0
+    ) {
+      return NextResponse.json<ApiError>(
+        { error: 'demoVersionId and trackVersionId are required for this job type' },
+        { status: 400 },
+      );
+    }
+
+    if (trackVersionId !== input.trackVersionId) {
+      return NextResponse.json<ApiError>(
+        { error: 'trackVersionId must match the requested track version' },
+        { status: 400 },
+      );
+    }
+  } else {
     return NextResponse.json<ApiError>(
-      { error: 'demoVersionId is required for this job type' },
+      { error: 'payload is required for this job type' },
       { status: 400 },
     );
   }
