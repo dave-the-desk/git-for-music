@@ -82,7 +82,7 @@ describe('VersionHistoryTree revert action', () => {
         projectId: 'project-1',
         demoId: 'demo-1',
         baseOperationSeq: 3,
-        versions: [root, branchHead, revert],
+        liveVersions: [root, branchHead, revert],
         operationHistory: [makeHistoryEntry({ versionId: root.id, currentVersionId: root.id })],
         currentVersionId: branchHead.id,
         activeVersionId: branchHead.id,

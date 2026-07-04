@@ -54,3 +54,31 @@ test('buildTree keeps branch nodes under the correct parent and sorts siblings b
   assert.equal(tree[0]?.children[0]?.version.id, firstChild.id);
   assert.equal(tree[0]?.children[1]?.version.id, secondChild.id);
 });
+
+test('buildTree keeps future merge children attached to each parent id', () => {
+  const rootA = makeVersion('version-root-a', {
+    createdAt: '2025-01-01T00:00:00.000Z',
+    operationSeq: 1,
+  });
+  const rootB = makeVersion('version-root-b', {
+    createdAt: '2025-01-01T00:00:00.000Z',
+    operationSeq: 2,
+  });
+  const mergeChild = {
+    ...makeVersion('version-merge', {
+      parentId: rootA.id,
+      parentVersionId: rootA.id,
+      createdAt: '2025-01-03T00:00:00.000Z',
+      operationSeq: 4,
+    }),
+    parentIds: [rootA.id, rootB.id],
+  } as DawVersion & { parentIds: string[] };
+
+  const tree = buildTree([mergeChild, rootB, rootA]);
+
+  assert.equal(tree.length, 2);
+  assert.equal(tree[0]?.version.id, rootA.id);
+  assert.equal(tree[1]?.version.id, rootB.id);
+  assert.equal(tree[0]?.children[0]?.version.id, mergeChild.id);
+  assert.equal(tree[1]?.children[0]?.version.id, mergeChild.id);
+});

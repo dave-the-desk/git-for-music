@@ -95,25 +95,18 @@ preserved.
 Goal: render the version DAG as a real commit graph with topological rows and
 column-assigned branches/merges, colored per branch.
 
-- [ ] Rework `src/app/pages/groups/demo/components/daw/version-tree-layout.ts`:
-  - [ ] Build a `childrenMap` from `parentId` (extend `buildTree`); support
-        multiple parents for future merges.
-  - [ ] Rows = topological order (reuse `compareVersions`: `createdAt`,
-        `operationSeq`, `id`); row index -> y.
-  - [ ] Columns via a head->root pass: branch head -> new column; branch
-        children -> leftmost child column; merge-only children -> first free
-        column to the right so merge edges point right-to-left.
-  - [ ] Assign a stable per-branch/column color.
-- [ ] Update `VersionHistoryTree.tsx` to consume the new layout:
-  - [ ] Draw dots + parent->child edges from the new node/column positions.
-  - [ ] Keep existing badges (branch head, my active version, selected,
-        following/pinned) and the per-version history lane.
-  - [ ] Add "Revert to this version" (Phase C) and keep branch-from-point.
-  - [ ] Preserve pan/scroll and expand/minimize.
-- [ ] Ensure the tree renders from live `LocalProjectState.versions`, never
-      stale props (design rule in `docs/architecture/daw-realtime-sync.md`).
-- [ ] Tests: column assignment for a chain, a fork (two branch children), and a
-      merge (merge child) matches expected columns; layout is deterministic.
+- [x] Rework `src/app/pages/groups/demo/components/daw/version-tree-layout.ts`:
+  - [x] Build a `childrenMap` from `parentId` (extend `buildTree`); support multiple parents for future merges.
+  - [x] Rows = topological order (reuse `compareVersions`: `createdAt`, `operationSeq`, `id`); row index -> y.
+  - [x] Columns via a head->root pass: branch head -> new column; branch children -> leftmost child column; merge-only children -> first free column to the right so merge edges point right-to-left.
+  - [x] Assign a stable per-branch/column color.
+- [x] Update `VersionHistoryTree.tsx` to consume the new layout:
+  - [x] Draw dots + parent->child edges from the new node/column positions.
+  - [x] Keep existing badges (branch head, my active version, selected, following/pinned) and the per-version history lane.
+  - [x] Add "Revert to this version" (Phase C) and keep branch-from-point.
+  - [x] Preserve pan/scroll and expand/minimize.
+- [x] Ensure the tree renders from live `LocalProjectState.versions`, never stale props (design rule in `docs/architecture/daw-realtime-sync.md`).
+- [x] Tests: column assignment for a chain, a fork (two branch children), and a merge (merge child) matches expected columns; layout is deterministic.
 
 ## Phase E - OT Convergence (from realtime plan)
 

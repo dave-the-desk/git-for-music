@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import type { DawVersion, ProjectOperationHistoryEntry } from '@/app/lib/daw/state/local-project-state';
-import { buildTree, type TreeNode } from './version-tree-layout';
+import { buildGraphEdgePath, buildGraphLayout, type GraphColor } from './version-tree-layout';
 import {
   buildVersionsById,
   getVersionDisplayLabel,
@@ -20,6 +20,29 @@ function formatDate(iso: string) {
     hour: 'numeric',
     minute: '2-digit',
   });
+}
+
+function getNodeStyle(color: GraphColor, isSelected: boolean, isActive: boolean, isCurrent: boolean) {
+  const borderColor = isSelected
+    ? 'rgb(251 191 36)'
+    : isActive
+      ? 'rgb(52 211 153)'
+      : isCurrent
+        ? 'rgb(34 211 238)'
+        : color.border;
+  const shadowColor = isSelected
+    ? 'rgba(251,191,36,0.16)'
+    : isActive
+      ? 'rgba(52,211,153,0.14)'
+      : isCurrent
+        ? 'rgba(34,211,238,0.14)'
+        : color.glow;
+
+  return {
+    borderColor,
+    backgroundColor: color.fill,
+    boxShadow: `0 0 0 1px ${shadowColor}, 0 12px 24px rgba(0,0,0,0.26)`,
+  };
 }
 
 type RenameState = {
@@ -44,174 +67,11 @@ type RevertState = {
   error: string | null;
 };
 
-type GraphNode = {
-  id: string;
-  version: DawVersion;
-  row: number;
-  depth: number;
-  left: number;
-  top: number;
-  parentId: string | null;
-};
-
-type GraphEdge = {
-  fromId: string;
-  toId: string;
-};
-
-type GraphLayout = {
-  nodes: GraphNode[];
-  edges: GraphEdge[];
-  nodeWidth: number;
-  nodeHeight: number;
-  width: number;
-  height: number;
-  scale: number;
-  labelFontSize: number;
-  metaFontSize: number;
-  summaryFontSize: number;
-  lineHeight: number;
-};
-
-const TREE_SCALE = 0.66;
-
-function clamp(value: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, value));
-}
-
-function estimateTextWidth(text: string, fontSize: number) {
-  return text.length * fontSize * 0.6;
-}
-
-function getRequiredNodeDiameter(
-  label: string,
-  summary: string,
-  baseDiameter: number,
-  labelFontSize: number,
-  metaFontSize: number,
-  summaryFontSize: number,
-) {
-  const labelWidth = estimateTextWidth(label, labelFontSize);
-  const summaryWidth = estimateTextWidth(summary, summaryFontSize);
-  const textWidth = Math.max(labelWidth, summaryWidth);
-  const horizontalPadding = Math.max(18, Math.round(baseDiameter * 0.18));
-  const bodyWidth = textWidth + horizontalPadding * 2;
-
-  const labelLines = Math.max(1, Math.ceil(label.length / 16));
-  const summaryLines = summary ? Math.max(1, Math.ceil(summary.length / 26)) : 0;
-  const textHeight =
-    horizontalPadding * 2 +
-    labelLines * labelFontSize * 1.2 +
-    metaFontSize * 1.2 +
-    summaryLines * summaryFontSize * 1.15 +
-    14;
-
-  const widthBasedDiameter = Math.max(baseDiameter, bodyWidth);
-  const heightBasedDiameter = Math.max(baseDiameter, textHeight);
-  return Math.ceil(Math.max(widthBasedDiameter, heightBasedDiameter));
-}
-
-function buildGraphLayout(roots: TreeNode[]): GraphLayout {
-  const nodesById = new Map<string, GraphNode>();
-  const edges: GraphEdge[] = [];
-  const flattenedVersions: DawVersion[] = [];
-  let nextRow = 0;
-  let maxDepth = 0;
-
-  function placeNode(node: TreeNode, depth: number, row: number, parentId: string | null) {
-    flattenedVersions.push(node.version);
-    const graphNode: GraphNode = {
-      id: node.version.id,
-      version: node.version,
-      row,
-      depth,
-      left: 0,
-      top: 0,
-      parentId,
-    };
-    nodesById.set(graphNode.id, graphNode);
-    maxDepth = Math.max(maxDepth, depth);
-
-    if (parentId) {
-      edges.push({ fromId: parentId, toId: graphNode.id });
-    }
-
-    node.children.forEach((child, index) => {
-      const childRow = index === 0 ? row : nextRow++;
-      placeNode(child, depth + 1, childRow, graphNode.id);
-    });
-  }
-
-  roots.forEach((root) => {
-    const row = nextRow++;
-    placeNode(root, 0, row, null);
-  });
-
-  const rowCount = Math.max(1, nextRow);
-  const density = clamp(
-    1 - Math.max(0, rowCount - 4) * 0.1 - Math.max(0, maxDepth - 4) * 0.04,
-    0.62,
-    1,
-  );
-  const scale = TREE_SCALE * density;
-  const baseNodeSize = Math.round(136 * scale);
-  const labelFontSize = Math.round(13 * scale);
-  const metaFontSize = Math.round(10.5 * scale);
-  const summaryFontSize = Math.round(10 * scale);
-  const lineHeight = Number((1.15 + scale * 0.05).toFixed(2));
-  const versionsById = new Map(flattenedVersions.map((version) => [version.id, version]));
-  const maxLabel = flattenedVersions.reduce((longest, version) => {
-    const label = getVersionDisplayLabel(version, versionsById);
-    return label.length > longest.length ? label : longest;
-  }, '');
-  const maxSummary = flattenedVersions.reduce((longest, version) => {
-    const summary = getVersionOperationSummary(version, versionsById);
-    const displaySummary = summary === 'Initial version' ? '' : summary;
-    return displaySummary.length > longest.length ? displaySummary : longest;
-  }, '');
-  const requiredDiameter = getRequiredNodeDiameter(
-    maxLabel || 'Version',
-    maxSummary,
-    baseNodeSize,
-    labelFontSize,
-    metaFontSize,
-    summaryFontSize,
-  );
-  const nodeWidth = Math.max(baseNodeSize, requiredDiameter);
-  const nodeHeight = nodeWidth;
-  const xGap = Math.max(Math.round(176 * scale), Math.round(nodeWidth * 1.32));
-  const yGap = Math.max(Math.round(126 * scale), Math.round(nodeHeight * 1.08));
-  const paddingX = Math.max(Math.round(22 * scale), Math.round(nodeWidth * 0.18));
-  const paddingY = Math.max(Math.round(18 * scale), Math.round(nodeHeight * 0.16));
-  const nodes = Array.from(nodesById.values());
-  for (const node of nodes) {
-    node.left = paddingX + node.depth * xGap;
-    node.top = paddingY + node.row * yGap;
-  }
-
-  const width = paddingX * 2 + (maxDepth + 1) * xGap + nodeWidth;
-  const height = paddingY * 2 + rowCount * yGap + nodeHeight;
-
-  return {
-    nodes,
-    edges,
-    nodeWidth,
-    nodeHeight,
-    width,
-    height,
-    scale,
-    labelFontSize,
-    metaFontSize,
-    summaryFontSize,
-    lineHeight,
-  };
-}
-
 export type VersionHistoryTreeProps = {
   projectId: string;
   demoId: string;
   baseOperationSeq: number;
-  versions: DawVersion[];
+  liveVersions: DawVersion[];
   operationHistory: ProjectOperationHistoryEntry[];
   currentVersionId: string;
   activeVersionId: string;
@@ -230,7 +90,7 @@ export function VersionHistoryTree({
   projectId,
   demoId,
   baseOperationSeq,
-  versions,
+  liveVersions,
   operationHistory,
   currentVersionId,
   activeVersionId,
@@ -257,7 +117,7 @@ export function VersionHistoryTree({
     }
   }, [isHistoryViewActive]);
 
-  const roots = useMemo(() => buildTree(versions), [versions]);
+  const versions = liveVersions;
   const versionsById = useMemo(() => buildVersionsById(versions), [versions]);
   const currentVersion = useMemo(
     () => versions.find((v) => v.id === currentVersionId),
@@ -400,7 +260,7 @@ export function VersionHistoryTree({
     setRenameState({ versionId, value: label, saving: false, error: null });
   }
 
-  const layout = useMemo(() => buildGraphLayout(roots), [roots]);
+  const layout = useMemo(() => buildGraphLayout(versions), [versions]);
   const nodeById = useMemo(() => new Map(layout.nodes.map((node) => [node.id, node])), [layout.nodes]);
   const selectedTreeNode =
     nodeById.get(selectedVersionId) ?? nodeById.get(currentVersionId) ?? nodeById.get(activeVersionId) ?? null;
@@ -449,7 +309,7 @@ export function VersionHistoryTree({
             </button>
           </div>
           <p className="mt-1 max-w-2xl text-xs text-slate-400">
-            Versions run left to right, branches drop to lower rows, and the canvas scrolls when it gets wide.
+            Versions render in topological rows with branch-colored columns, and the canvas scrolls when it gets wide.
           </p>
         </div>
       </div>
@@ -605,20 +465,15 @@ export function VersionHistoryTree({
                   const from = nodeById.get(edge.fromId);
                   const to = nodeById.get(edge.toId);
                   if (!from || !to) return null;
-                  const x1 = from.left + layout.nodeWidth - 2;
-                  const y1 = from.top + layout.nodeHeight / 2;
-                  const x2 = to.left + 2;
-                  const y2 = to.top + layout.nodeHeight / 2;
                   return (
-                    <line
+                    <path
                       key={`${edge.fromId}-${edge.toId}`}
-                      x1={x1}
-                      y1={y1}
-                      x2={x2}
-                      y2={y2}
-                      stroke="rgba(148,163,184,0.55)"
+                      d={buildGraphEdgePath(from, to, layout.nodeWidth, layout.nodeHeight)}
+                      stroke={edge.color}
                       strokeWidth="2.5"
                       strokeLinecap="round"
+                      strokeLinejoin="round"
+                      fill="none"
                     />
                   );
                 })}
@@ -692,9 +547,19 @@ export function VersionHistoryTree({
                       top: node.top,
                       width: layout.nodeWidth,
                       height: layout.nodeHeight,
+                      ...getNodeStyle(node.color, isSelected, isActive, isCurrent),
                     }}
                   >
                     <div className="relative flex h-full flex-col items-center justify-center px-3 py-3 text-center">
+                      <div
+                        className="absolute left-1/2 top-2.5 h-3 w-3 -translate-x-1/2 rounded-full border"
+                        style={{
+                          backgroundColor: node.color.base,
+                          borderColor: node.color.border,
+                          boxShadow: `0 0 0 4px ${node.color.glow}`,
+                        }}
+                        aria-hidden
+                      />
                       {isRenaming ? (
                         <div
                           className="flex h-full w-full flex-col justify-center"

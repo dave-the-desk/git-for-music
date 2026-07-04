@@ -3502,9 +3502,9 @@ export function DemoDawClient({
                     projectId={projectId}
                     demoId={demoId}
                     baseOperationSeq={displayProjectState?.lastVersionOperationSeq ?? projectSyncState.lastSyncedOperationSeq}
-                    versions={displayVersions}
-                    operationHistory={displayProjectState?.operationHistory ?? []}
-                    currentVersionId={displayBranchHeadVersionId}
+                    liveVersions={liveVersions}
+                    operationHistory={liveProjectState?.operationHistory ?? []}
+                    currentVersionId={liveBranchHeadVersionId}
                     activeVersionId={liveActiveVersionId}
                     selectedVersionId={selectedVersionId}
                     selectedHistoryOperationSeq={historyOperationSeq}
