@@ -12,6 +12,12 @@ type DawRealtimeBaseEvent = {
   createdAt: string;
 };
 
+export type DawRealtimeVersionTreeChangeReason =
+  | 'version_created'
+  | 'branch_created'
+  | 'head_moved'
+  | 'reverted';
+
 export type DawRealtimeAcceptedOperationEvent = DawRealtimeBaseEvent &
   DawRealtimeAcceptedOperationPayload & {
   type: 'accepted_operation';
@@ -59,6 +65,7 @@ export type DawRealtimeCommentActivityEvent = DawRealtimeBaseEvent & {
 export type DawRealtimeVersionTreeEvent = DawRealtimeBaseEvent & {
   type: 'version_tree_changed';
   actorUserId: string;
+  reason?: DawRealtimeVersionTreeChangeReason;
 };
 
 export type DawRealtimeVersionCreatedEvent = DawRealtimeBaseEvent & {
@@ -67,6 +74,33 @@ export type DawRealtimeVersionCreatedEvent = DawRealtimeBaseEvent & {
   versionId: string;
   parentVersionId: string | null;
   kind: 'AUTO' | 'SEMANTIC' | 'EXPLICIT' | 'REVERT' | 'BRANCH' | 'MERGE';
+  operationSeq: number | null;
+};
+
+export type DawRealtimeBranchCreatedEvent = DawRealtimeBaseEvent & {
+  type: 'branch_created';
+  actorUserId: string;
+  versionId: string;
+  parentVersionId: string | null;
+  branchMode: 'continue' | 'fork';
+  operationSeq: number | null;
+};
+
+export type DawRealtimeHeadMovedEvent = DawRealtimeBaseEvent & {
+  type: 'head_moved';
+  actorUserId: string;
+  previousVersionId: string | null;
+  currentVersionId: string;
+  isFollowingHead: boolean;
+};
+
+export type DawRealtimeRevertedEvent = DawRealtimeBaseEvent & {
+  type: 'reverted';
+  actorUserId: string;
+  versionId: string;
+  parentVersionId: string | null;
+  revertedFromVersionId: string;
+  revertedToOperationId: string | null;
   operationSeq: number | null;
 };
 
@@ -84,6 +118,9 @@ export type DawRealtimeEvent =
   | DawRealtimeCommentActivityEvent
   | DawRealtimeVersionTreeEvent
   | DawRealtimeVersionCreatedEvent
+  | DawRealtimeBranchCreatedEvent
+  | DawRealtimeHeadMovedEvent
+  | DawRealtimeRevertedEvent
   | DawRealtimeProjectRebootstrapRequiredEvent;
 
 export type DawRealtimeEventType = DawRealtimeEvent['type'];
@@ -295,11 +332,13 @@ export function emitDawVersionTreeChanged(input: {
   projectId: string;
   demoId: string;
   actorUserId: string;
+  reason?: DawRealtimeVersionTreeChangeReason;
 }) {
   dispatchEvent({
     ...createEventBase(input),
     type: 'version_tree_changed',
     actorUserId: input.actorUserId,
+    reason: input.reason,
   });
 }
 
@@ -319,6 +358,66 @@ export function emitDawVersionCreated(input: {
     versionId: input.versionId,
     parentVersionId: input.parentVersionId,
     kind: input.kind,
+    operationSeq: input.operationSeq,
+  });
+}
+
+export function emitDawBranchCreated(input: {
+  projectId: string;
+  demoId: string;
+  actorUserId: string;
+  versionId: string;
+  parentVersionId: string | null;
+  branchMode: DawRealtimeBranchCreatedEvent['branchMode'];
+  operationSeq: number | null;
+}) {
+  dispatchEvent({
+    ...createEventBase(input),
+    type: 'branch_created',
+    actorUserId: input.actorUserId,
+    versionId: input.versionId,
+    parentVersionId: input.parentVersionId,
+    branchMode: input.branchMode,
+    operationSeq: input.operationSeq,
+  });
+}
+
+export function emitDawHeadMoved(input: {
+  projectId: string;
+  demoId: string;
+  actorUserId: string;
+  previousVersionId: string | null;
+  currentVersionId: string;
+  isFollowingHead: boolean;
+}) {
+  dispatchEvent({
+    ...createEventBase(input),
+    type: 'head_moved',
+    actorUserId: input.actorUserId,
+    previousVersionId: input.previousVersionId,
+    currentVersionId: input.currentVersionId,
+    isFollowingHead: input.isFollowingHead,
+  });
+}
+
+export function emitDawReverted(input: {
+  projectId: string;
+  demoId: string;
+  actorUserId: string;
+  versionId: string;
+  parentVersionId: string | null;
+  revertedFromVersionId: string;
+  revertedToOperationId: string | null;
+  operationSeq: number | null;
+}) {
+  dispatchEvent({
+    ...createEventBase(input),
+    type: 'reverted',
+    actorUserId: input.actorUserId,
+    versionId: input.versionId,
+    parentVersionId: input.parentVersionId,
+    revertedFromVersionId: input.revertedFromVersionId,
+    revertedToOperationId: input.revertedToOperationId,
     operationSeq: input.operationSeq,
   });
 }

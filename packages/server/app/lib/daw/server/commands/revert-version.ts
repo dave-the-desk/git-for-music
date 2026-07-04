@@ -14,7 +14,7 @@ import {
 import { createDemoVersionWithCopiedTracks } from '@/app/lib/daw/server/versions';
 import {
   emitAcceptedDawOperation,
-  emitDawVersionTreeChanged,
+  emitDawReverted,
 } from '@/app/lib/daw/server/realtime-gateway';
 import { serializeCreatedDemoVersionTreeNode } from '@/app/lib/daw/server/versioning';
 
@@ -29,7 +29,7 @@ type RevertToVersionCommandDeps = {
   recordDemoDawOperation?: typeof recordDemoDawOperation;
   checkpointDemoDawSnapshot?: typeof checkpointDemoDawSnapshot;
   emitAcceptedDawOperation?: typeof emitAcceptedDawOperation;
-  emitDawVersionTreeChanged?: typeof emitDawVersionTreeChanged;
+  emitDawReverted?: typeof emitDawReverted;
 };
 
 function isAncestorVersion(
@@ -96,7 +96,7 @@ export async function revertToVersionCommand(
   const recordOperation = deps.recordDemoDawOperation ?? recordDemoDawOperation;
   const checkpointSnapshot = deps.checkpointDemoDawSnapshot ?? checkpointDemoDawSnapshot;
   const emitOperation = deps.emitAcceptedDawOperation ?? emitAcceptedDawOperation;
-  const emitVersionTreeChanged = deps.emitDawVersionTreeChanged ?? emitDawVersionTreeChanged;
+  const emitReverted = deps.emitDawReverted ?? emitDawReverted;
 
   const demo = await db.demo.findFirst({
     where: {
@@ -271,10 +271,15 @@ export async function revertToVersionCommand(
     });
   }
 
-  emitVersionTreeChanged({
+  emitReverted({
     projectId: demo.project.id,
     demoId: demo.id,
     actorUserId: input.userId,
+    versionId: createdVersion.id,
+    parentVersionId: createdVersion.parentId,
+    revertedFromVersionId: sourceVersion.id,
+    revertedToOperationId: recordedVersionCreatedOperation?.id ?? null,
+    operationSeq: recordedVersionCreatedOperation?.operationSeq ?? null,
   });
 
   const response: CreateVersionResponse = {

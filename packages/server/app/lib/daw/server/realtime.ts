@@ -1,10 +1,13 @@
 export {
   createProjectPresenceSeed,
   emitAcceptedDawOperation,
+  emitDawBranchCreated,
   emitDawAssetProcessingStatus,
   emitDawCommentActivity,
+  emitDawHeadMoved,
   emitDawProjectPresence,
   emitDawProjectRebootstrapRequired,
+  emitDawReverted,
   emitDawVersionCreated,
   emitDawVersionTreeChanged,
   emitDawProjectTransportState,

@@ -2741,6 +2741,276 @@ test('ProjectSyncEngine catch-up applies a version-tree change without changing 
   }
 });
 
+test('ProjectSyncEngine catch-up replays remote version_created, branch_created, and reverted operations without moving a pinned checkout', async () => {
+  const root = makeVersion('version-root', { isCurrent: true });
+  const initial = createLocalProjectStateFromBootstrap(makeBootstrap([root], root.id));
+  const engine = new ProjectSyncEngine();
+  const harness = engine as unknown as {
+    projectId: string | null;
+    demoId: string | null;
+    bootstrapResponse: DawProjectBootstrapResponse | null;
+    state: ReturnType<ProjectSyncEngine['getState']>;
+    refreshVersionTreeFromServer: () => Promise<void>;
+  };
+  harness.projectId = 'project-1';
+  harness.demoId = 'demo-1';
+  harness.bootstrapResponse = makeBootstrap([root], root.id);
+  harness.state = {
+    ...engine.getState(),
+    projectState: {
+      ...initial,
+      activeVersionId: root.id,
+      isFollowingHead: false,
+    },
+    lastSyncedOperationSeq: 1,
+  };
+
+  const created = makeVersion('version-created', {
+    label: 'Auto save',
+    name: 'Auto save',
+    branchName: 'Auto save',
+    parentId: root.id,
+    parentVersionId: root.id,
+    createdAt: '2025-01-02T00:00:00.000Z',
+    isCurrent: true,
+    operationSeq: 2,
+  });
+  const branch = makeVersion('version-branch', {
+    label: 'Branch label',
+    name: 'Branch label',
+    branchName: 'Branch label',
+    parentId: created.id,
+    parentVersionId: created.id,
+    createdAt: '2025-01-02T12:00:00.000Z',
+    isCurrent: true,
+    operationSeq: 3,
+  });
+  const reverted = makeVersion('version-reverted', {
+    label: 'Revert to root',
+    name: 'Revert to root',
+    branchName: 'Revert to root',
+    parentId: branch.id,
+    parentVersionId: branch.id,
+    createdAt: '2025-01-03T00:00:00.000Z',
+    isCurrent: true,
+    operationSeq: 4,
+  });
+
+  const operations = [
+    makeOperation('VERSION_CREATED', 2, {
+      versionId: created.id,
+      parentVersionId: root.id,
+      createdAt: created.createdAt,
+      createdBy: 'user-b',
+      operationSummary: 'Auto save',
+      version: created,
+      currentVersionId: created.id,
+    }),
+    makeOperation('VERSION_BRANCH_CREATED', 3, {
+      versionId: branch.id,
+      parentVersionId: created.id,
+      branchMode: 'fork',
+      branchName: branch.branchName,
+      label: branch.label,
+      createdAt: branch.createdAt,
+      createdBy: 'user-b',
+      operationSummary: 'Branch label',
+      version: branch,
+      sourceVersionId: created.id,
+    }),
+    makeOperation('VERSION_REVERTED_FROM', 4, {
+      versionId: reverted.id,
+      parentVersionId: branch.id,
+      revertedFromVersionId: root.id,
+      createdAt: reverted.createdAt,
+      createdBy: 'user-b',
+      operationSummary: 'Revert to root',
+      version: reverted,
+      currentVersionId: reverted.id,
+    }),
+  ];
+
+  const originalFetch = globalThis.fetch;
+  const capturedUrls: string[] = [];
+  (globalThis as typeof globalThis & { fetch: typeof fetch }).fetch = async (input: RequestInfo | URL) => {
+    const url = typeof input === 'string' ? input : input.toString();
+    capturedUrls.push(url);
+    if (url.includes('/operations')) {
+      return jsonResponse({
+        operations,
+        latestSnapshotSeq: 3,
+        rebootstrapRequired: false,
+      });
+    }
+    throw new Error(`Unexpected fetch: ${url}`);
+  };
+
+  try {
+    await harness.refreshVersionTreeFromServer();
+
+    assert.deepEqual(capturedUrls, [
+      '/api/daw/projects/project-1/operations?demoId=demo-1&afterSeq=1',
+    ]);
+    const projectState = engine.getState().projectState;
+    assert.ok(projectState);
+    assert.equal(projectState?.versions.length, 4);
+    assert.equal(projectState?.currentVersionId, reverted.id);
+    assert.equal(projectState?.activeVersionId, root.id);
+    assert.equal(projectState?.isFollowingHead, false);
+    assert.equal(projectState?.lastSeenOperationSeq, 4);
+    assert.equal(engine.getState().lastSyncedOperationSeq, 4);
+    assert.ok(projectState?.versions.some((version) => version.id === created.id));
+    assert.ok(projectState?.versions.some((version) => version.id === branch.id));
+    assert.ok(projectState?.versions.some((version) => version.id === reverted.id));
+  } finally {
+    (globalThis as typeof globalThis & { fetch: typeof fetch }).fetch = originalFetch;
+  }
+});
+
+test('ProjectSyncEngine rebootstrapRequired replays remote version_created, branch_created, and reverted operations while preserving a pinned checkout', async () => {
+  const root = makeVersion('version-root', { isCurrent: true });
+  const initial = createLocalProjectStateFromBootstrap(makeBootstrap([root], root.id));
+  const engine = new ProjectSyncEngine();
+  const harness = engine as unknown as {
+    projectId: string | null;
+    demoId: string | null;
+    bootstrapResponse: DawProjectBootstrapResponse | null;
+    state: ReturnType<ProjectSyncEngine['getState']>;
+    refreshVersionTreeFromServer: () => Promise<void>;
+  };
+  harness.projectId = 'project-1';
+  harness.demoId = 'demo-1';
+  harness.bootstrapResponse = makeBootstrap([root], root.id);
+  harness.state = {
+    ...engine.getState(),
+    projectState: {
+      ...initial,
+      activeVersionId: root.id,
+      isFollowingHead: false,
+    },
+    lastSyncedOperationSeq: 1,
+  };
+
+  const created = makeVersion('version-created', {
+    label: 'Auto save',
+    name: 'Auto save',
+    branchName: 'Auto save',
+    parentId: root.id,
+    parentVersionId: root.id,
+    createdAt: '2025-01-02T00:00:00.000Z',
+    isCurrent: true,
+    operationSeq: 2,
+  });
+  const branch = makeVersion('version-branch', {
+    label: 'Branch label',
+    name: 'Branch label',
+    branchName: 'Branch label',
+    parentId: created.id,
+    parentVersionId: created.id,
+    createdAt: '2025-01-02T12:00:00.000Z',
+    isCurrent: true,
+    operationSeq: 3,
+  });
+  const reverted = makeVersion('version-reverted', {
+    label: 'Revert to root',
+    name: 'Revert to root',
+    branchName: 'Revert to root',
+    parentId: branch.id,
+    parentVersionId: branch.id,
+    createdAt: '2025-01-03T00:00:00.000Z',
+    isCurrent: true,
+    operationSeq: 4,
+  });
+  const bootstrapResponse: DawProjectBootstrapResponse = {
+    ...makeBootstrap([root], root.id),
+    activeVersionId: null,
+    isFollowingHead: false,
+    latestSnapshot: {
+      ...makeBootstrap([root], root.id).latestSnapshot!,
+      id: 'snapshot-2',
+      operationSeq: 1,
+      snapshot: {
+        ...makeBootstrap([root], root.id).latestSnapshot!.snapshot,
+      },
+      createdById: 'user-a',
+      createdAt: '2025-01-01T00:00:00.000Z',
+    },
+    operationTail: [
+      makeOperation('VERSION_CREATED', 2, {
+        versionId: created.id,
+        parentVersionId: root.id,
+        createdAt: created.createdAt,
+        createdBy: 'user-b',
+        operationSummary: 'Auto save',
+        version: created,
+        currentVersionId: created.id,
+      }),
+      makeOperation('VERSION_BRANCH_CREATED', 3, {
+        versionId: branch.id,
+        parentVersionId: created.id,
+        branchMode: 'fork',
+        branchName: branch.branchName,
+        label: branch.label,
+        createdAt: branch.createdAt,
+        createdBy: 'user-b',
+        operationSummary: 'Branch label',
+        version: branch,
+        sourceVersionId: created.id,
+      }),
+      makeOperation('VERSION_REVERTED_FROM', 4, {
+        versionId: reverted.id,
+        parentVersionId: branch.id,
+        revertedFromVersionId: root.id,
+        createdAt: reverted.createdAt,
+        createdBy: 'user-b',
+        operationSummary: 'Revert to root',
+        version: reverted,
+        currentVersionId: reverted.id,
+      }),
+    ],
+  };
+
+  const originalFetch = globalThis.fetch;
+  const capturedUrls: string[] = [];
+  (globalThis as typeof globalThis & { fetch: typeof fetch }).fetch = async (input: RequestInfo | URL) => {
+    const url = typeof input === 'string' ? input : input.toString();
+    capturedUrls.push(url);
+    if (url.includes('/operations')) {
+      return jsonResponse({
+        operations: [],
+        latestSnapshotSeq: 3,
+        rebootstrapRequired: true,
+      });
+    }
+    if (url.includes('/bootstrap')) {
+      return jsonResponse(bootstrapResponse);
+    }
+    throw new Error(`Unexpected fetch: ${url}`);
+  };
+
+  try {
+    await harness.refreshVersionTreeFromServer();
+
+    assert.deepEqual(capturedUrls, [
+      '/api/daw/projects/project-1/operations?demoId=demo-1&afterSeq=1',
+      '/api/daw/projects/project-1/bootstrap?demoId=demo-1',
+    ]);
+    const projectState = engine.getState().projectState;
+    assert.ok(projectState);
+    assert.equal(projectState?.versions.length, 4);
+    assert.equal(projectState?.currentVersionId, reverted.id);
+    assert.equal(projectState?.activeVersionId, root.id);
+    assert.equal(projectState?.isFollowingHead, false);
+    assert.equal(projectState?.lastSeenOperationSeq, 4);
+    assert.equal(engine.getState().lastSyncedOperationSeq, 4);
+    assert.ok(projectState?.versions.some((version) => version.id === created.id));
+    assert.ok(projectState?.versions.some((version) => version.id === branch.id));
+    assert.ok(projectState?.versions.some((version) => version.id === reverted.id));
+  } finally {
+    (globalThis as typeof globalThis & { fetch: typeof fetch }).fetch = originalFetch;
+  }
+});
+
 test('ProjectSyncEngine reboots when a realtime version_tree_changed event arrives', async () => {
   const root = makeVersion('version-root', { isCurrent: true });
   const initial = createLocalProjectStateFromBootstrap(makeBootstrap([root], root.id));
@@ -2846,6 +3116,8 @@ test('ProjectSyncEngine reboots when a realtime version_tree_changed event arriv
     assert.equal(projectState?.activeVersionId, branch.id);
     assert.equal(projectState?.isFollowingHead, true);
     assert.equal(engine.getState().lastSyncedOperationSeq, 2);
+    assert.equal(engine.getState().versionTreeAttention?.versionId, branch.id);
+    assert.equal(engine.getState().versionTreeAttention?.createdAt, '2025-01-02T00:00:00.000Z');
   } finally {
     (globalThis as typeof globalThis & { fetch: typeof fetch }).fetch = originalFetch;
     stubbedCache.putProject = originalPutProject;
@@ -2948,6 +3220,123 @@ test('ProjectSyncEngine reboots when a realtime version_created event arrives', 
         versionId: branch.id,
         parentVersionId: root.id,
         kind: 'AUTO',
+        operationSeq: 2,
+      }),
+    } as MessageEvent<string>);
+
+    assert.deepEqual(capturedUrls, [
+      '/api/daw/projects/project-1/bootstrap?demoId=demo-1',
+      '/api/daw/projects/project-1/active-version',
+    ]);
+    const projectState = engine.getState().projectState;
+    assert.ok(projectState);
+    assert.equal(projectState?.versions.length, 2);
+    assert.equal(projectState?.currentVersionId, branch.id);
+    assert.equal(projectState?.activeVersionId, branch.id);
+    assert.equal(projectState?.isFollowingHead, true);
+    assert.equal(engine.getState().lastSyncedOperationSeq, 2);
+  } finally {
+    (globalThis as typeof globalThis & { fetch: typeof fetch }).fetch = originalFetch;
+    stubbedCache.putProject = originalPutProject;
+    stubbedCache.putPluginDefinitions = originalPutPluginDefinitions;
+    stubbedCache.putAsset = originalPutAsset;
+  }
+});
+
+test('ProjectSyncEngine reboots when a realtime branch_created event arrives', async () => {
+  const root = makeVersion('version-root', { isCurrent: true });
+  const initial = createLocalProjectStateFromBootstrap(makeBootstrap([root], root.id));
+  const engine = new ProjectSyncEngine();
+  const harness = engine as unknown as {
+    projectId: string | null;
+    demoId: string | null;
+    state: ReturnType<ProjectSyncEngine['getState']>;
+    handleRealtimeVersionTreeChanged: (event: MessageEvent<string>) => Promise<void>;
+  };
+  harness.projectId = 'project-1';
+  harness.demoId = 'demo-1';
+  harness.state = {
+    ...engine.getState(),
+    projectState: {
+      ...initial,
+      activeVersionId: root.id,
+      isFollowingHead: true,
+    },
+    lastSyncedOperationSeq: 1,
+  };
+
+  const branch = makeVersion('version-branch', {
+    label: 'Branch label',
+    name: 'Branch label',
+    branchName: 'Branch label',
+    parentId: root.id,
+    parentVersionId: root.id,
+    createdAt: '2025-01-02T00:00:00.000Z',
+    isCurrent: true,
+    operationSeq: 2,
+  });
+  const bootstrapResponse = makeBootstrap([root, branch], branch.id);
+  bootstrapResponse.activeVersionId = branch.id;
+  bootstrapResponse.isFollowingHead = true;
+  bootstrapResponse.activeBranchName = branch.label;
+  bootstrapResponse.project.currentVersionId = branch.id;
+  bootstrapResponse.latestSnapshot = {
+    id: 'snapshot-2',
+    projectId: 'project-1',
+    demoId: 'demo-1',
+    operationSeq: 2,
+    snapshot: {
+      versions: [root, branch],
+      currentVersionId: branch.id,
+      comments: [],
+      annotations: [],
+      tempoMetadataByTrackVersionId: {},
+    },
+    createdById: 'user-b',
+    createdAt: '2025-01-02T00:00:00.000Z',
+  };
+
+  const originalFetch = globalThis.fetch;
+  const stubbedCache = dawLocalCache as unknown as {
+    putProject: (...args: unknown[]) => Promise<void>;
+    putPluginDefinitions: (...args: unknown[]) => Promise<void>;
+    putAsset: (...args: unknown[]) => Promise<void>;
+  };
+  const originalPutProject = stubbedCache.putProject;
+  const originalPutPluginDefinitions = stubbedCache.putPluginDefinitions;
+  const originalPutAsset = stubbedCache.putAsset;
+  const capturedUrls: string[] = [];
+
+  stubbedCache.putProject = async () => {};
+  stubbedCache.putPluginDefinitions = async () => {};
+  stubbedCache.putAsset = async () => {};
+  (globalThis as typeof globalThis & { fetch: typeof fetch }).fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input.toString();
+    capturedUrls.push(url);
+    if (url.includes('/bootstrap')) {
+      return jsonResponse(bootstrapResponse);
+    }
+    if (url.includes('/active-version') && init?.method === 'POST') {
+      return jsonResponse({
+        activeVersionId: branch.id,
+        isFollowingHead: true,
+        activeBranchName: branch.label,
+      });
+    }
+    throw new Error(`Unexpected fetch in test: ${url}`);
+  };
+
+  try {
+    await harness.handleRealtimeVersionTreeChanged({
+      data: JSON.stringify({
+        type: 'branch_created',
+        projectId: 'project-1',
+        demoId: 'demo-1',
+        createdAt: '2025-01-02T00:00:00.000Z',
+        actorUserId: 'user-b',
+        versionId: branch.id,
+        parentVersionId: root.id,
+        branchMode: 'continue',
         operationSeq: 2,
       }),
     } as MessageEvent<string>);

@@ -32,6 +32,8 @@ import { isValidTempoBpm, normalizeTimeSignature } from '@/app/lib/daw/utils/tim
 import {
   createProjectPresenceSeed,
   emitAcceptedDawOperation,
+  emitDawBranchCreated,
+  emitDawHeadMoved,
   emitDawVersionCreated,
   emitDawVersionTreeChanged,
 } from '@/app/lib/daw/server/realtime-gateway';
@@ -2409,11 +2411,29 @@ export async function setUserActiveVersion(
     throw new Error('Project not found');
   }
 
-  return {
+  const previousActiveVersionId = activeVersionState.activeVersionId;
+  const response = {
     activeVersionId: activeVersionState.activeVersionId,
     isFollowingHead: activeVersionState.isFollowingHead,
     activeBranchName: activeVersionState.activeBranchName,
   };
+
+  if (
+    previousActiveVersionId &&
+    activeVersionState.activeVersionId &&
+    previousActiveVersionId !== activeVersionState.activeVersionId
+  ) {
+    await emitDawHeadMoved({
+      projectId: workspace.project.id,
+      demoId: workspace.demo.id,
+      actorUserId: input.userId,
+      previousVersionId: previousActiveVersionId,
+      currentVersionId: activeVersionState.activeVersionId,
+      isFollowingHead: activeVersionState.isFollowingHead,
+    });
+  }
+
+  return response;
 }
 
 export async function commitDawProjectOperation(
@@ -2493,6 +2513,14 @@ export async function commitDawProjectOperation(
         };
       };
   let versionTreeChanged = false;
+  let branchCreatedEvent:
+    | {
+        versionId: string;
+        parentVersionId: string | null;
+        branchMode: 'continue' | 'fork';
+        operationSeq: number | null;
+      }
+    | null = null;
   let timelineBranchOperation: DawProjectOperationRecord | null = null;
   let autoVersionSourceVersionId = checkoutVersionId;
   let createdAutoVersion:
@@ -2556,7 +2584,12 @@ export async function commitDawProjectOperation(
           });
           autoVersionSourceVersionId = branchVersion.id;
 
-          versionTreeChanged = true;
+          branchCreatedEvent = {
+            versionId: branchVersion.id,
+            parentVersionId: branchVersion.parentId,
+            branchMode: 'fork',
+            operationSeq: null,
+          };
 
           effectiveRequest = translateRequestForBranch(request, branchVersion.id, branchVersion.cloneMap);
           branchedFromHistoricalBase = true;
@@ -2603,6 +2636,12 @@ export async function commitDawProjectOperation(
               };
               versionTreeChanged = true;
               autoVersionSourceVersionId = createdBranch.id;
+              branchCreatedEvent = {
+                versionId: createdBranch.id,
+                parentVersionId: createdBranch.parentId,
+                branchMode: 'fork',
+                operationSeq: null,
+              };
             }
           }
 
@@ -2707,7 +2746,12 @@ export async function commitDawProjectOperation(
           operationSeq: branchOperation.operationSeq,
         });
 
-        versionTreeChanged = true;
+        branchCreatedEvent = {
+          versionId: branchVersion.id,
+          parentVersionId: branchVersion.parentId,
+          branchMode: 'continue',
+          operationSeq: branchOperation.operationSeq,
+        };
         effectiveRequest = translateRequestForBranch(effectiveRequest, branchVersion.id, branchVersion.cloneMap);
       }
 
@@ -2808,7 +2852,17 @@ export async function commitDawProjectOperation(
     });
   }
 
-  if (versionTreeChanged) {
+  if (branchCreatedEvent) {
+    await emitDawBranchCreated({
+      projectId: workspace.project.id,
+      demoId: workspace.demo.id,
+      actorUserId: input.userId,
+      versionId: branchCreatedEvent.versionId,
+      parentVersionId: branchCreatedEvent.parentVersionId,
+      branchMode: branchCreatedEvent.branchMode,
+      operationSeq: branchCreatedEvent.operationSeq,
+    });
+  } else if (versionTreeChanged && !createdAutoVersion) {
     await emitDawVersionTreeChanged({
       projectId: workspace.project.id,
       demoId: workspace.demo.id,

@@ -79,6 +79,8 @@ export type VersionHistoryTreeProps = {
   selectedHistoryOperationSeq: number | null;
   isFollowingHead: boolean;
   isHistoryViewActive: boolean;
+  highlightedVersionId: string | null;
+  highlightedVersionCreatedAt: string | null;
   onSelectVersion: (id: string) => void;
   onCheckoutSelectedVersion: () => void;
   onSelectHistoryOperation: (operationSeq: number | null) => void;
@@ -98,6 +100,8 @@ export function VersionHistoryTree({
   selectedHistoryOperationSeq,
   isFollowingHead,
   isHistoryViewActive,
+  highlightedVersionId,
+  highlightedVersionCreatedAt,
   onSelectVersion,
   onCheckoutSelectedVersion,
   onSelectHistoryOperation,
@@ -108,6 +112,23 @@ export function VersionHistoryTree({
   const [branchState, setBranchState] = useState<BranchState | null>(null);
   const [revertState, setRevertState] = useState<RevertState | null>(null);
   const [isExpanded, setIsExpanded] = useState(false);
+  const [animatedVersionId, setAnimatedVersionId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!highlightedVersionId || !highlightedVersionCreatedAt) {
+      setAnimatedVersionId(null);
+      return;
+    }
+
+    setAnimatedVersionId(highlightedVersionId);
+    const timer = window.setTimeout(() => {
+      setAnimatedVersionId((current) => (current === highlightedVersionId ? null : current));
+    }, 1400);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [highlightedVersionCreatedAt, highlightedVersionId]);
 
   useEffect(() => {
     if (isHistoryViewActive) {
@@ -516,6 +537,7 @@ export function VersionHistoryTree({
                 const isCurrent = node.id === currentVersionId;
                 const isActive = node.id === activeVersionId;
                 const isSelected = node.id === selectedVersionId;
+                const isHighlighted = node.id === animatedVersionId;
                 const isRenaming = renameState?.versionId === node.id;
                 const label = getVersionDisplayLabel(node.version, versionsById);
                 const summary = getVersionOperationSummary(node.version, versionsById);
@@ -534,6 +556,10 @@ export function VersionHistoryTree({
                       }
                     }}
                     className={`group absolute overflow-hidden rounded-full border-2 text-left transition-transform duration-150 ${
+                      isHighlighted
+                        ? 'z-20 scale-[1.03] animate-pulse'
+                        : ''
+                    } ${
                       isSelected
                         ? 'border-amber-400 bg-slate-900 shadow-[0_10px_18px_rgba(251,191,36,0.12)]'
                         : isActive
@@ -548,6 +574,9 @@ export function VersionHistoryTree({
                       width: layout.nodeWidth,
                       height: layout.nodeHeight,
                       ...getNodeStyle(node.color, isSelected, isActive, isCurrent),
+                      boxShadow: isHighlighted
+                        ? `${getNodeStyle(node.color, isSelected, isActive, isCurrent).boxShadow}, 0 0 0 8px rgba(34,211,238,0.14)`
+                        : getNodeStyle(node.color, isSelected, isActive, isCurrent).boxShadow,
                     }}
                   >
                     <div className="relative flex h-full flex-col items-center justify-center px-3 py-3 text-center">

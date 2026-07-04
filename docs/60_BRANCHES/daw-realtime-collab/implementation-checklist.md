@@ -122,30 +122,25 @@ the unsafe-overlap fallback. (Tracks the phased
 
 Goal: make version/branch/revert changes first-class realtime signals.
 
-- [ ] Add semantic events in `packages/server/app/lib/daw/server/realtime-gateway.ts`: `version_created`, `branch_created`, `head_moved`, `reverted` (or extend  `version_tree_changed` with a `reason`). Update `DawRealtimeEventType`.
-- [ ] Emit them from the create/branch/revert/auto-checkpoint paths.
-- [ ] Handle them in `ProjectSyncEngine` (refresh version tree, animate new node) and confirm `operation-reducer` upserts nodes for the corresponding accepted operations.
-- [ ] Confirm reconnect (`lastSeenOperationSeq`, `rebootstrapRequired`) replays new version/revert operations and preserves the viewer checkout.
-- [ ] Tests: reconnect after a remote auto-version/branch/revert shows the new node and keeps the local checkout.
+- [x] Add semantic events in `packages/server/app/lib/daw/server/realtime-gateway.ts`: `version_created`, `branch_created`, `head_moved`, `reverted` (or extend  `version_tree_changed` with a `reason`). Update `DawRealtimeEventType`.
+- [x] Emit them from the create/branch/revert/auto-checkpoint paths.
+- [x] Handle them in `ProjectSyncEngine` (refresh version tree, animate new node) and confirm `operation-reducer` upserts nodes for the corresponding accepted operations.
+- [x] Confirm reconnect (`lastSeenOperationSeq`, `rebootstrapRequired`) replays new version/revert operations and preserves the viewer checkout.
+- [x] Tests: reconnect after a remote auto-version/branch/revert shows the new node and keeps the local checkout.
 
 ## Phase G - Processing-Jobs Alignment
 
 Goal: keep heavy/derived work out of realtime and version metadata.
 
-- [ ] Confirm version checkpointing is app/server metadata, NOT a processing
-      job (see `docs/processing-jobs.md`).
-- [ ] Ensure derived audio jobs remain keyed by `demoVersionId` /
-      `trackVersionId` so each version node can reference derived outputs
-      without entering realtime.
-- [ ] Confirm original audio stays immutable; versions/branches add pointers
-      only (verify `cloneTrackVersionsToDemoVersion` copies keys, not blobs).
+- [ ] Confirm version checkpointing is app/server metadata, NOT a processing job (see `docs/processing-jobs.md`).
+- [ ] Ensure derived audio jobs remain keyed by `demoVersionId` / `trackVersionId` so each version node can reference derived outputs without entering realtime.
+- [ ] Confirm original audio stays immutable; versions/branches add pointers only (verify `cloneTrackVersionsToDemoVersion` copies keys, not blobs).
 
 ---
 
 ## Definition of Done (mirrors the design doc)
 
-- [ ] Two clients edit the same branch head concurrently and converge without an
-      unwanted branch.
+- [ ] Two clients edit the same branch head concurrently and converge without an unwanted branch.
 - [ ] Versions are created automatically as work happens and appear in the Tree
       tab without reload.
 - [ ] Any version can be reverted to; the revert appears as a new node and older

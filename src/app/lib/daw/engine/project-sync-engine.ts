@@ -37,6 +37,10 @@ type ProjectSyncSnapshot = {
   isOnline: boolean;
   isSyncing: boolean;
   lastError: string | null;
+  versionTreeAttention: {
+    versionId: string;
+    createdAt: string;
+  } | null;
 };
 
 const VERSION_TREE_REFRESH_OPERATION_TYPES = new Set<DawOperationType>([
@@ -107,6 +111,7 @@ type RealtimeVersionTreeChangedEvent = {
   demoId: string;
   createdAt: string;
   actorUserId: string;
+  reason?: 'version_created' | 'branch_created' | 'head_moved' | 'reverted';
 };
 
 type RealtimeVersionCreatedEvent = {
@@ -118,6 +123,42 @@ type RealtimeVersionCreatedEvent = {
   versionId: string;
   parentVersionId: string | null;
   kind: 'AUTO' | 'SEMANTIC' | 'EXPLICIT' | 'REVERT' | 'BRANCH' | 'MERGE';
+  operationSeq: number | null;
+};
+
+type RealtimeBranchCreatedEvent = {
+  type: 'branch_created';
+  projectId: string;
+  demoId: string;
+  createdAt: string;
+  actorUserId: string;
+  versionId: string;
+  parentVersionId: string | null;
+  branchMode: 'continue' | 'fork';
+  operationSeq: number | null;
+};
+
+type RealtimeHeadMovedEvent = {
+  type: 'head_moved';
+  projectId: string;
+  demoId: string;
+  createdAt: string;
+  actorUserId: string;
+  previousVersionId: string | null;
+  currentVersionId: string;
+  isFollowingHead: boolean;
+};
+
+type RealtimeRevertedEvent = {
+  type: 'reverted';
+  projectId: string;
+  demoId: string;
+  createdAt: string;
+  actorUserId: string;
+  versionId: string;
+  parentVersionId: string | null;
+  revertedFromVersionId: string;
+  revertedToOperationId: string | null;
   operationSeq: number | null;
 };
 
@@ -284,6 +325,7 @@ export class ProjectSyncEngine {
   private readonly assetStatusListeners = new Set<ProjectSyncAssetStatusListener>();
   private readonly presenceListeners = new Set<ProjectSyncPresenceListener>();
   private readonly inFlightByIdempotencyKey = new Map<string, Promise<DawProjectOperationRecord>>();
+  private versionTreeAttentionClearTimer: ReturnType<typeof setTimeout> | null = null;
   private realtimeSource: EventSource | null = null;
   private projectId: string | null = null;
   private demoId: string | null = null;
@@ -297,6 +339,7 @@ export class ProjectSyncEngine {
     isOnline: true,
     isSyncing: false,
     lastError: null,
+    versionTreeAttention: null,
   };
 
   subscribe(listener: ProjectSyncOperationListener) {
@@ -556,6 +599,7 @@ export class ProjectSyncEngine {
       this.realtimeSource.close();
       this.realtimeSource = null;
     }
+    this.clearVersionTreeAttentionTimer();
   }
 
   private readonly handleRealtimeAcceptedOperation = async (event: MessageEvent<string>) => {
@@ -597,10 +641,33 @@ export class ProjectSyncEngine {
 
   private readonly handleRealtimeVersionTreeChanged = async (event: MessageEvent<string>) => {
     try {
-      const payload = JSON.parse(event.data) as RealtimeVersionTreeChangedEvent | RealtimeVersionCreatedEvent;
-      if (payload.type !== 'version_tree_changed' && payload.type !== 'version_created') return;
+      const payload = JSON.parse(event.data) as
+        | RealtimeVersionTreeChangedEvent
+        | RealtimeVersionCreatedEvent
+        | RealtimeBranchCreatedEvent
+        | RealtimeHeadMovedEvent
+        | RealtimeRevertedEvent;
+      if (
+        payload.type !== 'version_tree_changed' &&
+        payload.type !== 'version_created' &&
+        payload.type !== 'branch_created' &&
+        payload.type !== 'head_moved' &&
+        payload.type !== 'reverted'
+      )
+        return;
       if (payload.projectId !== this.projectId || payload.demoId !== this.demoId) return;
+      const attentionVersionId =
+        payload.type === 'version_created' ||
+        payload.type === 'branch_created' ||
+        payload.type === 'reverted'
+          ? payload.versionId
+          : payload.type === 'head_moved'
+            ? payload.currentVersionId
+            : null;
       await this.rebootstrapFromServer();
+      if (attentionVersionId) {
+        this.flashVersionTreeAttention(attentionVersionId, payload.createdAt);
+      }
     } catch {
       // Tree refresh is best-effort; accepted operations will still reconcile core edits.
     }
@@ -651,6 +718,15 @@ export class ProjectSyncEngine {
     source.addEventListener('version_created', (event) => {
       void this.handleRealtimeVersionTreeChanged(event as MessageEvent<string>);
     });
+    source.addEventListener('branch_created', (event) => {
+      void this.handleRealtimeVersionTreeChanged(event as MessageEvent<string>);
+    });
+    source.addEventListener('head_moved', (event) => {
+      void this.handleRealtimeVersionTreeChanged(event as MessageEvent<string>);
+    });
+    source.addEventListener('reverted', (event) => {
+      void this.handleRealtimeVersionTreeChanged(event as MessageEvent<string>);
+    });
     source.addEventListener('project_rebootstrap_required', (event) => {
       void this.handleRealtimeProjectRebootstrapRequired(event as MessageEvent<string>);
     });
@@ -667,6 +743,34 @@ export class ProjectSyncEngine {
   private setState(next: Partial<ProjectSyncSnapshot>) {
     this.state = { ...this.state, ...next };
     this.emit();
+  }
+
+  private clearVersionTreeAttentionTimer() {
+    if (this.versionTreeAttentionClearTimer) {
+      clearTimeout(this.versionTreeAttentionClearTimer);
+      this.versionTreeAttentionClearTimer = null;
+    }
+  }
+
+  private flashVersionTreeAttention(versionId: string, createdAt: string) {
+    this.clearVersionTreeAttentionTimer();
+    this.setState({
+      versionTreeAttention: {
+        versionId,
+        createdAt,
+      },
+    });
+    this.versionTreeAttentionClearTimer = setTimeout(() => {
+      if (
+        this.state.versionTreeAttention?.versionId === versionId &&
+        this.state.versionTreeAttention.createdAt === createdAt
+      ) {
+        this.setState({
+          versionTreeAttention: null,
+        });
+      }
+      this.versionTreeAttentionClearTimer = null;
+    }, 1400);
   }
 
   private getLastSeenOperationSeq() {

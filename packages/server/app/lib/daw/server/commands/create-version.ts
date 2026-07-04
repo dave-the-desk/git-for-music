@@ -14,7 +14,7 @@ import {
 import { createDemoVersionWithCopiedTracks } from '@/app/lib/daw/server/versions';
 import {
   emitAcceptedDawOperation,
-  emitDawVersionTreeChanged,
+  emitDawBranchCreated,
 } from '@/app/lib/daw/server/realtime-gateway';
 import { serializeCreatedDemoVersionTreeNode } from '@/app/lib/daw/server/versioning';
 
@@ -206,10 +206,14 @@ export async function createDemoVersionCommand(input: {
     });
   }
 
-  emitDawVersionTreeChanged({
+  emitDawBranchCreated({
     projectId: demo.project.id,
     demoId: demo.id,
     actorUserId: input.userId,
+    versionId: createdVersion.id,
+    parentVersionId: createdVersion.parentId,
+    branchMode,
+    operationSeq: recordedVersionCreatedOperation?.operationSeq ?? null,
   });
 
   const response: CreateVersionResponse = {

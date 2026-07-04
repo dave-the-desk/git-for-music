@@ -17,6 +17,7 @@ import { enqueueTrackUploadProcessingJobs } from '@/app/lib/daw/server/jobs/uplo
 import {
   emitAcceptedDawOperation,
   emitDawAssetProcessingStatus,
+  emitDawBranchCreated,
   emitDawVersionTreeChanged,
 } from '@/app/lib/daw/server/realtime-gateway';
 import {
@@ -446,8 +447,14 @@ export async function completeUploadedOriginalAsset(input: {
     versionBranchCreatedOperation as DemoDawOperationInsertResult | null;
   const recordedTrackVersionOperation =
     trackVersionCreatedOperation as DemoDawOperationInsertResult | null;
+  const didEmitBranchCreated = Boolean(recordedVersionBranchOperation?.created);
 
   if (recordedVersionBranchOperation?.created) {
+    const branchPayload = recordedVersionBranchOperation.payload as {
+      versionId?: string;
+      parentVersionId?: string | null;
+      branchMode?: 'continue' | 'fork';
+    };
     emitAcceptedDawOperation({
       projectId: demo.project.id,
       demoId: demo.id,
@@ -461,6 +468,16 @@ export async function completeUploadedOriginalAsset(input: {
       clientOperationId: recordedVersionBranchOperation.clientOperationId ?? null,
       baseSnapshotId: recordedVersionBranchOperation.baseSnapshotId ?? null,
       baseOperationSeq: recordedVersionBranchOperation.baseOperationSeq ?? 0,
+    });
+
+    emitDawBranchCreated({
+      projectId: demo.project.id,
+      demoId: demo.id,
+      actorUserId: input.userId,
+      versionId: branchPayload.versionId ?? 'unknown',
+      parentVersionId: branchPayload.parentVersionId ?? null,
+      branchMode: branchPayload.branchMode ?? branchMode,
+      operationSeq: recordedVersionBranchOperation.operationSeq,
     });
   }
 
@@ -481,11 +498,13 @@ export async function completeUploadedOriginalAsset(input: {
       baseOperationSeq: recordedTrackVersionOperation.baseOperationSeq ?? 0,
     });
 
-    emitDawVersionTreeChanged({
-      projectId: demo.project.id,
-      demoId: demo.id,
-      actorUserId: input.userId,
-    });
+    if (!didEmitBranchCreated) {
+      emitDawVersionTreeChanged({
+        projectId: demo.project.id,
+        demoId: demo.id,
+        actorUserId: input.userId,
+      });
+    }
   }
 
   emitDawAssetProcessingStatus({

@@ -33,7 +33,16 @@ test('revertToVersionCommand creates a revert version from the current branch he
   let setActiveVersionArgs: { versionId?: string } | null = null;
   let recordedOperationArgs: RecordedOperationArgs | null = null;
   let emittedOperationArgs: { operationType?: string } | null = null;
-  let versionTreeChangedArgs: { demoId?: string } | null = null;
+  let revertedArgs:
+    | {
+        demoId?: string;
+        versionId?: string;
+        parentVersionId?: string | null;
+        revertedFromVersionId?: string;
+        revertedToOperationId?: string | null;
+        operationSeq?: number | null;
+      }
+    | null = null;
 
   const client = {
     demo: {
@@ -160,9 +169,14 @@ test('revertToVersionCommand creates a revert version from the current branch he
           operationType: 'operationType' in args ? args.operationType : args.operation.type,
         };
       },
-      emitDawVersionTreeChanged: (args) => {
-        versionTreeChangedArgs = {
+      emitDawReverted: (args) => {
+        revertedArgs = {
           demoId: args.demoId,
+          versionId: args.versionId,
+          parentVersionId: args.parentVersionId,
+          revertedFromVersionId: args.revertedFromVersionId,
+          revertedToOperationId: args.revertedToOperationId,
+          operationSeq: args.operationSeq,
         };
       },
     },
@@ -189,13 +203,20 @@ test('revertToVersionCommand creates a revert version from the current branch he
   assert.ok(setActiveVersionArgs);
   assert.ok(recordedOperationArgs);
   assert.ok(emittedOperationArgs);
-  assert.ok(versionTreeChangedArgs);
+  assert.ok(revertedArgs);
 
   const createdArgs = createVersionArgs as VersionArgs;
   const activeVersionArgs = setActiveVersionArgs as { versionId?: string };
   const operationArgs = recordedOperationArgs as RecordedOperationArgs;
   const emittedArgs = emittedOperationArgs as { operationType?: string };
-  const treeChangedArgs = versionTreeChangedArgs as { demoId?: string };
+  const revertedEventArgs = revertedArgs as {
+    demoId?: string;
+    versionId?: string;
+    parentVersionId?: string | null;
+    revertedFromVersionId?: string;
+    revertedToOperationId?: string | null;
+    operationSeq?: number | null;
+  };
 
   assert.equal(createdArgs.parentId, 'version-head');
   assert.equal(createdArgs.sourceVersionId, 'version-ancestor');
@@ -206,7 +227,12 @@ test('revertToVersionCommand creates a revert version from the current branch he
   assert.equal(operationArgs.payload?.currentVersionId, 'version-revert');
   assert.deepEqual(operationArgs.payload?.version?.tracks, sourceTracks);
   assert.equal(emittedArgs.operationType, 'VERSION_REVERTED_FROM');
-  assert.equal(treeChangedArgs.demoId, 'demo-1');
+  assert.equal(revertedEventArgs.demoId, 'demo-1');
+  assert.equal(revertedEventArgs.versionId, 'version-revert');
+  assert.equal(revertedEventArgs.parentVersionId, 'version-head');
+  assert.equal(revertedEventArgs.revertedFromVersionId, 'version-ancestor');
+  assert.equal(revertedEventArgs.revertedToOperationId, 'operation-1');
+  assert.equal(revertedEventArgs.operationSeq, 99);
 });
 
 test('revertToVersionCommand rejects versions that are not ancestors of the current head', async () => {
@@ -276,7 +302,7 @@ test('revertToVersionCommand rejects versions that are not ancestors of the curr
         createdAt: new Date('2026-07-04T00:00:00.000Z'),
       }),
       emitAcceptedDawOperation: () => undefined,
-      emitDawVersionTreeChanged: () => undefined,
+      emitDawReverted: () => undefined,
     },
   );
 
@@ -386,7 +412,7 @@ test('revertToVersionCommand preserves a pinned checkout while still creating th
         createdAt: new Date('2026-07-04T00:00:00.000Z'),
       }),
       emitAcceptedDawOperation: () => undefined,
-      emitDawVersionTreeChanged: () => undefined,
+      emitDawReverted: () => undefined,
     },
   );
 
@@ -517,7 +543,7 @@ test('revertToVersionCommand creates a revert node that copies the ancestor cont
         createdAt: new Date('2026-07-04T00:00:00.000Z'),
       }),
       emitAcceptedDawOperation: () => undefined,
-      emitDawVersionTreeChanged: () => undefined,
+      emitDawReverted: () => undefined,
     },
   );
 

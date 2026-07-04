@@ -3510,6 +3510,8 @@ export function DemoDawClient({
                     selectedHistoryOperationSeq={historyOperationSeq}
                     isFollowingHead={isFollowingHead}
                     isHistoryViewActive={isHistoryViewActive}
+                    highlightedVersionId={projectSyncState.versionTreeAttention?.versionId ?? null}
+                    highlightedVersionCreatedAt={projectSyncState.versionTreeAttention?.createdAt ?? null}
                     onSelectVersion={(id) => {
                       setSelectedVersionId(id);
                       stopTransport();
