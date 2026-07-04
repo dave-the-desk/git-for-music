@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { loadSnapshotStateForDemo } from '@/app/lib/daw/server/snapshot-builder';
+import {
+  loadSnapshotStateForDemo,
+  shouldCreateAutoVersion,
+} from '@/app/lib/daw/server/snapshot-builder';
 
 function makeClient(latestSnapshot: unknown, operations: unknown[]) {
   return {
@@ -815,4 +818,90 @@ test('loadSnapshotStateForDemo replays CROSSFADE_SET into both clip edges', asyn
   assert.equal(track?.segments[1]?.crossfadeCurve, 'linear');
   assert.equal(snapshot.operationHistory.length, 1);
   assert.equal(snapshot.operationHistory[0]?.summary, 'Adjusted crossfade on Track A');
+});
+
+test('shouldCreateAutoVersion fires for semantic boundaries', () => {
+  assert.equal(
+    shouldCreateAutoVersion({
+      latestOperationType: 'TRACK_VERSION_CREATED',
+      latestOperationCreatedAt: '2025-01-02T00:00:00.000Z',
+      latestOperationSeq: 8,
+      latestVersionOperationSeq: 5,
+      now: '2025-01-02T00:00:01.000Z',
+    }),
+    true,
+  );
+  assert.equal(
+    shouldCreateAutoVersion({
+      latestOperationType: 'SEGMENT_SPLIT',
+      latestOperationCreatedAt: '2025-01-02T00:00:00.000Z',
+      latestOperationSeq: 8,
+      latestVersionOperationSeq: 5,
+      now: '2025-01-02T00:00:01.000Z',
+    }),
+    true,
+  );
+  assert.equal(
+    shouldCreateAutoVersion({
+      latestOperationType: 'TRACK_ADDED',
+      latestOperationCreatedAt: '2025-01-02T00:00:00.000Z',
+      latestOperationSeq: 8,
+      latestVersionOperationSeq: 5,
+      now: '2025-01-02T00:00:01.000Z',
+    }),
+    true,
+  );
+  assert.equal(
+    shouldCreateAutoVersion({
+      latestOperationType: 'TRACK_REMOVED',
+      latestOperationCreatedAt: '2025-01-02T00:00:00.000Z',
+      latestOperationSeq: 8,
+      latestVersionOperationSeq: 5,
+      now: '2025-01-02T00:00:01.000Z',
+    }),
+    true,
+  );
+});
+
+test('shouldCreateAutoVersion fires after the idle debounce window', () => {
+  assert.equal(
+    shouldCreateAutoVersion({
+      latestOperationType: 'TRACK_RENAMED',
+      latestOperationCreatedAt: '2025-01-02T00:00:00.000Z',
+      latestOperationSeq: 8,
+      latestVersionOperationSeq: 8,
+      now: '2025-01-02T00:00:06.001Z',
+      debounceWindowMs: 5000,
+    }),
+    true,
+  );
+});
+
+test('shouldCreateAutoVersion fires after the operation-count threshold', () => {
+  assert.equal(
+    shouldCreateAutoVersion({
+      latestOperationType: 'TRACK_RENAMED',
+      latestOperationCreatedAt: '2025-01-02T00:00:04.000Z',
+      latestOperationSeq: 18,
+      latestVersionOperationSeq: 6,
+      now: '2025-01-02T00:00:04.500Z',
+      operationCountK: 12,
+    }),
+    true,
+  );
+});
+
+test('shouldCreateAutoVersion stays false when no trigger has fired', () => {
+  assert.equal(
+    shouldCreateAutoVersion({
+      latestOperationType: 'TRACK_RENAMED',
+      latestOperationCreatedAt: '2025-01-02T00:00:00.000Z',
+      latestOperationSeq: 9,
+      latestVersionOperationSeq: 8,
+      now: '2025-01-02T00:00:02.000Z',
+      debounceWindowMs: 5000,
+      operationCountK: 12,
+    }),
+    false,
+  );
 });

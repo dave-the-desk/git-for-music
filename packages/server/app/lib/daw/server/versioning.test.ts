@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createDemoVersionWithCopiedTracks } from './versioning';
+import { createAutoDemoVersion, createDemoVersionWithCopiedTracks } from './versioning';
 
 type CreatedVersion = {
   id: string;
@@ -531,4 +531,73 @@ test('createDemoVersionWithCopiedTracks produces a DAG where every non-root vers
 
   assertAcyclicVersionDag(createdVersions);
   assert.equal(createdVersions.filter((version) => version.parentId === null).length, 1);
+});
+
+test('createAutoDemoVersion snapshots the current head into an auto version', async () => {
+  const createArgs: Array<Record<string, unknown>> = [];
+  let trackVersionFindManyCalled = 0;
+  let segmentCreateCalled = 0;
+  const tx = {
+    demoVersion: {
+      findFirst: async () => ({
+        description: 'Source version',
+        tempoBpm: 120,
+        timeSignatureNum: 4,
+        timeSignatureDen: 4,
+        musicalKey: null,
+        tempoSource: 'MANUAL',
+        keySource: 'MANUAL',
+      }),
+      create: async (args: { data: Record<string, unknown> }) => {
+        createArgs.push(args.data);
+        return {
+          id: 'version-auto',
+          label: args.data.label,
+          description: args.data.description,
+          kind: args.data.kind ?? 'EXPLICIT',
+          operationSeq: args.data.operationSeq ?? null,
+          tempoBpm: args.data.tempoBpm ?? 120,
+          timeSignatureNum: args.data.timeSignatureNum ?? 4,
+          timeSignatureDen: args.data.timeSignatureDen ?? 4,
+          musicalKey: args.data.musicalKey ?? null,
+          tempoSource: args.data.tempoSource ?? 'MANUAL',
+          keySource: args.data.keySource ?? 'MANUAL',
+          createdAt: new Date('2025-01-03T00:00:00.000Z'),
+          parentId: args.data.parentId,
+        };
+      },
+    },
+    trackVersion: {
+      findMany: async () => {
+        trackVersionFindManyCalled += 1;
+        return [];
+      },
+    },
+    segment: {
+      create: async () => {
+        segmentCreateCalled += 1;
+        return { id: 'segment-auto' };
+      },
+    },
+  };
+
+  const result = await createAutoDemoVersion(tx as never, {
+    demoId: 'demo-1',
+    sourceVersionId: 'version-root',
+    operationSeq: 42,
+    kind: 'SEMANTIC',
+    label: 'Semantic checkpoint',
+    description: 'Checkpoint after edit burst',
+  });
+
+  assert.equal(result.parentId, 'version-root');
+  assert.equal(result.kind, 'SEMANTIC');
+  assert.equal(result.operationSeq, 42);
+  assert.equal(result.label, 'Semantic checkpoint');
+  assert.equal(result.tracks.length, 0);
+  assert.equal(createArgs[0]?.parentId, 'version-root');
+  assert.equal(createArgs[0]?.kind, 'SEMANTIC');
+  assert.equal(createArgs[0]?.operationSeq, 42);
+  assert.equal(trackVersionFindManyCalled, 0);
+  assert.equal(segmentCreateCalled, 0);
 });

@@ -61,6 +61,15 @@ export type DawRealtimeVersionTreeEvent = DawRealtimeBaseEvent & {
   actorUserId: string;
 };
 
+export type DawRealtimeVersionCreatedEvent = DawRealtimeBaseEvent & {
+  type: 'version_created';
+  actorUserId: string;
+  versionId: string;
+  parentVersionId: string | null;
+  kind: 'AUTO' | 'SEMANTIC' | 'EXPLICIT' | 'REVERT' | 'BRANCH' | 'MERGE';
+  operationSeq: number | null;
+};
+
 export type DawRealtimeProjectRebootstrapRequiredEvent = DawRealtimeBaseEvent & {
   type: 'project_rebootstrap_required';
   actorUserId: string;
@@ -74,6 +83,7 @@ export type DawRealtimeEvent =
   | DawRealtimeAssetProcessingStatusEvent
   | DawRealtimeCommentActivityEvent
   | DawRealtimeVersionTreeEvent
+  | DawRealtimeVersionCreatedEvent
   | DawRealtimeProjectRebootstrapRequiredEvent;
 
 export type DawRealtimeEventType = DawRealtimeEvent['type'];
@@ -290,6 +300,26 @@ export function emitDawVersionTreeChanged(input: {
     ...createEventBase(input),
     type: 'version_tree_changed',
     actorUserId: input.actorUserId,
+  });
+}
+
+export function emitDawVersionCreated(input: {
+  projectId: string;
+  demoId: string;
+  actorUserId: string;
+  versionId: string;
+  parentVersionId: string | null;
+  kind: DawRealtimeVersionCreatedEvent['kind'];
+  operationSeq: number | null;
+}) {
+  dispatchEvent({
+    ...createEventBase(input),
+    type: 'version_created',
+    actorUserId: input.actorUserId,
+    versionId: input.versionId,
+    parentVersionId: input.parentVersionId,
+    kind: input.kind,
+    operationSeq: input.operationSeq,
   });
 }
 

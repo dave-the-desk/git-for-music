@@ -470,6 +470,17 @@ interface DemoSourceData {
 }
 
 const DEFAULT_SNAPSHOT_CHECKPOINT_TAIL = 12;
+const DEFAULT_SNAPSHOT_CHECKPOINT_DEBOUNCE_WINDOW_MS = 5_000;
+const DEFAULT_SNAPSHOT_CHECKPOINT_OPERATION_COUNT_K = 12;
+const AUTO_VERSION_SEMANTIC_OPERATION_TYPES = new Set<
+  DemoDawOperationType | 'TRACK_ADDED' | 'TRACK_REMOVED'
+>([
+  'TRACK_ADDED',
+  'TRACK_REMOVED',
+  'TRACK_VERSION_CREATED',
+  'SEGMENT_SPLIT',
+  'SEGMENT_MERGED',
+]);
 
 function toIsoString(value: Date | string) {
   return value instanceof Date ? value.toISOString() : value;
@@ -2132,4 +2143,31 @@ export async function shouldCheckpointDemoDawSnapshot(
   const latestOperationSeq = latestOperation?.operationSeq ?? 0;
 
   return latestOperationSeq - latestSnapshotSeq >= maxTailOperations;
+}
+
+export function shouldCreateAutoVersion(input: {
+  latestOperationType: DemoDawOperationType | 'TRACK_ADDED' | 'TRACK_REMOVED';
+  latestOperationCreatedAt: Date | string;
+  latestOperationSeq: number;
+  latestVersionOperationSeq: number | null;
+  now?: Date | string;
+  debounceWindowMs?: number;
+  operationCountK?: number;
+}) {
+  if (AUTO_VERSION_SEMANTIC_OPERATION_TYPES.has(input.latestOperationType)) {
+    return true;
+  }
+
+  const now = input.now ? new Date(toIsoString(input.now)) : new Date();
+  const latestOperationCreatedAt = new Date(toIsoString(input.latestOperationCreatedAt));
+  const debounceWindowMs =
+    input.debounceWindowMs ?? DEFAULT_SNAPSHOT_CHECKPOINT_DEBOUNCE_WINDOW_MS;
+  const operationCountK = input.operationCountK ?? DEFAULT_SNAPSHOT_CHECKPOINT_OPERATION_COUNT_K;
+  const latestVersionOperationSeq = input.latestVersionOperationSeq ?? 0;
+
+  if (now.getTime() - latestOperationCreatedAt.getTime() >= debounceWindowMs) {
+    return true;
+  }
+
+  return input.latestOperationSeq - latestVersionOperationSeq >= operationCountK;
 }

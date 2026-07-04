@@ -2239,3 +2239,120 @@ test('ProjectSyncEngine reboots when a realtime version_tree_changed event arriv
     stubbedCache.putAsset = originalPutAsset;
   }
 });
+
+test('ProjectSyncEngine reboots when a realtime version_created event arrives', async () => {
+  const root = makeVersion('version-root', { isCurrent: true });
+  const initial = createLocalProjectStateFromBootstrap(makeBootstrap([root], root.id));
+  const engine = new ProjectSyncEngine();
+  const harness = engine as unknown as {
+    projectId: string | null;
+    demoId: string | null;
+    state: ReturnType<ProjectSyncEngine['getState']>;
+    handleRealtimeVersionTreeChanged: (event: MessageEvent<string>) => Promise<void>;
+  };
+  harness.projectId = 'project-1';
+  harness.demoId = 'demo-1';
+  harness.state = {
+    ...engine.getState(),
+    projectState: {
+      ...initial,
+      activeVersionId: root.id,
+      isFollowingHead: true,
+    },
+    lastSyncedOperationSeq: 1,
+  };
+
+  const branch = makeVersion('version-auto', {
+    label: 'Auto save',
+    name: 'Auto save',
+    branchName: 'Auto save',
+    parentId: root.id,
+    parentVersionId: root.id,
+    createdAt: '2025-01-02T00:00:00.000Z',
+    isCurrent: true,
+    operationSeq: 2,
+  });
+  const bootstrapResponse = makeBootstrap([root, branch], branch.id);
+  bootstrapResponse.activeVersionId = branch.id;
+  bootstrapResponse.isFollowingHead = true;
+  bootstrapResponse.activeBranchName = branch.label;
+  bootstrapResponse.project.currentVersionId = branch.id;
+  bootstrapResponse.latestSnapshot = {
+    id: 'snapshot-2',
+    projectId: 'project-1',
+    demoId: 'demo-1',
+    operationSeq: 2,
+    snapshot: {
+      versions: [root, branch],
+      currentVersionId: branch.id,
+      comments: [],
+      annotations: [],
+      tempoMetadataByTrackVersionId: {},
+    },
+    createdById: 'user-b',
+    createdAt: '2025-01-02T00:00:00.000Z',
+  };
+
+  const originalFetch = globalThis.fetch;
+  const stubbedCache = dawLocalCache as unknown as {
+    putProject: (...args: unknown[]) => Promise<void>;
+    putPluginDefinitions: (...args: unknown[]) => Promise<void>;
+    putAsset: (...args: unknown[]) => Promise<void>;
+  };
+  const originalPutProject = stubbedCache.putProject;
+  const originalPutPluginDefinitions = stubbedCache.putPluginDefinitions;
+  const originalPutAsset = stubbedCache.putAsset;
+  const capturedUrls: string[] = [];
+
+  stubbedCache.putProject = async () => {};
+  stubbedCache.putPluginDefinitions = async () => {};
+  stubbedCache.putAsset = async () => {};
+  (globalThis as typeof globalThis & { fetch: typeof fetch }).fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input.toString();
+    capturedUrls.push(url);
+    if (url.includes('/bootstrap')) {
+      return jsonResponse(bootstrapResponse);
+    }
+    if (url.includes('/active-version') && init?.method === 'POST') {
+      return jsonResponse({
+        activeVersionId: branch.id,
+        isFollowingHead: true,
+        activeBranchName: branch.label,
+      });
+    }
+    throw new Error(`Unexpected fetch in test: ${url}`);
+  };
+
+  try {
+    await harness.handleRealtimeVersionTreeChanged({
+      data: JSON.stringify({
+        type: 'version_created',
+        projectId: 'project-1',
+        demoId: 'demo-1',
+        createdAt: '2025-01-02T00:00:00.000Z',
+        actorUserId: 'user-b',
+        versionId: branch.id,
+        parentVersionId: root.id,
+        kind: 'AUTO',
+        operationSeq: 2,
+      }),
+    } as MessageEvent<string>);
+
+    assert.deepEqual(capturedUrls, [
+      '/api/daw/projects/project-1/bootstrap?demoId=demo-1',
+      '/api/daw/projects/project-1/active-version',
+    ]);
+    const projectState = engine.getState().projectState;
+    assert.ok(projectState);
+    assert.equal(projectState?.versions.length, 2);
+    assert.equal(projectState?.currentVersionId, branch.id);
+    assert.equal(projectState?.activeVersionId, branch.id);
+    assert.equal(projectState?.isFollowingHead, true);
+    assert.equal(engine.getState().lastSyncedOperationSeq, 2);
+  } finally {
+    (globalThis as typeof globalThis & { fetch: typeof fetch }).fetch = originalFetch;
+    stubbedCache.putProject = originalPutProject;
+    stubbedCache.putPluginDefinitions = originalPutPluginDefinitions;
+    stubbedCache.putAsset = originalPutAsset;
+  }
+});

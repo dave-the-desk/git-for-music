@@ -142,6 +142,11 @@ and tune.
   editing transport as an edit. It is announced via a version-tree event so the
   Tree tab refreshes.
 
+> IMPORTANT: For the web app, Automatic Version Saving must follow the
+> accepted-operation path, checkpoint the converged branch head after commit,
+> and never duplicate audio or introduce a realtime edit branch for the autosave
+> itself.
+
 ## 5. Reverting To A Version
 
 Revert stays non-destructive (see

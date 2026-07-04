@@ -5,6 +5,7 @@ export {
   emitDawCommentActivity,
   emitDawProjectPresence,
   emitDawProjectRebootstrapRequired,
+  emitDawVersionCreated,
   emitDawVersionTreeChanged,
   emitDawProjectTransportState,
   encodeDawRealtimeEvent,

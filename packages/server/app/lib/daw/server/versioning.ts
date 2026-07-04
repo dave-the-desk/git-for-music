@@ -262,7 +262,9 @@ export async function createDemoVersionWithCopiedTracks(
     description,
     parentId,
     kind,
+    operationSeq,
     sourceVersionId,
+    copyTracks = true,
     loadSourceSnapshotState = loadSourceVersionSnapshotState,
   }: {
     demoId: string;
@@ -270,7 +272,9 @@ export async function createDemoVersionWithCopiedTracks(
     description?: string | null;
     parentId?: string | null;
     kind?: 'AUTO' | 'SEMANTIC' | 'EXPLICIT' | 'REVERT' | 'BRANCH' | 'MERGE';
+    operationSeq?: number | null;
     sourceVersionId?: string | null;
+    copyTracks?: boolean;
     loadSourceSnapshotState?: (
       tx: Prisma.TransactionClient,
       demoId: string,
@@ -290,6 +294,7 @@ export async function createDemoVersionWithCopiedTracks(
       label,
       description: description ?? null,
       kind: kind ?? 'EXPLICIT',
+      operationSeq: operationSeq ?? null,
       ...(sourceVersion
         ? {
             tempoBpm: sourceVersion.tempoBpm,
@@ -320,7 +325,7 @@ export async function createDemoVersionWithCopiedTracks(
     },
   });
 
-  if (sourceVersionId) {
+  if (sourceVersionId && copyTracks) {
     const cloneMap = await cloneTrackVersionsToDemoVersion(tx, sourceVersionId, version.id);
     const sourceSnapshotState = await loadSourceSnapshotState(tx, demoId);
     const hydratedTracks = hydrateClonedTrackCrossfades(
@@ -344,6 +349,33 @@ export async function createDemoVersionWithCopiedTracks(
     },
     tracks: [],
   };
+}
+
+export async function createAutoDemoVersion(
+  tx: Prisma.TransactionClient,
+  input: {
+    demoId: string;
+    sourceVersionId: string;
+    operationSeq: number;
+    kind?: 'AUTO' | 'SEMANTIC';
+    label?: string | null;
+    description?: string | null;
+  },
+) {
+  const checkpointKind = input.kind ?? 'AUTO';
+  const checkpointLabel =
+    input.label ?? (checkpointKind === 'SEMANTIC' ? 'Semantic checkpoint' : 'Auto save');
+
+  return createDemoVersionWithCopiedTracks(tx, {
+    demoId: input.demoId,
+    sourceVersionId: input.sourceVersionId,
+    parentId: input.sourceVersionId,
+    kind: checkpointKind,
+    operationSeq: input.operationSeq,
+    copyTracks: false,
+    label: checkpointLabel,
+    description: input.description ?? null,
+  });
 }
 
 export function serializeCreatedDemoVersionTreeNode(input: {

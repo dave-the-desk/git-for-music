@@ -6,6 +6,7 @@ import {
   loadLatestDemoSnapshotAtOrBeforeOperationSeq,
   loadSnapshotStateForDemo,
   recordDemoDawOperation,
+  shouldCreateAutoVersion,
   type DemoDawSnapshotData,
   type DemoDawOperationPayload,
   type DemoDawSnapshotOperationRow,
@@ -31,10 +32,11 @@ import { isValidTempoBpm, normalizeTimeSignature } from '@/app/lib/daw/utils/tim
 import {
   createProjectPresenceSeed,
   emitAcceptedDawOperation,
+  emitDawVersionCreated,
   emitDawVersionTreeChanged,
 } from '@/app/lib/daw/server/realtime-gateway';
 import { createDemoVersionWithCopiedTracks } from '@/app/lib/daw/server/versions';
-import { serializeCreatedDemoVersionTreeNode } from '@/app/lib/daw/server/versioning';
+import { createAutoDemoVersion, serializeCreatedDemoVersionTreeNode } from '@/app/lib/daw/server/versioning';
 import type {
   DawOperationCommitRequest,
   DawOperationLogPayload,
@@ -104,6 +106,8 @@ const BRANCH_CREATING_OPERATION_TYPES = new Set<DawOperationType>([
   'TRACK_RENAMED',
   'SEGMENT_TRIMMED',
 ]);
+const ENABLE_ORDINARY_EDIT_HEAD_ADVANCE =
+  process.env.DAW_ENABLE_ORDINARY_EDIT_HEAD_ADVANCE === 'true';
 const VERSION_TREE_MUTATION_OPERATION_TYPES = new Set<DawOperationType>([
   'VERSION_CREATED',
   'VERSION_BRANCH_CREATED',
@@ -116,6 +120,11 @@ const VERSION_TREE_MUTATION_OPERATION_TYPES = new Set<DawOperationType>([
   'VERSION_OPERATION_SUMMARY_SET',
   'VERSION_NODE_ADDED',
   'VERSION_TIMING_UPDATED',
+]);
+const AUTO_VERSION_SEMANTIC_OPERATION_TYPES = new Set<DawOperationType>([
+  'SEGMENT_SPLIT',
+  'SEGMENT_MERGED',
+  'TRACK_VERSION_CREATED',
 ]);
 
 export function shouldBranchFromHistoricalBase(input: {
@@ -139,6 +148,13 @@ export function isTimelineEditOperation(operationType: DawOperationType) {
 
 export function shouldCreateBranchForOperation(operationType: DawOperationType) {
   return BRANCH_CREATING_OPERATION_TYPES.has(operationType);
+}
+
+export function shouldCreatePerEditBranchForOperation(
+  operationType: DawOperationType,
+  enableOrdinaryEditHeadAdvance = ENABLE_ORDINARY_EDIT_HEAD_ADVANCE,
+) {
+  return shouldCreateBranchForOperation(operationType) && !enableOrdinaryEditHeadAdvance;
 }
 
 export function getTimelineEditBranchLabel(operationType: DawOperationType) {
@@ -168,6 +184,10 @@ export function getTimelineEditBranchLabel(operationType: DawOperationType) {
 
 export function shouldBroadcastVersionTreeChanged(operationType: DawOperationType) {
   return VERSION_TREE_MUTATION_OPERATION_TYPES.has(operationType);
+}
+
+function isSemanticAutoVersionOperation(operationType: DawOperationType) {
+  return AUTO_VERSION_SEMANTIC_OPERATION_TYPES.has(operationType);
 }
 
 function toIsoString(value: Date | string) {
@@ -203,6 +223,91 @@ function serializeSnapshotRow(row: Awaited<ReturnType<typeof loadLatestDemoSnaps
     createdById: row.createdById,
     createdAt: toIsoString(row.createdAt),
   } satisfies DawProjectSnapshotRecord;
+}
+
+export async function maybeCreateAutoDemoVersionAfterAcceptedOperation(
+  tx: Prisma.TransactionClient,
+  input: {
+    projectId: string;
+    demoId: string;
+    userId: string;
+    sourceVersionId: string | null;
+    operation: {
+      type: DawOperationType;
+      operationSeq: number;
+      createdAt: string;
+    };
+  },
+) {
+  if (!input.sourceVersionId) {
+    return null;
+  }
+
+  const sourceVersion = await tx.demoVersion.findFirst({
+    where: {
+      id: input.sourceVersionId,
+      demoId: input.demoId,
+    },
+    select: {
+      id: true,
+      operationSeq: true,
+    },
+  });
+
+  if (!sourceVersion) {
+    return null;
+  }
+
+  const recentOperations = await tx.projectOperationLog.findMany({
+    where: {
+      demoId: input.demoId,
+    },
+    orderBy: {
+      operationSeq: 'desc',
+    },
+    take: 2,
+    select: {
+      operationSeq: true,
+      createdAt: true,
+      operationType: true,
+    },
+  });
+
+  const currentOperation = recentOperations[0] ?? null;
+  const previousOperation = recentOperations[1] ?? null;
+
+  if (!currentOperation || currentOperation.operationSeq !== input.operation.operationSeq) {
+    return null;
+  }
+
+  const shouldCreate = shouldCreateAutoVersion({
+    latestOperationType: currentOperation.operationType,
+    latestOperationCreatedAt: previousOperation?.createdAt ?? currentOperation.createdAt,
+    latestOperationSeq: currentOperation.operationSeq,
+    latestVersionOperationSeq: sourceVersion.operationSeq ?? currentOperation.operationSeq,
+    now: currentOperation.createdAt,
+  });
+
+  if (!shouldCreate) {
+    return null;
+  }
+
+  const autoVersion = await createAutoDemoVersion(tx, {
+    demoId: input.demoId,
+    sourceVersionId: sourceVersion.id,
+    operationSeq: currentOperation.operationSeq,
+    kind: isSemanticAutoVersionOperation(currentOperation.operationType) ? 'SEMANTIC' : 'AUTO',
+  });
+
+  await setDemoUserActiveVersion(tx, {
+    projectId: input.projectId,
+    demoId: input.demoId,
+    userId: input.userId,
+    versionId: autoVersion.id,
+    isFollowingHead: true,
+  });
+
+  return autoVersion;
 }
 
 function serializeAsset(row: {
@@ -2387,13 +2492,19 @@ export async function commitDawProjectOperation(
       };
   let versionTreeChanged = false;
   let timelineBranchOperation: DawProjectOperationRecord | null = null;
+  let autoVersionSourceVersionId = checkoutVersionId;
+  let createdAutoVersion:
+    | Awaited<ReturnType<typeof maybeCreateAutoDemoVersionAfterAcceptedOperation>>
+    | null = null;
 
   try {
     result = await client.$transaction(async (tx) => {
       let effectiveRequest = request;
       let branchedFromHistoricalBase = false;
       const baseSnapshotId = request.baseSnapshotId ?? null;
-      const shouldCreateBranchForRequest = shouldCreateBranchForOperation(effectiveRequest.operationType);
+      const shouldCreateBranchForRequest = shouldCreatePerEditBranchForOperation(
+        effectiveRequest.operationType,
+      );
 
       if (
         shouldCreateBranchForRequest &&
@@ -2428,6 +2539,7 @@ export async function commitDawProjectOperation(
             versionId: branchVersion.id,
             isFollowingHead: true,
           });
+          autoVersionSourceVersionId = branchVersion.id;
 
           versionTreeChanged = true;
 
@@ -2475,6 +2587,7 @@ export async function commitDawProjectOperation(
                 parentId: createdBranch.parentId,
               };
               versionTreeChanged = true;
+              autoVersionSourceVersionId = createdBranch.id;
             }
           }
 
@@ -2531,6 +2644,7 @@ export async function commitDawProjectOperation(
           versionId: branchVersion.id,
           isFollowingHead: true,
         });
+        autoVersionSourceVersionId = branchVersion.id;
 
         const branchOperation = await recordDemoDawOperation(
           tx,
@@ -2614,6 +2728,20 @@ export async function commitDawProjectOperation(
         throw new Error('Accepted operation could not be reloaded');
       }
 
+      if (record.created) {
+        createdAutoVersion = await maybeCreateAutoDemoVersionAfterAcceptedOperation(tx, {
+          projectId: workspace.project.id,
+          demoId: workspace.demo.id,
+          userId: input.userId,
+          sourceVersionId: autoVersionSourceVersionId,
+          operation,
+        });
+
+        if (createdAutoVersion) {
+          versionTreeChanged = true;
+        }
+      }
+
       return {
         operation,
         created: record.created,
@@ -2650,6 +2778,18 @@ export async function commitDawProjectOperation(
       projectId: workspace.project.id,
       demoId: workspace.demo.id,
       operation: result.operation,
+    });
+  }
+
+  if (createdAutoVersion) {
+    await emitDawVersionCreated({
+      projectId: workspace.project.id,
+      demoId: workspace.demo.id,
+      actorUserId: input.userId,
+      versionId: createdAutoVersion.id,
+      parentVersionId: createdAutoVersion.parentId,
+      kind: createdAutoVersion.kind,
+      operationSeq: createdAutoVersion.operationSeq ?? null,
     });
   }
 

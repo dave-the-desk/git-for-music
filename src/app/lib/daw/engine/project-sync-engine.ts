@@ -108,6 +108,18 @@ type RealtimeVersionTreeChangedEvent = {
   actorUserId: string;
 };
 
+type RealtimeVersionCreatedEvent = {
+  type: 'version_created';
+  projectId: string;
+  demoId: string;
+  createdAt: string;
+  actorUserId: string;
+  versionId: string;
+  parentVersionId: string | null;
+  kind: 'AUTO' | 'SEMANTIC' | 'EXPLICIT' | 'REVERT' | 'BRANCH' | 'MERGE';
+  operationSeq: number | null;
+};
+
 type RealtimeProjectRebootstrapRequiredEvent = {
   type: 'project_rebootstrap_required';
   projectId: string;
@@ -500,8 +512,8 @@ export class ProjectSyncEngine {
 
   private readonly handleRealtimeVersionTreeChanged = async (event: MessageEvent<string>) => {
     try {
-      const payload = JSON.parse(event.data) as RealtimeVersionTreeChangedEvent;
-      if (payload.type !== 'version_tree_changed') return;
+      const payload = JSON.parse(event.data) as RealtimeVersionTreeChangedEvent | RealtimeVersionCreatedEvent;
+      if (payload.type !== 'version_tree_changed' && payload.type !== 'version_created') return;
       if (payload.projectId !== this.projectId || payload.demoId !== this.demoId) return;
       await this.rebootstrapFromServer();
     } catch {
@@ -549,6 +561,9 @@ export class ProjectSyncEngine {
       this.handleRealtimePresence(event as MessageEvent<string>);
     });
     source.addEventListener('version_tree_changed', (event) => {
+      void this.handleRealtimeVersionTreeChanged(event as MessageEvent<string>);
+    });
+    source.addEventListener('version_created', (event) => {
       void this.handleRealtimeVersionTreeChanged(event as MessageEvent<string>);
     });
     source.addEventListener('project_rebootstrap_required', (event) => {

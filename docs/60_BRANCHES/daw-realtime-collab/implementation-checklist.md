@@ -63,44 +63,29 @@ merge-ready shape.
 Goal: create `DemoVersion` nodes automatically from accepted operations, without
 entering the realtime edit transport.
 
-- [ ] Define checkpoint policy constants (debounce window + operation-count K)
-      alongside `DEFAULT_SNAPSHOT_CHECKPOINT_TAIL` in `snapshot-builder.ts`.
-- [ ] Add `shouldCreateAutoVersion(...)` that fires on: N seconds idle after a
-      burst, K accepted ops since last version, or semantic boundaries
-      (track add/remove, segment split/merge, take committed).
-- [ ] Add a server helper `createAutoDemoVersion(...)` that snapshots the
-      converged branch head into a new `DemoVersion` (`kind = AUTO`/`SEMANTIC`,
-      `parentId` = current head, `operationSeq` = latest accepted) reusing
-      `createDemoVersionWithCopiedTracks`.
-- [ ] Call it from the accepted-operation path in `commitDawProjectOperation`
-      AFTER the operation is committed (never mid-transform), guarded by the
-      policy. Keep it distinct from `ProjectSnapshot` replay checkpoints.
-- [ ] Ensure auto-versions never carry audio; only pointers/metadata
-      (verify against `cloneTrackVersionsToDemoVersion`).
-- [ ] Emit a `version_created` event (see Phase F) so the Tree tab refreshes.
-- [ ] Decouple/clarify per-edit branching: the current per-edit branch for
-      `TRACK_RENAMED`/`SEGMENT_TRIMMED` should be reconsidered so ordinary edits
-      advance the head and auto-checkpoint, instead of forking a branch each
-      time. Gate behind a flag to avoid regressing existing behavior.
-- [ ] Tests: given a burst of accepted ops, exactly one auto-version is created
-      after debounce; op-count threshold triggers a checkpoint; audio is never
-      duplicated.
+IMPORTANT: Automatic Version Saving in the web app should be implemented by
+committing accepted operations first, then creating a checkpoint from the
+converged branch head after commit. Do not fork a realtime edit branch for the
+autosave path, do not create the version mid-transform, and do not duplicate
+audio.
+
+- [x] Define checkpoint policy constants (debounce window + operation-count K) alongside `DEFAULT_SNAPSHOT_CHECKPOINT_TAIL` in `snapshot-builder.ts`.
+- [x] Add `shouldCreateAutoVersion(...)` that fires on: N seconds idle after a burst, K accepted ops since last version, or semantic boundaries (track add/remove, segment split/merge, take committed).
+- [x] Add a server helper `createAutoDemoVersion(...)` that snapshots the converged branch head into a new `DemoVersion` (`kind = AUTO`/`SEMANTIC`, `parentId` = current head, `operationSeq` = latest accepted) reusing `createDemoVersionWithCopiedTracks`.
+- [x] Call it from the accepted-operation path in `commitDawProjectOperation` AFTER the operation is committed (never mid-transform), guarded by the policy. Keep it distinct from `ProjectSnapshot` replay checkpoints.
+- [x] Ensure auto-versions never carry audio; only pointers/metadata (verify against `cloneTrackVersionsToDemoVersion`).
+- [x] Emit a `version_created` event (see Phase F) so the Tree tab refreshes.
+- [x] Decouple/clarify per-edit branching: the current per-edit branch for `TRACK_RENAMED`/`SEGMENT_TRIMMED` should be reconsidered so ordinary edits advance the head and auto-checkpoint, instead of forking a branch each time. Gate behind a flag to avoid regressing existing behavior.
+- [x] Tests: given a burst of accepted ops, exactly one auto-version is created after debounce; op-count threshold triggers a checkpoint; audio is never duplicated.
 
 ## Phase C - Non-Destructive Revert
 
 Goal: revert-to-version creates a NEW version equal to an ancestor; history is
 preserved.
 
-- [ ] Add a server command `revertToVersionCommand(...)` (new
-      `packages/server/app/lib/daw/server/commands/revert-version.ts`) that
-      clones the target ancestor's tracks into a new `DemoVersion`
-      (`kind = REVERT`, `parentId` = current branch head).
-- [ ] Add an API route (e.g. `POST /api/versions/revert`) mirroring
-      `create-version.ts` auth + validation.
-- [ ] Record a `VERSION_REVERTED_FROM` operation whose payload carries the new
-      version node (like `VERSION_BRANCH_CREATED` does), and update the reducer
-      case in `src/app/lib/daw/state/operation-reducer.ts` to upsert the new
-      version node instead of only moving `currentVersionId`.
+- [ ] Add a server command `revertToVersionCommand(...)` (new `packages/server/app/lib/daw/server/commands/revert-version.ts`) that clones the target ancestor's tracks into a new `DemoVersion` (`kind = REVERT`, `parentId` = current branch head).
+- [ ] Add an API route (e.g. `POST /api/versions/revert`) mirroring `create-version.ts` auth + validation.
+- [ ] Record a `VERSION_REVERTED_FROM` operation whose payload carries the new version node (like `VERSION_BRANCH_CREATED` does), and update the reducer case in `src/app/lib/daw/state/operation-reducer.ts` to upsert the new version node instead of only moving `currentVersionId`.
 - [ ] In a live session, commit the revert like any accepted operation so all
       clients converge; move the branch head and let followers follow, without
       yanking pinned checkouts (respect `isFollowingHead`).
