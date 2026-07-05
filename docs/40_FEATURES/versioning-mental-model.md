@@ -8,6 +8,10 @@ Automatic version saving creates additional DemoVersion nodes from accepted
 operations after commit. Those checkpoints represent converged branch head
 states, not realtime edit transport events.
 
+Recording and any audio-tool edit that touches timeline content should be
+treated as a version boundary, so the resulting DemoVersion appears to every
+viewer as soon as the commit lands.
+
 Implemented version nodes also carry a provenance `kind` and `operationSeq`
 metadata so the Tree tab can order and label them without replaying the full
 operation log.

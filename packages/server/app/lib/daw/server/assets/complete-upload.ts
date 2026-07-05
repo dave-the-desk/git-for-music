@@ -26,6 +26,7 @@ import {
   serializeCreatedDemoVersionTreeNode,
 } from '@/app/lib/daw/server/versioning';
 import { verifyAssetUploadToken, assetObjectExists } from './storage-provider';
+import { getDuplicateBlankTrackVersionIds } from '../track-duplicate-cleanup';
 
 export async function completeUploadedOriginalAsset(input: {
   userId: string;
@@ -271,6 +272,42 @@ export async function completeUploadedOriginalAsset(input: {
         createdAt: true,
       },
     });
+
+    if (token.contentType !== 'application/x-git-for-music-empty-track') {
+      const duplicateTrackVersions = await tx.trackVersion.findMany({
+        where: {
+          demoVersionId: effectiveTargetVersionId,
+        },
+        select: {
+          id: true,
+          trackId: true,
+          mimeType: true,
+          track: {
+            select: {
+              name: true,
+            },
+          },
+        },
+      });
+      const duplicateTrackVersionIds = getDuplicateBlankTrackVersionIds(
+        duplicateTrackVersions.map((entry) => ({
+          trackVersionId: entry.id,
+          trackId: entry.trackId,
+          trackName: entry.track.name,
+          mimeType: entry.mimeType,
+        })),
+      ).filter((duplicateTrackVersionId) => duplicateTrackVersionId !== trackVersion.id);
+
+      if (duplicateTrackVersionIds.length > 0) {
+        await tx.trackVersion.deleteMany({
+          where: {
+            id: {
+              in: duplicateTrackVersionIds,
+            },
+          },
+        });
+      }
+    }
 
     const isRecording = token.sourceType === 'recording';
     const timelineStartMs =

@@ -13,6 +13,8 @@ The editor should follow a mastering-inspired philosophy:
 - Do not hide quality loss from the user
 
 Editing tools should operate on timeline regions and metadata first.
+Recording and any audio-tool action should create a new version boundary rather than
+silently mutating shared audio state.
 
 ## Examples
 
@@ -29,4 +31,3 @@ Editing tools should operate on timeline regions and metadata first.
 - [[40_FEATURES/timeline-editing-model]]
 - [[40_FEATURES/merge-and-conflict-guide]]
 - [[40_FEATURES/storage-model]]
-

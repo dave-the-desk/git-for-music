@@ -7,11 +7,16 @@ This note captures the main user- and agent-facing workflows that depend on vers
 - User uploads a file into a demo or track.
 - The upload should create or update track metadata without overwriting original audio.
 - Derived audio and processing status should be tracked separately.
+- When naming a newly added track, use the live active checkout, not a stale historical view, so collaborators do not generate duplicate `Track N` labels.
+- If the upload lands on a version that already contains a matching track by `trackId` or `trackName`, and one copy is the blank placeholder, silently remove the blank copy. Keep both only when both matching tracks contain real audio.
 
 ## Record Track Workflow
 
 - User records new audio into the timeline.
 - The recorded material becomes a versioned asset, not a mutable shared blob.
+- The recording should land as a new version so every project viewer sees the branch update immediately.
+- Once the server copy is live, clear the local recording preview so the committed track replaces the placeholder instead of showing a duplicate lane.
+- If recording creates or replays a version with the same track identity or name, remove any blank duplicate track entry on both the client and server so `Track 1` does not appear twice.
 - The resulting state should remain branchable and reversible.
 
 ## Move Segment Workflow
@@ -30,6 +35,7 @@ This note captures the main user- and agent-facing workflows that depend on vers
 
 - Fades should be represented as metadata first, not destructive edits.
 - Crossfades should describe the relationship between adjacent or overlapping regions.
+- Any fade, crossfade, move, split, trim, delete, or offset edit should create a new version boundary.
 - These changes should be reversible and visible in history.
 
 ## Revert Workflow
@@ -56,4 +62,3 @@ This note captures the main user- and agent-facing workflows that depend on vers
 - [[40_FEATURES/merge-and-conflict-guide]]
 - [[40_FEATURES/offline-sync-model]]
 - [[01_PROTOCOLS/non-negotiable-rules]]
-

@@ -220,6 +220,31 @@ test('createLocalProjectStateFromBootstrap defaults to the newest version when t
   assert.equal(state.versions.find((version) => version.id === newestVersion.id)?.isCurrent, true);
 });
 
+test('createLocalProjectStateFromBootstrap removes a blank duplicate track when the version already has audio for the same name', () => {
+  const root = makeVersion('version-root', {
+    isCurrent: true,
+    tracks: [
+      makeTrack('track-version-blank', {
+        trackId: 'track-blank',
+        trackName: 'Track 1',
+        mimeType: 'application/x-git-for-music-empty-track',
+      }),
+      makeTrack('track-version-audio', {
+        trackId: 'track-audio',
+        trackName: 'Track 1',
+        mimeType: 'audio/webm',
+      }),
+    ],
+  });
+
+  const state = createLocalProjectStateFromBootstrap(makeBootstrap([root], root.id));
+  const version = state.versions.find((candidate) => candidate.id === root.id);
+
+  assert.ok(version);
+  assert.equal(version?.tracks.length, 1);
+  assert.equal(version?.tracks[0]?.trackVersionId, 'track-version-audio');
+});
+
 test('VERSION_BRANCH_CREATED from the active head adds the branch without moving the active checkout', () => {
   const root = makeVersion('version-root', { isCurrent: true });
   const initial = createLocalProjectStateFromBootstrap(makeBootstrap([root], root.id));
@@ -708,6 +733,41 @@ test('TRACK_VERSION_CREATED replaces the copied track entry when it targets an e
   assert.ok(version);
   assert.equal(version?.tracks.length, 1);
   assert.equal(version?.tracks[0]?.trackId, 'track-1');
+  assert.equal(version?.tracks[0]?.trackVersionId, track.trackVersionId);
+});
+
+test('TRACK_VERSION_CREATED removes a blank duplicate track when the new track has audio and the same name', () => {
+  const root = makeVersion('version-root', {
+    isCurrent: true,
+    tracks: [
+      makeTrack('track-version-blank', {
+        trackId: 'track-blank',
+        trackName: 'Track 1',
+        mimeType: 'application/x-git-for-music-empty-track',
+      }),
+    ],
+  });
+  const initial = createLocalProjectStateFromBootstrap(makeBootstrap([root], root.id));
+
+  const track = makeTrack('track-version-new', {
+    trackId: 'track-audio',
+    trackName: 'Track 1',
+    mimeType: 'audio/webm',
+  });
+
+  const trackCreated = makeOperation('TRACK_VERSION_CREATED', 2, {
+    versionId: root.id,
+    trackId: track.trackId,
+    trackVersionId: track.trackVersionId,
+    operationSummary: 'Added audio track',
+    track,
+  });
+
+  const applied = applyAcceptedProjectOperation(initial, trackCreated);
+  const version = applied.versions.find((candidate) => candidate.id === root.id);
+
+  assert.ok(version);
+  assert.equal(version?.tracks.length, 1);
   assert.equal(version?.tracks[0]?.trackVersionId, track.trackVersionId);
 });
 

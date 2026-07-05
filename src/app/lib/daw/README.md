@@ -13,3 +13,4 @@ New DAW logic should go here first.
 - `server/` for server-side feature helpers used by routes and loaders.
 - `protocol/` for message and type definitions shared across browser and server code.
 - Browser audio should use the same-origin audio route and shared URL helpers, not raw storage keys.
+- Recording and audio-tool edits should produce a new version and broadcast the tree update to all project viewers.

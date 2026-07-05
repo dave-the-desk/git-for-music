@@ -982,7 +982,7 @@ test('validateSegmentCrossfadeSelection accepts adjacent clips and rejects inval
   );
 });
 
-test('version tree mutations broadcast a tree refresh while timeline edits do not', () => {
+test('version tree mutations and audio-tool edits broadcast a tree refresh while track renames do not', () => {
   for (const operationType of [
     'VERSION_CREATED',
     'VERSION_BRANCH_CREATED',
@@ -995,11 +995,19 @@ test('version tree mutations broadcast a tree refresh while timeline edits do no
     'VERSION_OPERATION_SUMMARY_SET',
     'VERSION_NODE_ADDED',
     'VERSION_TIMING_UPDATED',
+    'TRACK_OFFSET_UPDATED',
+    'SEGMENT_SPLIT',
+    'SEGMENT_MOVED',
+    'SEGMENT_DELETED',
+    'SEGMENT_TRIMMED',
+    'SEGMENT_MERGED',
+    'SEGMENT_FADE_SET',
+    'CROSSFADE_SET',
   ] as const) {
     assert.equal(shouldBroadcastVersionTreeChanged(operationType), true, operationType);
   }
 
-  for (const operationType of ['TRACK_RENAMED', 'SEGMENT_SPLIT', 'SEGMENT_MOVED'] as const) {
+  for (const operationType of ['TRACK_RENAMED'] as const) {
     assert.equal(shouldBroadcastVersionTreeChanged(operationType), false, operationType);
   }
 });

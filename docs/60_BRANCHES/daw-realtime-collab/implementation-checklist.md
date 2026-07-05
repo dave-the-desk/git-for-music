@@ -69,7 +69,7 @@ autosave path, do not create the version mid-transform, and do not duplicate
 audio.
 
 - [x] Define checkpoint policy constants (debounce window + operation-count K) alongside `DEFAULT_SNAPSHOT_CHECKPOINT_TAIL` in `snapshot-builder.ts`.
-- [x] Add `shouldCreateAutoVersion(...)` that fires on: N seconds idle after a burst, K accepted ops since last version, or semantic boundaries (track add/remove, segment split/merge, take committed).
+- [x] Add `shouldCreateAutoVersion(...)` that fires on: N seconds idle after a burst, K accepted ops since last version, or semantic boundaries (track add/remove, segment split/merge, track offset, segment move/delete/fade/crossfade, take committed).
 - [x] Add a server helper `createAutoDemoVersion(...)` that snapshots the converged branch head into a new `DemoVersion` (`kind = AUTO`/`SEMANTIC`, `parentId` = current head, `operationSeq` = latest accepted) reusing `createDemoVersionWithCopiedTracks`.
 - [x] Call it from the accepted-operation path in `commitDawProjectOperation` AFTER the operation is committed (never mid-transform), guarded by the policy. Keep it distinct from `ProjectSnapshot` replay checkpoints.
 - [x] Ensure auto-versions never carry audio; only pointers/metadata (verify against `cloneTrackVersionsToDemoVersion`).
@@ -141,6 +141,8 @@ Goal: keep heavy/derived work out of realtime and version metadata.
 ## Definition of Done (mirrors the design doc)
 
 Testing and confirmation of real-time sync
+
+The following items are now verified by repo regression tests and should be treated as current behavior:
 
 - [x] Two clients edit the same branch head concurrently and converge without an unwanted branch.
 - [x] Versions are created automatically as work happens and appear in the Tree tab without reload.

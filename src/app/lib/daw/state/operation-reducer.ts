@@ -12,6 +12,7 @@ import type {
   DawSegmentSnapshot,
 } from '@git-for-music/server/app/lib/daw/protocol';
 import { selectLatestVersionOrNull } from './selectors';
+import { pruneDuplicateBlankTracks } from '@/app/lib/daw/utils/track-duplicate-cleanup';
 import {
   applyCrossfadeSet,
   applySegmentDelete,
@@ -158,6 +159,12 @@ function upsertVersionTrack(versions: DawVersion[], versionId: string, track: Da
       ),
     };
   });
+}
+
+function pruneVersionTracks(versions: DawVersion[], versionId: string) {
+  return versions.map((version) =>
+    version.id === versionId ? { ...version, tracks: pruneDuplicateBlankTracks(version.tracks) } : version,
+  );
 }
 
 function touchVersionTree(state: LocalProjectState, operation: AcceptedDawProjectOperation) {
@@ -742,7 +749,10 @@ export function createLocalProjectStateFromBootstrap(
     ]),
   );
   return {
-    versions,
+    versions: versions.map((version) => ({
+      ...version,
+      tracks: pruneDuplicateBlankTracks(version.tracks),
+    })),
     currentVersionId,
     activeVersionId,
     isFollowingHead,
@@ -1098,21 +1108,24 @@ export function applyAcceptedProjectOperation(
       return {
         ...state,
         ...touchVersionTree(state, operation),
-        versions: payload.track
-          ? upsertVersionTrack(updatedVersions, versionId, payload.track)
-          : payload.operationSummary !== undefined || payload.version
-            ? updatedVersions.map((version) =>
-                version.id === versionId
-                  ? {
-                      ...version,
-                      operationSummary:
-                        payload.operationSummary ?? version.operationSummary ?? version.description ?? null,
-                      description:
-                        payload.operationSummary ?? version.description ?? version.operationSummary ?? null,
-                    }
-                  : version,
-              )
-            : updatedVersions,
+        versions: pruneVersionTracks(
+          payload.track
+            ? upsertVersionTrack(updatedVersions, versionId, payload.track)
+            : payload.operationSummary !== undefined || payload.version
+              ? updatedVersions.map((version) =>
+                  version.id === versionId
+                    ? {
+                        ...version,
+                        operationSummary:
+                          payload.operationSummary ?? version.operationSummary ?? version.description ?? null,
+                        description:
+                          payload.operationSummary ?? version.description ?? version.operationSummary ?? null,
+                      }
+                    : version,
+                )
+              : updatedVersions,
+          versionId,
+        ),
       };
     }
     case 'VERSION_PARENT_SET': {

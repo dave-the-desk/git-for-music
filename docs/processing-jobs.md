@@ -53,6 +53,7 @@ Future queue messages should carry enough data for a worker to run without extra
 - `outputStoragePrefix`
 
 The worker should treat the original audio object as immutable and write derived outputs into a separate prefix.
+For the current DAW upload flow, those derived jobs are enqueued with `demoVersionId` and `trackVersionId`, and the realtime layer only carries status metadata.
 
 ## Operational Notes
 

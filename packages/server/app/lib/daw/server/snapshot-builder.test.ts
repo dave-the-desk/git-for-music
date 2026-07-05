@@ -843,6 +843,56 @@ test('shouldCreateAutoVersion fires for semantic boundaries', () => {
   );
   assert.equal(
     shouldCreateAutoVersion({
+      latestOperationType: 'TRACK_OFFSET_UPDATED',
+      latestOperationCreatedAt: '2025-01-02T00:00:00.000Z',
+      latestOperationSeq: 8,
+      latestVersionOperationSeq: 5,
+      now: '2025-01-02T00:00:01.000Z',
+    }),
+    true,
+  );
+  assert.equal(
+    shouldCreateAutoVersion({
+      latestOperationType: 'SEGMENT_MOVED',
+      latestOperationCreatedAt: '2025-01-02T00:00:00.000Z',
+      latestOperationSeq: 8,
+      latestVersionOperationSeq: 5,
+      now: '2025-01-02T00:00:01.000Z',
+    }),
+    true,
+  );
+  assert.equal(
+    shouldCreateAutoVersion({
+      latestOperationType: 'SEGMENT_DELETED',
+      latestOperationCreatedAt: '2025-01-02T00:00:00.000Z',
+      latestOperationSeq: 8,
+      latestVersionOperationSeq: 5,
+      now: '2025-01-02T00:00:01.000Z',
+    }),
+    true,
+  );
+  assert.equal(
+    shouldCreateAutoVersion({
+      latestOperationType: 'SEGMENT_FADE_SET',
+      latestOperationCreatedAt: '2025-01-02T00:00:00.000Z',
+      latestOperationSeq: 8,
+      latestVersionOperationSeq: 5,
+      now: '2025-01-02T00:00:01.000Z',
+    }),
+    true,
+  );
+  assert.equal(
+    shouldCreateAutoVersion({
+      latestOperationType: 'CROSSFADE_SET',
+      latestOperationCreatedAt: '2025-01-02T00:00:00.000Z',
+      latestOperationSeq: 8,
+      latestVersionOperationSeq: 5,
+      now: '2025-01-02T00:00:01.000Z',
+    }),
+    true,
+  );
+  assert.equal(
+    shouldCreateAutoVersion({
       latestOperationType: 'TRACK_ADDED',
       latestOperationCreatedAt: '2025-01-02T00:00:00.000Z',
       latestOperationSeq: 8,

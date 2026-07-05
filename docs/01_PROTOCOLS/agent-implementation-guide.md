@@ -13,6 +13,7 @@ When modifying the codebase:
 9. Treat offline sync as a first-class path, not an edge case.
 10. Avoid adding UI that cannot be represented in the version graph.
 11. For browser-style React interaction coverage, use the web Vitest harness in `src/` (`pnpm --filter @git-for-music/web test` or `pnpm test:web`) with `jsdom` and Testing Library.
+12. For recording or any audio-tool action, ensure the change creates a new version and broadcasts the tree update to all project viewers.
 
 Before implementing a feature, answer:
 
@@ -21,6 +22,7 @@ Before implementing a feature, answer:
 - Does this create a new DemoVersion?
 - Does this create a new TrackVersion?
 - Is the original audio preserved?
+- Does this audio change create a new version boundary for everyone in the project?
 - Can this operation be replayed?
 - Can it conflict with another operation?
 - How does it behave offline?

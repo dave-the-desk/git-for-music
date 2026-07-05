@@ -67,6 +67,9 @@ import {
   formatTimeMs,
 } from '@/app/lib/daw/state/ui-state';
 import { buildRecordingBounds, type RecordingBounds } from '@/app/lib/daw/utils/recording-bounds';
+import { getNextUploadTrackName } from '@/app/lib/daw/utils/track-names';
+import { resolveUploadSourceVersionId } from '@/app/lib/daw/utils/upload-source-version';
+import { shouldShowTemporaryRecordingTrack } from '@/app/lib/daw/utils/recording-preview';
 import type {
   DawTrack,
   DawVersion,
@@ -143,18 +146,6 @@ function createBlankTrackFile() {
   return new File([createBlankTrackBytes()], `empty-track-${Date.now()}.wav`, {
     type: EMPTY_TRACK_MIME_TYPE,
   });
-}
-
-function getNextEmptyTrackName(tracks: DawTrack[]) {
-  const highestTrackNumber = tracks.reduce((maxTrackNumber, track) => {
-    const match = /^Track (\d+)$/.exec(track.trackName.trim());
-    if (!match) return maxTrackNumber;
-
-    const trackNumber = Number(match[1]);
-    return Number.isFinite(trackNumber) ? Math.max(maxTrackNumber, trackNumber) : maxTrackNumber;
-  }, 0);
-
-  return `Track ${highestTrackNumber + 1}`;
 }
 
 function hasLocalBlankTrackOverride(
@@ -317,6 +308,7 @@ export function DemoDawClient({
   const isLiveRecordingRef = useRef(false);
   const recordingSessionRef = useRef<RecordingSession | null>(null);
   const recordingControlsRef = useRef<RecordingControlsHandle | null>(null);
+  const freshestCommittedVersionIdRef = useRef(initialActiveVersionId ?? initialCurrentVersionId);
 
   const [offsetOverrides, setOffsetOverrides] = useState<Record<string, number>>({});
   const [segmentLayoutOverrides, setSegmentLayoutOverrides] = useState<Record<string, TrackTimelineSegment[]>>({});
@@ -453,6 +445,11 @@ export function DemoDawClient({
   );
 
   const selectedTracks = useMemo(() => selectTracks(selectedVersion), [selectedVersion]);
+  const liveActiveVersion = useMemo(
+    () => selectVersionById(liveVersions, liveActiveVersionId),
+    [liveActiveVersionId, liveVersions],
+  );
+  const liveActiveTracks = useMemo(() => selectTracks(liveActiveVersion), [liveActiveVersion]);
   const selectedTrack = useMemo(
     () => selectedTracks.find((track) => track.trackVersionId === selectedTrackVersionId) ?? selectedTracks[0] ?? null,
     [selectedTrackVersionId, selectedTracks],
@@ -861,17 +858,7 @@ export function DemoDawClient({
   ]);
 
   const visualTemporaryRecordingTrack = useMemo(() => {
-    if (!temporaryRecordingTrack) return null;
-
-    if (
-      temporaryRecordingTrack.syncStatus === 'complete' &&
-      temporaryRecordingTrack.serverTrackVersionId &&
-      temporaryRecordingTrack.serverDemoVersionId
-    ) {
-      return null;
-    }
-
-    return temporaryRecordingTrack;
+    return shouldShowTemporaryRecordingTrack(temporaryRecordingTrack) ? temporaryRecordingTrack : null;
   }, [temporaryRecordingTrack]);
 
   const visualProjection = useMemo(
@@ -2794,7 +2781,16 @@ export function DemoDawClient({
   }
 
   async function handleAddTrack() {
-    await performUpload(createBlankTrackFile(), getNextEmptyTrackName(selectedTracks), 'uploadUnchanged');
+    await performUpload(
+      createBlankTrackFile(),
+      getNextUploadTrackName({
+        liveActiveVersionId,
+        selectedVersionId,
+        liveActiveTracks,
+        selectedTracks,
+      }),
+      'uploadUnchanged',
+    );
   }
 
   function handleRecordingStreamReady(
@@ -2887,7 +2883,7 @@ export function DemoDawClient({
     recordingPreviewUrlRef.current = previewUrl;
     pauseTransport();
     seekTransport(recordingBounds.startOffsetMs);
-    tracksScrollContainerRef.current?.scrollTo({
+    tracksScrollContainerRef.current?.scrollTo?.({
       left: Math.max(0, (recordingBounds.startOffsetMs / 1000) * PX_PER_SECOND - 48),
       behavior: 'auto',
     });
@@ -2975,7 +2971,7 @@ export function DemoDawClient({
         timelineStartMs: recordingSession.timelineStartMs,
         measuredDurationMs: track.durationMs,
         fallbackDurationMs: track.durationMs,
-      });
+    });
 
     isLiveRecordingRef.current = false;
     setTemporaryRecordingTrack((prev) =>
@@ -3024,6 +3020,14 @@ export function DemoDawClient({
           : prev,
       );
       setSelectedVersionId(data.demoVersionId);
+      freshestCommittedVersionIdRef.current = data.demoVersionId;
+      void projectSyncEngine.setActiveVersion(data.demoVersionId, { isFollowingHead: true });
+      if (recordingPreviewUrlRef.current) {
+        ingestEngine.revokeObjectUrl(recordingPreviewUrlRef.current);
+        recordingPreviewUrlRef.current = null;
+      }
+      recordingSessionRef.current = null;
+      setTemporaryRecordingTrack(null);
       if ('processingJobIds' in data && data.processingJobIds.length > 0) {
         setProcessingStartedAt(Date.now());
         setProcessingJobIds(data.processingJobIds);
@@ -3039,7 +3043,7 @@ export function DemoDawClient({
               status: 'error',
               syncStatus: 'error',
               error: error instanceof Error ? error.message : 'Something went wrong while saving.',
-            }
+          }
           : prev,
       );
     }
@@ -3050,12 +3054,18 @@ export function DemoDawClient({
     setUploadError(null);
     setProcessingMessage(null);
     const uploadTempoBpm = resolvedLocalTempoBpm;
+    const uploadSourceVersionId = resolveUploadSourceVersionId({
+      selectedVersionId,
+      liveActiveVersionId,
+      freshestCommittedVersionId: freshestCommittedVersionIdRef.current,
+      isHistoryViewActive,
+    });
     try {
       const data = (await ingestEngine.uploadAudioFile({
         demoId,
         projectId,
         name,
-        sourceVersionId: liveActiveVersionId,
+        sourceVersionId: uploadSourceVersionId,
         recordedTempoBpm: uploadTempoBpm,
         sourceTempoBpm: uploadTempoBpm,
         timingChoice,
@@ -3075,6 +3085,7 @@ export function DemoDawClient({
       setUploadName('');
       setUploadFile(null);
       setSelectedVersionId(data.demoVersionId);
+      freshestCommittedVersionIdRef.current = data.demoVersionId;
       void projectSyncEngine.setActiveVersion(data.demoVersionId, { isFollowingHead: true });
       if ('processingJobIds' in data && data.processingJobIds.length > 0) {
         setProcessingStartedAt(Date.now());

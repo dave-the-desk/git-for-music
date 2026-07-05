@@ -28,7 +28,9 @@ It covers the DAW editor itself. The surrounding groups and project pages use a 
 - `Demo.currentVersionId` is now a fallback/default seed for legacy demos and bootstrap gaps, not the live checkout pointer.
 - `snapshot.currentVersionId` and operation-history `currentVersionId` are shared-head metadata for replay and tree rendering only; they do not define the viewer checkout.
 - `VERSION_SELECTED` and `CURRENT_VERSION_CHANGED` are legacy compatibility operations only; new checkout changes go through the per-user active-version API.
-- Timeline edit commits branch the active checkout into a new `DemoVersion`, and the version tree refreshes so the new node appears immediately.
+- Recording and audio-tool commits branch the active checkout into a new `DemoVersion`, and the version tree refreshes so the new node appears immediately for every subscribed viewer.
+- UI actions that create new tracks should name them from the live active checkout, not from a stale selected/history version, or collaborators can generate duplicate `Track N` names.
+- Recording previews should be cleared once the uploaded track is materialized so the preview lane does not linger beside the committed track.
 - Only stale-base/conflict recovery and explicit branch flows use the other branch creation paths.
 
 ## 2. Local edit
@@ -62,6 +64,13 @@ It covers the DAW editor itself. The surrounding groups and project pages use a 
 - Presence and transport are realtime but non-durable
 - Local-only settings such as local tempo should not enter durable operation history
 - Workspace refresh events should be emitted for list and detail pages, but not for low-level timeline edits already covered by DAW SSE
+
+## 6. Upload and derived audio boundary
+
+- Realtime transport stays metadata-only. It carries accepted operations, presence, transport state, version-tree changes, and asset-processing status, but not raw audio blobs.
+- Audio uploads are finalized into versioned storage rows and `trackVersion` records, then derived work is queued separately.
+- Derived audio jobs are keyed by `demoVersionId` and `trackVersionId` so each version can reference its outputs without the blobs entering realtime.
+- Any recording or audio-tool action that changes the timeline should be treated as a version boundary, not as a silent in-place edit.
 
 ## Before adding new DAW features
 

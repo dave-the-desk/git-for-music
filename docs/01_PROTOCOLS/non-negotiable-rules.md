@@ -14,6 +14,9 @@ Every destructive-looking action must be represented as:
 - a derived asset
 - or a reversible operation
 
+Recording and any audio-tool action that changes audio state must create a new version
+boundary instead of mutating shared audio in place.
+
 ## Versioning
 
 Revert is not destructive.
@@ -32,6 +35,9 @@ Realtime should be used for lightweight state:
 - processing status
 - version updates
 - metadata changes
+
+Audio-tool commits should also broadcast the version-tree change immediately so everyone
+in the project sees the new version as soon as it lands.
 
 Large audio files should live in object storage and be fetched via signed URLs.
 
@@ -75,4 +81,3 @@ On reconnect:
 - [[40_FEATURES/merge-and-conflict-guide]]
 - [[40_FEATURES/offline-sync-model]]
 - [[40_FEATURES/storage-model]]
-

@@ -21,6 +21,7 @@ import {
   serializeCreatedDemoTrackVersionTreeTrack,
   serializeCreatedDemoVersionTreeNode,
 } from '@/app/lib/daw/server/versioning';
+import { getDuplicateBlankTrackVersionIds } from '@/app/lib/daw/server/track-duplicate-cleanup';
 
 function fileNameWithoutExtension(fileName: string) {
   const extension = path.extname(fileName);
@@ -282,6 +283,42 @@ export async function uploadTrackCommand(input: {
         createdAt: true,
       },
     });
+
+    if (contentType !== 'application/x-git-for-music-empty-track') {
+      const duplicateTrackVersions = await tx.trackVersion.findMany({
+        where: {
+          demoVersionId: effectiveTargetVersionId,
+        },
+        select: {
+          id: true,
+          trackId: true,
+          mimeType: true,
+          track: {
+            select: {
+              name: true,
+            },
+          },
+        },
+      });
+      const duplicateTrackVersionIds = getDuplicateBlankTrackVersionIds(
+        duplicateTrackVersions.map((entry) => ({
+          trackVersionId: entry.id,
+          trackId: entry.trackId,
+          trackName: entry.track.name,
+          mimeType: entry.mimeType,
+        })),
+      ).filter((duplicateTrackVersionId) => duplicateTrackVersionId !== trackVersion.id);
+
+      if (duplicateTrackVersionIds.length > 0) {
+        await tx.trackVersion.deleteMany({
+          where: {
+            id: {
+              in: duplicateTrackVersionIds,
+            },
+          },
+        });
+      }
+    }
 
     trackVersionCreatedOperation = await recordDemoDawOperation(
       tx,

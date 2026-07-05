@@ -157,6 +157,7 @@ The DAW backend follows a command/snapshot/realtime pattern:
 - bootstrap endpoints load a durable snapshot plus an operation tail
 - command endpoints validate auth and write through server command handlers
 - successful writes create operation log records, update snapshots/checkpoints when needed, and emit realtime events
+- recording and audio-tool commits create a new version boundary and broadcast the resulting tree change to every subscribed viewer
 - the client listens for `accepted_operation` and other events to stay in sync
 - surrounding group/project pages refresh through the workspace SSE lane when their data changes
 
@@ -216,6 +217,7 @@ The durable key still identifies the object in storage, but the browser should r
 - Keep DAW state derivations pure where possible.
 - Treat `LocalProjectState` as the live render model for the DAW UI.
 - Treat the Prisma schema and object storage keys as durable identifiers, not display names.
+- Treat recording and audio-tool edits as versioned changes, not silent in-place mutations.
 
 ## Related Notes
 
