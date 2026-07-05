@@ -200,8 +200,10 @@
       "bases:Create new base": false
     }
   },
-  "active": "0c277a4707285d99",
+  "active": "890ad97988d33610",
   "lastOpenFiles": [
+    "30_UI/current-daw-ui-explanation.md",
+    "30_UI/current-daw-ui-style-guide.md",
     "00_HOME.md",
     "30_UI/daw-ui-ideal-alignment-plan.md",
     "30_UI/ideal-daw-ui-ux-design.md",
@@ -235,8 +237,6 @@
     "architecture/daw-realtime-sync.md",
     "daily-logging/2026-07-04.md",
     "60_BRANCHES/README.md",
-    "processing-jobs.md",
-    "papers/realtime-collaboration-plan.md",
-    "daily-logging/2026-06-28.md"
+    "processing-jobs.md"
   ]
 }
