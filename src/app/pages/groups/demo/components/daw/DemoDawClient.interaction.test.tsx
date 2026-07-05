@@ -1,5 +1,5 @@
 import { createElement, forwardRef, useImperativeHandle } from 'react';
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DawTrack, DawVersion, LocalProjectState } from '@/app/lib/daw/state/local-project-state';
@@ -520,6 +520,11 @@ describe('DemoDawClient recording regression', () => {
     mockPendingActiveVersionUpdates.pending = [];
     mockRecordingSave.deferred = createDeferred();
     mockProjectSync.reset();
+    try {
+      window.localStorage.clear();
+    } catch {
+      // jsdom/vitest may not expose a writable localStorage shim here.
+    }
     global.fetch = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes('/bootstrap?demoId=')) {
@@ -560,6 +565,9 @@ describe('DemoDawClient recording regression', () => {
       />,
     );
 
+    expect(screen.getByTestId('project-timing-controls')).toBeTruthy();
+    expect(screen.getByTestId('transport-controls')).toBeTruthy();
+    expect(screen.getByTestId('audio-input-selector')).toBeTruthy();
     expect(screen.getByTestId('version-tree-rail')).toBeTruthy();
     expect(screen.getByTestId('version-history-tree')).toBeTruthy();
 
@@ -592,6 +600,46 @@ describe('DemoDawClient recording regression', () => {
     await act(async () => {
       await mockPendingActiveVersionUpdates.flush();
     });
+  });
+
+  it('updates the docked rail when the viewport crosses the desktop breakpoint', async () => {
+    const initialVersion = makeVersion('version-1', ['Track 1'], {
+      isCurrent: true,
+      operationSeq: 1,
+      createdAt: '2026-07-05T00:00:00.000Z',
+      tracks: [makeTrack('Track 1', 'version-1-track-1', { trackId: 'track-1', trackPosition: 0 })],
+    });
+
+    const previousWidth = window.innerWidth;
+    window.innerWidth = 1024;
+
+    const { unmount } = render(
+      <DemoDawClient
+        groupSlug="demo-group"
+        projectSlug="demo-project"
+        projectId="project-1"
+        demoId="demo-1"
+        currentUserId="user-1"
+        demoName="Demo"
+        demoDescription={null}
+        initialCurrentVersionId={initialVersion.id}
+        initialActiveVersionId={initialVersion.id}
+        initialIsFollowingHead={true}
+        initialVersions={[initialVersion]}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Expand version history rail' })).toBeTruthy();
+
+    window.innerWidth = 1440;
+    fireEvent(window, new Event('resize'));
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Collapse version history rail' })).toBeTruthy();
+    });
+
+    unmount();
+    window.innerWidth = previousWidth;
   });
 
   it('follows a collaborator-created blank-daw track without requiring refresh', async () => {

@@ -282,6 +282,9 @@ export function DemoDawClient({
   const [audioInputReady, setAudioInputReady] = useState(false);
   const [toolbarTab, setToolbarTab] = useState<DawToolbarTab>('edit');
   const [isVersionTreeRailExpanded, setIsVersionTreeRailExpanded] = useState(true);
+  const [viewportWidth, setViewportWidth] = useState(() =>
+    typeof window !== 'undefined' ? window.innerWidth : 1440,
+  );
   const [selectedTrackVersionId, setSelectedTrackVersionId] = useState<string | null>(null);
   const [presenceRecords, setPresenceRecords] = useState<ProjectPresenceRecord[]>([]);
   const [pluginDefinitions, setPluginDefinitions] = useState<
@@ -341,6 +344,8 @@ export function DemoDawClient({
   const tracksScrollContainerRef = useRef<HTMLDivElement | null>(null);
   const versionTreeRailRef = useRef<HTMLDivElement | null>(null);
   const hasHydratedVersionTreeRailRef = useRef(false);
+  const versionTreeRailHydratedFromStorageRef = useRef(false);
+  const versionTreeRailShouldPersistRef = useRef(false);
   const metronomeAudioRef = useRef<AudioContext | null>(null);
   const metronomeTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const metronomeScheduledBeatRef = useRef<number | null>(null);
@@ -427,6 +432,7 @@ export function DemoDawClient({
   const liveActiveVersionId =
     liveProjectState?.activeVersionId ?? initialActiveVersionId ?? liveBranchHeadVersionId;
   const isFollowingHead = liveProjectState?.isFollowingHead ?? initialIsFollowingHead;
+  const isWideViewport = viewportWidth >= 1280;
   const displayProjectState = historyProjectState ?? liveProjectState;
   const displayVersions = displayProjectState?.versions ?? liveVersions;
   const displayBranchHeadVersionId = displayProjectState?.currentVersionId ?? liveBranchHeadVersionId;
@@ -571,30 +577,45 @@ export function DemoDawClient({
   }, [projectSyncEngine]);
 
   useEffect(() => {
+    function handleResize() {
+      setViewportWidth(window.innerWidth);
+    }
+
+    handleResize();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  useEffect(() => {
     if (typeof window === 'undefined') return;
 
     const storageKey = getVersionTreeRailStorageKey(projectId, currentUserId);
-    let nextExpanded = true;
-    const fallbackExpanded = window.innerWidth >= 1280;
+    const fallbackExpanded = isWideViewport;
 
     try {
       const storedValue = window.localStorage.getItem(storageKey);
       if (storedValue === 'true' || storedValue === 'false') {
-        nextExpanded = storedValue === 'true';
+        versionTreeRailHydratedFromStorageRef.current = true;
+        versionTreeRailShouldPersistRef.current = true;
+        setIsVersionTreeRailExpanded(storedValue === 'true');
       } else {
-        nextExpanded = fallbackExpanded;
+        versionTreeRailHydratedFromStorageRef.current = false;
+        versionTreeRailShouldPersistRef.current = false;
+        setIsVersionTreeRailExpanded(fallbackExpanded);
       }
     } catch {
-      nextExpanded = fallbackExpanded;
+      versionTreeRailHydratedFromStorageRef.current = false;
+      versionTreeRailShouldPersistRef.current = false;
+      setIsVersionTreeRailExpanded(fallbackExpanded);
     }
 
-    setIsVersionTreeRailExpanded(nextExpanded);
     hasHydratedVersionTreeRailRef.current = true;
-  }, [currentUserId, projectId]);
+  }, [currentUserId, isWideViewport, projectId]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
     if (!hasHydratedVersionTreeRailRef.current) return;
+    if (!versionTreeRailShouldPersistRef.current) return;
 
     try {
       window.localStorage.setItem(
@@ -607,7 +628,14 @@ export function DemoDawClient({
   }, [currentUserId, isVersionTreeRailExpanded, projectId]);
 
   useEffect(() => {
+    if (!hasHydratedVersionTreeRailRef.current) return;
+    if (versionTreeRailHydratedFromStorageRef.current) return;
+    setIsVersionTreeRailExpanded(isWideViewport);
+  }, [isWideViewport]);
+
+  useEffect(() => {
     if (toolbarTab !== 'tree') return;
+    versionTreeRailShouldPersistRef.current = true;
     setIsVersionTreeRailExpanded(true);
     versionTreeRailRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, [toolbarTab]);
@@ -3227,46 +3255,91 @@ export function DemoDawClient({
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
-      <div className="mx-auto flex min-h-screen max-w-[1760px] flex-col gap-4 px-4 py-4">
-        <header className="flex flex-wrap items-start justify-between gap-4">
-          <div className="flex items-start gap-4">
-            <button
-              type="button"
-              onClick={() => {
-                if (typeof window !== 'undefined' && window.history.length > 1) {
-                  router.back();
-                } else {
-                  router.push(`/groups/${groupSlug}/projects/${projectSlug}`);
-                }
-              }}
-              className="mt-1 inline-flex h-10 items-center justify-center rounded-full border border-slate-700 bg-slate-950 px-4 text-sm font-semibold text-slate-100 hover:bg-slate-900"
-            >
-              Back
-            </button>
-            <div>
-              <h1 className="text-3xl font-semibold tracking-tight text-white">{demoName}</h1>
-              {demoDescription ? <p className="mt-1 max-w-3xl text-sm text-slate-300">{demoDescription}</p> : null}
+      <div className="mx-auto flex min-h-screen max-w-[1760px] flex-col gap-4 px-4 pb-4">
+        <div className="sticky top-0 z-40 space-y-3 border border-slate-700 bg-slate-950/95 px-4 pb-4 pt-4 shadow-lg shadow-black/30 backdrop-blur">
+          <header className="flex flex-wrap items-start justify-between gap-4">
+            <div className="flex items-start gap-4">
+              <button
+                type="button"
+                onClick={() => {
+                  if (typeof window !== 'undefined' && window.history.length > 1) {
+                    router.back();
+                  } else {
+                    router.push(`/groups/${groupSlug}/projects/${projectSlug}`);
+                  }
+                }}
+                className="mt-1 inline-flex h-10 items-center justify-center rounded-full border border-slate-700 bg-slate-950 px-4 text-sm font-semibold text-slate-100 hover:bg-slate-900"
+              >
+                Back
+              </button>
+              <div>
+                <h1 className="text-3xl font-semibold tracking-tight text-white">{demoName}</h1>
+                {demoDescription ? <p className="mt-1 max-w-3xl text-sm text-slate-300">{demoDescription}</p> : null}
+              </div>
             </div>
-          </div>
 
-          <div className="flex items-center gap-3 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2">
-            <div className="min-w-0">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Microphone</p>
-              <p className="mt-1 max-w-[220px] truncate text-xs text-slate-300" title={microphoneStatus}>
-                {microphoneStatus}
-              </p>
+            <div className="flex items-center gap-3 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2">
+              <div className="min-w-0">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Microphone</p>
+                <p className="mt-1 max-w-[220px] truncate text-xs text-slate-300" title={microphoneStatus}>
+                  {microphoneStatus}
+                </p>
+              </div>
+              <AudioInputSelector
+                selectedAudioInputDeviceId={selectedAudioInputDeviceId}
+                onSelectedAudioInputDeviceIdChange={setSelectedAudioInputDeviceId}
+                isAudioInputReady={audioInputReady}
+                onAudioInputReadyChange={setAudioInputReady}
+              />
             </div>
-            <AudioInputSelector
-              selectedAudioInputDeviceId={selectedAudioInputDeviceId}
-              onSelectedAudioInputDeviceIdChange={setSelectedAudioInputDeviceId}
-              isAudioInputReady={audioInputReady}
-              onAudioInputReadyChange={setAudioInputReady}
+          </header>
+
+          <div className="grid gap-3 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
+            <ProjectTimingControls
+              sharedDemoTempoBpm={sharedDemoTempoBpm}
+              localTempoBpm={localTempoBpmInput}
+              onLocalTempoChange={setLocalTempoBpmInput}
+            />
+            <TransportControls
+              isPlaying={isPlaying}
+              currentTimeMs={currentTimeMs}
+              onPlay={() => playTransport()}
+              onPause={pauseTransport}
+              onStop={handleTransportStop}
+              leadingSlot={
+                <RecordingControls
+                  ref={recordingControlsRef}
+                  currentTimeMs={currentTimeMs}
+                  recordedTempoBpm={resolvedLocalTempoBpm}
+                  isDisabled={temporaryRecordingTrack !== null || !audioInputReady || !selectedAudioInputDeviceId}
+                  recordingTarget={activeRecordingTarget}
+                  selectedAudioInputDeviceId={selectedAudioInputDeviceId}
+                  isAudioInputReady={audioInputReady}
+                  onNeedsAudioInput={() => {}}
+                  onStreamReady={handleRecordingStreamReady}
+                  onDurationUpdate={handleRecordingDurationUpdate}
+                  onStopped={handleRecordingStopped}
+                />
+              }
+              trailingSlot={
+                <button
+                  type="button"
+                  onClick={() => setMetronomeEnabled((prev) => !prev)}
+                  className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                    metronomeEnabled
+                      ? 'bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/40'
+                      : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+                  }`}
+                >
+                  Metronome {metronomeEnabled ? 'On' : 'Off'}
+                </button>
+              }
             />
           </div>
-        </header>
+        </div>
 
-        <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
-          <div className="order-last flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-slate-700 bg-slate-950/80 shadow-sm shadow-black/20 xl:order-none xl:self-stretch">
+        <div className="grid grid-cols-1 gap-4">
+          <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-slate-700 bg-slate-950/80 shadow-sm shadow-black/20">
             <section className="flex-1 border-t-0 border-slate-800 bg-transparent p-4">
               <div className="space-y-4">
                 <div className="flex items-end justify-between gap-3">
@@ -3409,7 +3482,10 @@ export function DemoDawClient({
                   ) : null}
                   <button
                     type="button"
-                    onClick={() => setIsVersionTreeRailExpanded((prev) => !prev)}
+                    onClick={() => {
+                      versionTreeRailShouldPersistRef.current = true;
+                      setIsVersionTreeRailExpanded((prev) => !prev);
+                    }}
                     className="rounded-full border border-slate-700 bg-slate-900 px-3 py-1 text-[11px] font-semibold text-slate-200 transition-colors hover:bg-slate-800 hover:text-white"
                     aria-expanded={isVersionTreeRailExpanded}
                     aria-label={isVersionTreeRailExpanded ? 'Collapse version history rail' : 'Expand version history rail'}
@@ -3701,6 +3777,7 @@ export function DemoDawClient({
                     <button
                       type="button"
                       onClick={() => {
+                        versionTreeRailShouldPersistRef.current = true;
                         setIsVersionTreeRailExpanded(true);
                         versionTreeRailRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
                       }}
@@ -3803,64 +3880,6 @@ export function DemoDawClient({
               </section>
             </section>
           </div>
-          <aside className="order-first flex h-full min-h-0 min-w-0 flex-col gap-4 xl:order-none xl:sticky xl:top-4 xl:self-start xl:max-h-[calc(100vh-2rem)] xl:overflow-y-auto">
-            <section className="rounded-xl border border-slate-700 bg-slate-950/80 shadow-sm shadow-black/20">
-              <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-800 px-4 py-3">
-                <div>
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Project controls</p>
-                  <h2 className="mt-1 text-sm font-semibold text-white">Transport and timing</h2>
-                </div>
-                <AudioInputSelector
-                  selectedAudioInputDeviceId={selectedAudioInputDeviceId}
-                  onSelectedAudioInputDeviceIdChange={setSelectedAudioInputDeviceId}
-                  isAudioInputReady={audioInputReady}
-                  onAudioInputReadyChange={setAudioInputReady}
-                />
-              </div>
-              <div className="space-y-3 p-4">
-                <ProjectTimingControls
-                  sharedDemoTempoBpm={sharedDemoTempoBpm}
-                  localTempoBpm={localTempoBpmInput}
-                  onLocalTempoChange={setLocalTempoBpmInput}
-                />
-                <TransportControls
-                  isPlaying={isPlaying}
-                  currentTimeMs={currentTimeMs}
-                  onPlay={() => playTransport()}
-                  onPause={pauseTransport}
-                  onStop={handleTransportStop}
-                  leadingSlot={
-                    <RecordingControls
-                      ref={recordingControlsRef}
-                      currentTimeMs={currentTimeMs}
-                      recordedTempoBpm={resolvedLocalTempoBpm}
-                      isDisabled={temporaryRecordingTrack !== null || !audioInputReady || !selectedAudioInputDeviceId}
-                      recordingTarget={activeRecordingTarget}
-                      selectedAudioInputDeviceId={selectedAudioInputDeviceId}
-                      isAudioInputReady={audioInputReady}
-                      onNeedsAudioInput={() => {}}
-                      onStreamReady={handleRecordingStreamReady}
-                      onDurationUpdate={handleRecordingDurationUpdate}
-                      onStopped={handleRecordingStopped}
-                    />
-                  }
-                  trailingSlot={
-                    <button
-                      type="button"
-                      onClick={() => setMetronomeEnabled((prev) => !prev)}
-                      className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
-                        metronomeEnabled
-                          ? 'bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/40'
-                          : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
-                      }`}
-                    >
-                      Metronome {metronomeEnabled ? 'On' : 'Off'}
-                    </button>
-                  }
-                />
-              </div>
-            </section>
-          </aside>
         </div>
 
       {addCommentModalOpen ? (
