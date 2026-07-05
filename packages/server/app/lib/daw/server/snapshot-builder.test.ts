@@ -102,6 +102,23 @@ test('loadSnapshotStateForDemo materializes TRACK_VERSION_CREATED into a normal 
                 position: 0,
               },
             ],
+            plugins: [
+              {
+                instanceId: 'plugin-1',
+                pluginKey: 'com.example.compressor',
+                version: '1.2.3',
+                backend: 'wam',
+                position: 0,
+                bypassed: false,
+                params: {
+                  threshold: -12,
+                },
+                state: {
+                  mode: 'fast',
+                },
+                stateBlobKey: null,
+              },
+            ],
           },
         },
         idempotencyKey: 'idempotency-2',
@@ -122,6 +139,23 @@ test('loadSnapshotStateForDemo materializes TRACK_VERSION_CREATED into a normal 
   assert.equal(track?.segments[0]?.id, 'segment-1');
   assert.equal(track?.segments[0]?.timelineStartMs, 250);
   assert.equal(track?.segments[0]?.startMs, 0);
+  assert.deepEqual(track?.plugins, [
+    {
+      instanceId: 'plugin-1',
+      pluginKey: 'com.example.compressor',
+      version: '1.2.3',
+      backend: 'wam',
+      position: 0,
+      bypassed: false,
+      params: {
+        threshold: -12,
+      },
+      state: {
+        mode: 'fast',
+      },
+      stateBlobKey: null,
+    },
+  ]);
   assert.equal(snapshot.operationHistory.length, 1);
   assert.equal(snapshot.operationHistory[0]?.summary, 'Created track version for Recorded track');
 });

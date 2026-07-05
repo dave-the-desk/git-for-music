@@ -135,6 +135,19 @@ export interface DawVersionTreeTrackSnapshot {
   operationType: 'ORIGINAL' | 'TIME_STRETCH';
   parentTrackVersionId: string | null;
   segments: DawSegmentSnapshot[];
+  plugins: HostedPluginInstanceState[];
+}
+
+export interface HostedPluginInstanceState {
+  instanceId: string;
+  pluginKey: string;
+  version: string;
+  backend: 'wam' | 'remote';
+  position: number;
+  bypassed: boolean;
+  params: Record<string, number>;
+  state?: JsonValue;
+  stateBlobKey?: string | null;
 }
 
 export interface DawVersionTreeNodeSnapshot {

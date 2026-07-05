@@ -8,7 +8,12 @@ import type {
 import { dawLocalCache } from '@/app/lib/daw/engine/daw-local-cache';
 import { ProjectSyncEngine } from '@/app/lib/daw/engine/project-sync-engine';
 import { applyAcceptedProjectOperation, createLocalProjectStateFromBootstrap } from '@/app/lib/daw/state/operation-reducer';
-import type { DawTrack, DawVersion, TrackTimelineSegment } from '@/app/lib/daw/state/local-project-state';
+import type {
+  DawTrack,
+  DawVersion,
+  HostedPluginInstanceState,
+  TrackTimelineSegment,
+} from '@/app/lib/daw/state/local-project-state';
 
 function makeVersion(id: string, overrides: Partial<DawVersion> = {}): DawVersion {
   return {
@@ -31,6 +36,20 @@ function makeVersion(id: string, overrides: Partial<DawVersion> = {}): DawVersio
     tempoSource: overrides.tempoSource ?? 'MANUAL',
     keySource: overrides.keySource ?? 'MANUAL',
     tracks: overrides.tracks ?? [],
+  };
+}
+
+function makePlugin(instanceId: string, overrides: Partial<HostedPluginInstanceState> = {}): HostedPluginInstanceState {
+  return {
+    instanceId,
+    pluginKey: overrides.pluginKey ?? 'com.example.delay',
+    version: overrides.version ?? '1.0.0',
+    backend: overrides.backend ?? 'wam',
+    position: overrides.position ?? 0,
+    bypassed: overrides.bypassed ?? false,
+    params: overrides.params ?? { mix: 0.5 },
+    state: overrides.state ?? { preset: 'wide' },
+    stateBlobKey: overrides.stateBlobKey ?? null,
   };
 }
 
@@ -68,6 +87,7 @@ function makeTrack(trackVersionId: string, overrides: Partial<DawTrack> = {}): D
     operationType: overrides.operationType ?? 'ORIGINAL',
     parentTrackVersionId: overrides.parentTrackVersionId ?? null,
     segments: overrides.segments ?? [segment],
+    plugins: overrides.plugins ?? [makePlugin(`plugin-${trackVersionId}`)],
   };
 }
 
@@ -193,6 +213,12 @@ test('ProjectSyncEngine applies remote accepted_operation updates once', async (
       createdAt: '2025-01-02T00:00:00.000Z',
       isCurrent: true,
       operationSeq: 2,
+      tracks: [
+        makeTrack('track-version-branch', {
+          trackId: 'track-branch',
+          trackName: 'Branch Track',
+        }),
+      ],
     });
 
     const operation = makeOperation('VERSION_BRANCH_CREATED', 2, {
@@ -216,6 +242,9 @@ test('ProjectSyncEngine applies remote accepted_operation updates once', async (
     assert.equal(appliedState?.currentVersionId, branchVersion.id);
     assert.equal(appliedState?.activeVersionId, root.id);
     assert.equal(appliedState?.lastSeenOperationSeq, 2);
+    assert.deepEqual(appliedState?.versions.find((version) => version.id === branchVersion.id)?.tracks[0]?.plugins, [
+      makePlugin('plugin-track-version-branch'),
+    ]);
 
     await engine.receiveAcceptedRemoteOperations([operation]);
     const duplicateState = engine.getState().projectState;
@@ -3351,6 +3380,7 @@ test('ProjectSyncEngine catches up on open and reconnects when realtime goes sil
     assert.ok(projectStateAfterOpen);
     assert.equal(projectStateAfterOpen?.versions.length, 1);
     assert.equal(projectStateAfterOpen?.versions[0]?.tracks[0]?.segments.length, 1);
+    assert.deepEqual(projectStateAfterOpen?.versions[0]?.tracks[0]?.plugins, [makePlugin('plugin-track-version-a')]);
     assert.equal(projectStateAfterOpen?.lastSeenOperationSeq, 1);
     assert.deepEqual(capturedUrls, [
       '/api/daw/projects/project-1/operations?demoId=demo-1&afterSeq=1',

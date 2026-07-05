@@ -1,4 +1,4 @@
-import type { DemoAnnotation, DemoComment, DemoVersionKind, TimingSource } from '@git-for-music/shared';
+import type { DemoAnnotation, DemoComment, DemoVersionKind, JsonValue, TimingSource } from '@git-for-music/shared';
 import type { DawOperationType } from '@git-for-music/server/app/lib/daw/protocol';
 
 export type TrackTimelineSegment = {
@@ -22,6 +22,18 @@ export type TrackTimelineSegment = {
   crossfadeCurve?: string | null;
 };
 
+export type HostedPluginInstanceState = {
+  instanceId: string;
+  pluginKey: string;
+  version: string;
+  backend: 'wam' | 'remote';
+  position: number;
+  bypassed: boolean;
+  params: Record<string, number>;
+  state?: JsonValue;
+  stateBlobKey?: string | null;
+};
+
 export type DawTrack = {
   trackId: string;
   trackName: string;
@@ -37,6 +49,7 @@ export type DawTrack = {
   operationType: 'ORIGINAL' | 'TIME_STRETCH';
   parentTrackVersionId: string | null;
   segments: TrackTimelineSegment[];
+  plugins: HostedPluginInstanceState[];
 };
 
 export type DawVersion = {

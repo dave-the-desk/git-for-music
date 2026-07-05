@@ -45,21 +45,10 @@ Legend: `[ ]` todo · files are linked relative to this note.
 
 Goal: represent an ordered insert chain per `trackVersionId` in state.
 
-- [ ] Add a `HostedPluginInstanceState` type and `plugins: HostedPluginInstanceState[]`
-  to `DawTrack` in
-  [`local-project-state.ts`](../../../src/app/lib/daw/state/local-project-state.ts).
-  Fields: `instanceId`, `pluginKey`, `version`, `backend: 'wam' | 'remote'`,
-  `position`, `bypassed`, `params: Record<string, number>` (normalized),
-  optional `state?: JsonValue` (opaque, JSON-only), optional `stateBlobKey?`.
-- [ ] Mirror the type on the server protocol
-  ([`command-api.ts`](../../../packages/server/app/lib/daw/protocol/command-api.ts))
-  and in the snapshot/bootstrap shapes so it survives reload.
-- [ ] Ensure branch/version copy logic carries the plugin chain with the track
-  (verify in the branch-creation path; add a test that a forked version keeps its
-  plugin chain).
-- [ ] Tests: extend
-  [`operation-reducer.test.ts`](../../../src/app/lib/daw/state/operation-reducer.test.ts)
-  fixtures to include tracks with plugin chains and assert they survive replay.
+- [x] Add a `HostedPluginInstanceState` type and `plugins: HostedPluginInstanceState[]`to `DawTrack` in [`local-project-state.ts`](../../../src/app/lib/daw/state/local-project-state.ts). Fields: `instanceId`, `pluginKey`, `version`, `backend: 'wam' | 'remote'`,`position`, `bypassed`, `params: Record<string, number>` (normalized),optional `state?: JsonValue` (opaque, JSON-only), optional `stateBlobKey?`.
+- [x] Mirror the type on the server protocol ([`command-api.ts`](../../../packages/server/app/lib/daw/protocol/command-api.ts)) and in the snapshot/bootstrap shapes so it survives reload.
+- [x] Ensure branch/version copy logic carries the plugin chain with the track (verify in the branch-creation path; add a test that a forked version keeps its plugin chain).
+- [x] Tests: extend [`operation-reducer.test.ts`](../../../src/app/lib/daw/state/operation-reducer.test.ts)  fixtures to include tracks with plugin chains and assert they survive replay.
 
 ---
 

@@ -8,6 +8,7 @@ import {
   createLocalProjectStateFromBootstrap,
 } from '@/app/lib/daw/state/operation-reducer';
 import type {
+  HostedPluginInstanceState,
   DawTrack,
   DawVersion,
   TrackTimelineSegment,
@@ -34,6 +35,20 @@ function makeVersion(id: string, overrides: Partial<DawVersion> = {}): DawVersio
     tempoSource: overrides.tempoSource ?? 'MANUAL',
     keySource: overrides.keySource ?? 'MANUAL',
     tracks: overrides.tracks ?? [],
+  };
+}
+
+function makePlugin(instanceId: string, overrides: Partial<HostedPluginInstanceState> = {}): HostedPluginInstanceState {
+  return {
+    instanceId,
+    pluginKey: overrides.pluginKey ?? 'com.example.delay',
+    version: overrides.version ?? '1.0.0',
+    backend: overrides.backend ?? 'wam',
+    position: overrides.position ?? 0,
+    bypassed: overrides.bypassed ?? false,
+    params: overrides.params ?? { mix: 0.5 },
+    state: overrides.state ?? { preset: 'wide' },
+    stateBlobKey: overrides.stateBlobKey ?? null,
   };
 }
 
@@ -71,6 +86,7 @@ function makeTrack(trackVersionId: string, overrides: Partial<DawTrack> = {}): D
     operationType: overrides.operationType ?? 'ORIGINAL',
     parentTrackVersionId: overrides.parentTrackVersionId ?? null,
     segments: overrides.segments ?? [segment],
+    plugins: overrides.plugins ?? [makePlugin(`plugin-${trackVersionId}`)],
   };
 }
 
@@ -774,6 +790,7 @@ test('TRACK_VERSION_CREATED replaces the copied track entry when it targets an e
   assert.equal(version?.tracks.length, 1);
   assert.equal(version?.tracks[0]?.trackId, 'track-1');
   assert.equal(version?.tracks[0]?.trackVersionId, track.trackVersionId);
+  assert.deepEqual(version?.tracks[0]?.plugins, [makePlugin(`plugin-${track.trackVersionId}`)]);
 });
 
 test('TRACK_VERSION_CREATED removes a blank duplicate track when the new track has audio and the same name', () => {
@@ -905,6 +922,7 @@ test('TRACK_VERSION_CREATED preserves the recorded segment on the track version'
   assert.equal(createdTrack?.segments[0]?.id, recordedSegment.id);
   assert.equal(createdTrack?.segments[0]?.timelineStartMs, recordedSegment.timelineStartMs);
   assert.equal(createdTrack?.segments[0]?.sourceEndMs, recordedSegment.sourceEndMs);
+  assert.deepEqual(createdTrack?.plugins, [makePlugin(`plugin-${recordedTrack.trackVersionId}`)]);
 });
 
 test('TRACK_OFFSET_UPDATED updates the track placement in place', () => {

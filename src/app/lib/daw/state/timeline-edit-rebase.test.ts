@@ -42,6 +42,7 @@ function makeTrack(trackVersionId: string, overrides: Partial<DawTrack> = {}): D
     operationType: overrides.operationType ?? 'ORIGINAL',
     parentTrackVersionId: overrides.parentTrackVersionId ?? null,
     segments: overrides.segments ?? [makeSegment(`segment-${trackVersionId}`, { trackVersionId })],
+    plugins: overrides.plugins ?? [],
   };
 }
 

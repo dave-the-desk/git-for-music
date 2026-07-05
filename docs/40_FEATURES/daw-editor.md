@@ -13,6 +13,7 @@ This note covers the DAW editor feature across the browser app and server packag
 - `src/app/pages/groups/demo/components/daw/` holds the UI composition for the editor.
 - `src/app/lib/daw/engine/` contains playback, ingest, project sync, local cache, and waveform cache engines.
 - `src/app/lib/daw/state/` contains local project state, reducers, selectors, and queue state.
+- `DawTrack` now carries an ordered `plugins: HostedPluginInstanceState[]` insert chain keyed by `trackVersionId`, so plugin state travels with the track version instead of being global UI-only state.
 - `src/app/lib/daw/utils/` contains pure timing and segment helpers.
 - `src/app/lib/daw/rendering/` contains rendering helpers.
 
@@ -28,6 +29,7 @@ This note covers the DAW editor feature across the browser app and server packag
 
 - [packages/shared/src/protocol/index.ts](../../packages/shared/src/protocol/index.ts) and [packages/shared/src/index.ts](../../packages/shared/src/index.ts) hold the shared payload and enum types.
 - [packages/db/prisma/schema.prisma](../../packages/db/prisma/schema.prisma) defines the durable DAW entities and their relationships.
+- Plugin instance state is JSON-first: normalized numeric params live inline, opaque plugin state stays JSON-only, and large binary state is referenced by `stateBlobKey` instead of being embedded in the operation log or snapshot.
 
 ## Working Rule
 

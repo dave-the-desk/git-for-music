@@ -128,6 +128,7 @@ function makeTrack(trackName: string, trackVersionId: string, overrides: Partial
     operationType: overrides.operationType ?? 'ORIGINAL',
     parentTrackVersionId: overrides.parentTrackVersionId ?? null,
     segments: overrides.segments ?? [],
+    plugins: overrides.plugins ?? [],
   };
 }
 

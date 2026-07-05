@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Prisma, PrismaClient, prisma } from '@git-for-music/db';
 import { buildTrackVersionAudioUrl } from '@git-for-music/shared';
 import { loadOrCreateDemoUserActiveVersionState } from '@/app/lib/daw/server/demo-user-active-version';
+import type { HostedPluginInstanceState } from '@/app/lib/daw/protocol';
 
 export type DemoDawTimingSource = 'MANUAL' | 'ANALYZED' | 'IMPORTED';
 
@@ -36,6 +37,7 @@ export interface DemoDawSnapshotTrack {
   operationType: 'ORIGINAL' | 'TIME_STRETCH';
   parentTrackVersionId: string | null;
   segments: DemoDawSnapshotSegment[];
+  plugins: HostedPluginInstanceState[];
 }
 
 export interface DemoDawSnapshotVersion {
@@ -517,6 +519,7 @@ function serializeTrackVersion(trackVersion: DemoSourceVersionRow['trackVersions
     operationType: trackVersion.operationType,
     parentTrackVersionId: trackVersion.parentTrackVersionId,
     segments: trackVersion.segments.map((segment) => serializeSegment(trackVersion.id, segment)),
+    plugins: [],
   };
 }
 
