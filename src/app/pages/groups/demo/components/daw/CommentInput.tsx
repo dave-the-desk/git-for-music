@@ -2,7 +2,6 @@
 
 type CommentInputProps = {
   value: string;
-  anchorLabel: string;
   submitting: boolean;
   error: string | null;
   onChange: (value: string) => void;
@@ -12,7 +11,6 @@ type CommentInputProps = {
 
 export function CommentInput({
   value,
-  anchorLabel,
   submitting,
   error,
   onChange,
@@ -24,7 +22,6 @@ export function CommentInput({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <p className="text-sm font-semibold text-white">Add Comment</p>
-          <p className="text-xs text-slate-400">Attached to {anchorLabel}.</p>
         </div>
         <button
           type="button"

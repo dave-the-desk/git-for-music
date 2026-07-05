@@ -1,6 +1,6 @@
 'use client';
 
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { forwardRef, type ReactNode, useEffect, useImperativeHandle, useRef, useState } from 'react';
 
 type RecordingState = 'idle' | 'requesting' | 'recording' | 'error';
 
@@ -15,6 +15,7 @@ type Props = {
   } | null;
   selectedAudioInputDeviceId: string | null;
   isAudioInputReady: boolean;
+  microphoneSelector?: ReactNode;
   onNeedsAudioInput?: () => void;
   onStreamReady: (
     stream: MediaStream,
@@ -43,6 +44,7 @@ export const RecordingControls = forwardRef<RecordingControlsHandle, Props>(func
     recordingTarget,
     selectedAudioInputDeviceId,
     isAudioInputReady,
+    microphoneSelector,
     onNeedsAudioInput,
     onStreamReady,
     onDurationUpdate,
@@ -194,51 +196,58 @@ export const RecordingControls = forwardRef<RecordingControlsHandle, Props>(func
   }
 
   return (
-    <div className="flex flex-wrap items-center gap-4">
-      {(recState === 'idle' || recState === 'error') && (
-        <>
-          <button
-            type="button"
-            onClick={() => void startRecording()}
-            disabled={isDisabled || !isAudioInputReady || !selectedAudioInputDeviceId}
-            className="flex items-center gap-2 rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-500 disabled:opacity-60"
-          >
-            <span className="h-2 w-2 rounded-full bg-white" />
-            Record
-          </button>
-          {error ? (
-            <p className="text-sm text-red-400">{error}</p>
-          ) : !recordingTarget ? (
-            <p className="text-sm text-amber-300">Arm a track before recording.</p>
-          ) : !isAudioInputReady || !selectedAudioInputDeviceId ? (
-            <p className="text-sm text-amber-300">
-              {selectedAudioInputDeviceId
-                ? 'Allow microphone access from the mic button before recording.'
-                : 'Choose a microphone from the mic button before recording.'}
-            </p>
-          ) : null}
-        </>
-      )}
+    <div className="grid gap-2 lg:grid-cols-[auto_minmax(0,1fr)] lg:items-start">
+      {microphoneSelector ? (
+        <div className="inline-flex w-fit items-center rounded-lg border border-slate-700 bg-slate-950/60 p-2">
+          {microphoneSelector}
+        </div>
+      ) : null}
+      <div className="flex min-w-0 flex-wrap items-center gap-2 rounded-lg border border-slate-700 bg-slate-950/40 px-3 py-2">
+        {(recState === 'idle' || recState === 'error') && (
+          <>
+            <button
+              type="button"
+              onClick={() => void startRecording()}
+              disabled={isDisabled || !isAudioInputReady || !selectedAudioInputDeviceId}
+              className="flex items-center gap-2 rounded-md bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-500 disabled:opacity-60"
+            >
+              <span className="h-2 w-2 rounded-full bg-white" />
+              Record
+            </button>
+            {error ? (
+              <p className="min-w-0 text-sm leading-tight text-red-400">{error}</p>
+            ) : !recordingTarget ? (
+              <p className="min-w-0 text-sm leading-tight text-amber-300">Arm a track before recording.</p>
+            ) : !isAudioInputReady || !selectedAudioInputDeviceId ? (
+              <p className="min-w-0 text-sm leading-tight text-amber-300">
+                {selectedAudioInputDeviceId
+                  ? 'Allow microphone access from the mic button before recording.'
+                  : 'Choose a microphone from the mic button before recording.'}
+              </p>
+            ) : null}
+          </>
+        )}
 
-      {recState === 'requesting' && (
-        <p className="text-sm text-gray-400">Requesting microphone access…</p>
-      )}
+        {recState === 'requesting' && (
+          <p className="min-w-0 text-sm leading-tight text-gray-400">Requesting microphone access…</p>
+        )}
 
-      {recState === 'recording' && (
-        <>
-          <span className="flex items-center gap-2 text-sm font-medium text-red-400">
-            <span className="h-2 w-2 animate-pulse rounded-full bg-red-500" />
-            {formatTime(elapsedMs)}
-          </span>
-          <button
-            type="button"
-            onClick={stopRecording}
-            className="rounded-md bg-gray-700 px-4 py-2 text-sm font-medium text-white hover:bg-gray-600"
-          >
-            Stop Recording
-          </button>
-        </>
-      )}
+        {recState === 'recording' && (
+          <>
+            <span className="flex items-center gap-2 rounded-md bg-red-500/10 px-2 py-1 text-sm font-medium text-red-400">
+              <span className="h-2 w-2 animate-pulse rounded-full bg-red-500" />
+              {formatTime(elapsedMs)}
+            </span>
+            <button
+              type="button"
+              onClick={stopRecording}
+              className="rounded-md bg-gray-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-600"
+            >
+              Stop Recording
+            </button>
+          </>
+        )}
+      </div>
     </div>
   );
 });

@@ -17,7 +17,8 @@ import type {
   DawProjectOperationRecord,
 } from '@git-for-music/server/app/lib/daw/protocol';
 import { AddTrackButton } from './AddTrackButton';
-import { DawToolbarTabs, type DawToolbarTab } from './DawToolbarTabs';
+import type { DawToolbarTab } from './DawToolbarTabs';
+import { CommentInput } from './CommentInput';
 import { ProjectTimingControls } from './ProjectTimingControls';
 import { TransportControls } from './TransportControls';
 import { TimelineRuler, getTimelineTicks, getTimelineWidthPx } from './TimelineRuler';
@@ -320,6 +321,13 @@ export function DemoDawClient({
   const isLiveRecordingRef = useRef(false);
   const recordingSessionRef = useRef<RecordingSession | null>(null);
   const recordingControlsRef = useRef<RecordingControlsHandle | null>(null);
+  const topShellRef = useRef<HTMLDivElement | null>(null);
+  const toolsStickySentinelRef = useRef<HTMLDivElement | null>(null);
+  const toolsBarRef = useRef<HTMLDivElement | null>(null);
+  const [toolsStickyTop, setToolsStickyTop] = useState(0);
+  const [toolsBarHeight, setToolsBarHeight] = useState(0);
+  const [isToolsBarStuck, setIsToolsBarStuck] = useState(false);
+  const [isTopControlRowCollapsed, setIsTopControlRowCollapsed] = useState(false);
   const freshestCommittedVersionIdRef = useRef(initialActiveVersionId ?? initialCurrentVersionId);
 
   const [offsetOverrides, setOffsetOverrides] = useState<Record<string, number>>({});
@@ -335,6 +343,52 @@ export function DemoDawClient({
   const [mergeError, setMergeError] = useState<string | null>(null);
   const [mergeSubmitting, setMergeSubmitting] = useState(false);
   const [fadeError, setFadeError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const element = topShellRef.current;
+    if (!element || typeof ResizeObserver === 'undefined') return undefined;
+
+    const updateTopOffset = () => {
+      setToolsStickyTop(element.getBoundingClientRect().height);
+    };
+
+    updateTopOffset();
+    const observer = new ResizeObserver(updateTopOffset);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const element = toolsBarRef.current;
+    if (!element || typeof ResizeObserver === 'undefined') return undefined;
+
+    const updateHeight = () => {
+      setToolsBarHeight(element.getBoundingClientRect().height);
+    };
+
+    updateHeight();
+    const observer = new ResizeObserver(updateHeight);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const sentinel = toolsStickySentinelRef.current;
+    if (!sentinel || typeof IntersectionObserver === 'undefined') return undefined;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        setIsToolsBarStuck(!entry.isIntersecting);
+      },
+      {
+        root: null,
+        threshold: 1,
+      },
+    );
+
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, []);
 
   const [renameState, setRenameState] = useState<RenameState | null>(null);
   const [historyProjectState, setHistoryProjectState] = useState<LocalProjectState | null>(null);
@@ -773,6 +827,13 @@ export function DemoDawClient({
       keySource: 'MANUAL',
     };
   }, [sharedDemoTempoBpm, selectedVersion]);
+  const selectedTrackSegment = useMemo(() => {
+    if (!selectedTrack || !selectedSegmentId) return null;
+    return selectedTrack.segments.find((segment) => segment.id === selectedSegmentId) ?? null;
+  }, [selectedSegmentId, selectedTrack]);
+  const inspectorCommentTimestampLabel = selectedTiming?.tempoBpm
+    ? formatBarBeatLabel(addCommentTimestampMs / 1000, selectedTiming) ?? formatTimeMs(addCommentTimestampMs)
+    : formatTimeMs(addCommentTimestampMs);
 
   const comments = displayProjectState?.comments ?? [];
 
@@ -3285,9 +3346,12 @@ export function DemoDawClient({
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
       <div className="mx-auto flex min-h-screen max-w-[1760px] flex-col gap-4 px-4 pb-4">
-        <div className="sticky top-0 z-40 space-y-3 border border-slate-700 bg-slate-950/95 px-4 pb-4 pt-4 shadow-lg shadow-black/30 backdrop-blur">
-          <header className="flex flex-wrap items-start justify-between gap-4">
-            <div className="flex items-start gap-4">
+        <div
+          ref={topShellRef}
+          className="sticky top-0 z-40 space-y-2 overflow-hidden rounded-b-2xl border border-slate-700 border-t-0 bg-slate-950/95 px-3 pb-3 pt-3 shadow-lg shadow-black/30 backdrop-blur"
+        >
+          <header className="flex flex-wrap items-start justify-between gap-3">
+            <div className="flex items-start gap-3">
               <button
                 type="button"
                 onClick={() => {
@@ -3297,97 +3361,101 @@ export function DemoDawClient({
                     router.push(`/groups/${groupSlug}/projects/${projectSlug}`);
                   }
                 }}
-                className="mt-1 inline-flex h-10 items-center justify-center rounded-full border border-slate-700 bg-slate-950 px-4 text-sm font-semibold text-slate-100 hover:bg-slate-900"
+                className="mt-1 inline-flex h-9 items-center justify-center rounded-full border border-slate-700 bg-slate-950 px-3 text-xs font-semibold text-slate-100 hover:bg-slate-900"
               >
                 Back
               </button>
               <div>
-                <h1 className="text-3xl font-semibold tracking-tight text-white">{demoName}</h1>
+                <h1 className="text-2xl font-semibold tracking-tight text-white">{demoName}</h1>
                 {demoDescription ? <p className="mt-1 max-w-3xl text-sm text-slate-300">{demoDescription}</p> : null}
               </div>
             </div>
 
-            <div className="flex items-center gap-3 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2">
-              <div className="min-w-0">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Microphone</p>
-                <p className="mt-1 max-w-[220px] truncate text-xs text-slate-300" title={microphoneStatus}>
-                  {microphoneStatus}
-                </p>
-              </div>
-              <AudioInputSelector
-                selectedAudioInputDeviceId={selectedAudioInputDeviceId}
-                onSelectedAudioInputDeviceIdChange={setSelectedAudioInputDeviceId}
-                isAudioInputReady={audioInputReady}
-                onAudioInputReadyChange={setAudioInputReady}
-              />
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setIsTopControlRowCollapsed((prev) => !prev)}
+                className="rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-800 hover:text-white"
+                aria-expanded={!isTopControlRowCollapsed}
+                aria-label={isTopControlRowCollapsed ? 'Restore timing and recording controls' : 'Minimize timing and recording controls'}
+              >
+                {isTopControlRowCollapsed ? 'Restore' : 'Minimize'}
+              </button>
             </div>
           </header>
 
-          <div className="grid gap-3 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
-            <ProjectTimingControls
-              sharedDemoTempoBpm={sharedDemoTempoBpm}
-              localTempoBpm={localTempoBpmInput}
-              onLocalTempoChange={setLocalTempoBpmInput}
-            />
-            <TransportControls
-              isPlaying={isPlaying}
-              currentTimeMs={currentTimeMs}
-              onPlay={() => playTransport()}
-              onPause={pauseTransport}
-              onStop={handleTransportStop}
-              leadingSlot={
-                <RecordingControls
-                  ref={recordingControlsRef}
-                  currentTimeMs={currentTimeMs}
-                  recordedTempoBpm={resolvedLocalTempoBpm}
-                  isDisabled={temporaryRecordingTrack !== null || !audioInputReady || !selectedAudioInputDeviceId}
-                  recordingTarget={activeRecordingTarget}
-                  selectedAudioInputDeviceId={selectedAudioInputDeviceId}
-                  isAudioInputReady={audioInputReady}
-                  onNeedsAudioInput={() => {}}
-                  onStreamReady={handleRecordingStreamReady}
-                  onDurationUpdate={handleRecordingDurationUpdate}
-                  onStopped={handleRecordingStopped}
-                />
-              }
-              trailingSlot={
-                <button
-                  type="button"
-                  onClick={() => setMetronomeEnabled((prev) => !prev)}
-                  className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
-                    metronomeEnabled
-                      ? 'bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/40'
-                      : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
-                  }`}
-                >
-                  Metronome {metronomeEnabled ? 'On' : 'Off'}
-                </button>
-              }
-            />
-          </div>
+          {!isTopControlRowCollapsed ? (
+            <div className="grid gap-2 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
+              <ProjectTimingControls
+                sharedDemoTempoBpm={sharedDemoTempoBpm}
+                localTempoBpm={localTempoBpmInput}
+                onLocalTempoChange={setLocalTempoBpmInput}
+              />
+              <TransportControls
+                isPlaying={isPlaying}
+                currentTimeMs={currentTimeMs}
+                onPlay={() => playTransport()}
+                onPause={pauseTransport}
+                onStop={handleTransportStop}
+                leadingSlot={
+                  <RecordingControls
+                    ref={recordingControlsRef}
+                    currentTimeMs={currentTimeMs}
+                    recordedTempoBpm={resolvedLocalTempoBpm}
+                    isDisabled={temporaryRecordingTrack !== null || !audioInputReady || !selectedAudioInputDeviceId}
+                    recordingTarget={activeRecordingTarget}
+                    selectedAudioInputDeviceId={selectedAudioInputDeviceId}
+                    isAudioInputReady={audioInputReady}
+                    microphoneSelector={
+                      <AudioInputSelector
+                        selectedAudioInputDeviceId={selectedAudioInputDeviceId}
+                        onSelectedAudioInputDeviceIdChange={setSelectedAudioInputDeviceId}
+                        isAudioInputReady={audioInputReady}
+                        onAudioInputReadyChange={setAudioInputReady}
+                      />
+                    }
+                    onNeedsAudioInput={() => {}}
+                    onStreamReady={handleRecordingStreamReady}
+                    onDurationUpdate={handleRecordingDurationUpdate}
+                    onStopped={handleRecordingStopped}
+                  />
+                }
+                trailingSlot={
+                  <button
+                    type="button"
+                    onClick={() => setMetronomeEnabled((prev) => !prev)}
+                    className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                      metronomeEnabled
+                        ? 'bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/40'
+                        : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+                    }`}
+                  >
+                    Metronome {metronomeEnabled ? 'On' : 'Off'}
+                  </button>
+                }
+              />
+            </div>
+          ) : null}
         </div>
 
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(280px,0.78fr)_minmax(0,1.72fr)]">
-          <aside
-            className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-slate-700 bg-slate-950/80 shadow-sm shadow-black/20"
-            data-testid="browser-rail"
-          >
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(280px,0.72fr)_minmax(0,1.58fr)_minmax(280px,0.7fr)]">
+            <aside
+              className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-slate-700 bg-slate-950/80 shadow-sm shadow-black/20"
+              data-testid="browser-rail"
+            >
             <div className="border-b border-slate-800 px-4 py-4">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-500">Browser</p>
-              <h2 className="mt-1 text-sm font-semibold text-white">Upload, plugins, members</h2>
-              <p className="mt-1 text-xs text-slate-400">
-                Asset intake and collaborator context now live in the left browser rail.
-              </p>
+              <h2 className="text-sm font-semibold text-white">Browser</h2>
             </div>
             <div className="border-b border-slate-800 px-4 py-3">
-              <label className="block space-y-1">
-                <span className="block text-[10px] uppercase tracking-[0.18em] text-slate-400">Search browser</span>
-                <input
-                  type="search"
-                  value={browserQuery}
-                  onChange={(e) => setBrowserQuery(e.currentTarget.value)}
-                  placeholder="Filter uploads, plugins, members"
-                  className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none ring-indigo-500 focus:ring"
+                <label className="block space-y-1">
+                  <span className="sr-only">Search browser</span>
+                  <input
+                    type="search"
+                    value={browserQuery}
+                    aria-label="Search browser"
+                    onChange={(e) => setBrowserQuery(e.currentTarget.value)}
+                    placeholder="Filter uploads, plugins, members"
+                    className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none ring-indigo-500 focus:ring"
                 />
               </label>
             </div>
@@ -3423,12 +3491,11 @@ export function DemoDawClient({
                 <form onSubmit={onUploadTrack} className="space-y-4">
                   <div className="space-y-1">
                     <p className="text-sm font-semibold text-white">Upload</p>
-                    <p className="text-xs text-slate-400">Uploads and recordings create new assets through the signed ingest flow.</p>
                   </div>
 
                   <div className="space-y-3">
                     <label className="space-y-1">
-                      <span className="block text-[10px] uppercase tracking-[0.18em] text-slate-400">Track name</span>
+                    <span className="block text-[10px] uppercase tracking-[0.18em] text-slate-400">Track name</span>
                       <input
                         type="text"
                         value={uploadName}
@@ -3438,7 +3505,7 @@ export function DemoDawClient({
                       />
                     </label>
                     <label className="space-y-1">
-                      <span className="block text-[10px] uppercase tracking-[0.18em] text-slate-400">Audio file</span>
+                    <span className="block text-[10px] uppercase tracking-[0.18em] text-slate-400">Audio file</span>
                       <input
                         type="file"
                         accept="audio/*"
@@ -3490,7 +3557,6 @@ export function DemoDawClient({
                 <div className="space-y-3">
                   <div>
                     <p className="text-sm font-semibold text-white">Plugins</p>
-                    <p className="text-xs text-slate-400">Built-in plugin host support is not wired yet, so this tab stays read-only.</p>
                   </div>
                   {filteredPluginDefinitions.length > 0 ? (
                     <ul className="grid gap-2">
@@ -3503,19 +3569,14 @@ export function DemoDawClient({
                         </li>
                       ))}
                     </ul>
-                  ) : (
-                    <div className="rounded-md border border-slate-700 bg-slate-950 px-4 py-5 text-sm text-slate-400">
-                      No plugins match the current browser search.
-                    </div>
-                  )}
+                  ) : null}
                 </div>
               ) : null}
 
               {browserTab === 'members' ? (
                 <div className="space-y-3">
                   <div>
-                    <p className="text-sm font-semibold text-white">Members and Presence</p>
-                    <p className="text-xs text-slate-400">Live collaborators appear here when presence is available.</p>
+                    <p className="text-sm font-semibold text-white">Members</p>
                   </div>
                   {filteredPresenceRecords.length > 0 ? (
                     <div className="grid gap-2">
@@ -3531,135 +3592,12 @@ export function DemoDawClient({
                         </div>
                       ))}
                     </div>
-                  ) : (
-                    <div className="rounded-md border border-slate-700 bg-slate-950 px-4 py-5 text-sm text-slate-400">
-                      No collaborators match the current browser search.
-                    </div>
-                  )}
+                  ) : null}
                 </div>
               ) : null}
             </div>
           </aside>
           <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-slate-700 bg-slate-950/80 shadow-sm shadow-black/20">
-            <section className="flex-1 border-t-0 border-slate-800 bg-transparent p-4">
-              <div className="space-y-4">
-                <div className="flex items-end justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-semibold text-white">Tools</p>
-                    <p className="text-xs text-slate-400">Edit and timeline actions live here.</p>
-                  </div>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      activateTimelineTool('select');
-                    }}
-                    className={`rounded-md px-3 py-2 text-sm font-medium ${
-                      timelineTool === 'select'
-                        ? 'bg-indigo-600 text-white'
-                        : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
-                    }`}
-                  >
-                    Select
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      activateTimelineTool('split');
-                    }}
-                    className={`rounded-md px-3 py-2 text-sm font-medium ${
-                      timelineTool === 'split'
-                        ? 'bg-amber-600 text-white'
-                        : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
-                    }`}
-                  >
-                    Cut
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => activateTimelineTool(timelineTool === 'merge' ? 'select' : 'merge')}
-                    disabled={!canEnterMergeMode}
-                    title={
-                      !canEnterMergeMode
-                        ? 'Add or upload at least two saved clips on a track before using Merge'
-                        : mergeSubmitting
-                          ? 'Submitting merge request'
-                          : timelineTool === 'merge'
-                            ? 'Leave merge mode'
-                            : 'Click two compatible clips on the same track to merge them'
-                    }
-                    className={`rounded-md px-3 py-2 text-sm font-medium ${
-                      timelineTool === 'merge'
-                        ? 'bg-emerald-600 text-white hover:bg-emerald-500'
-                        : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
-                    } disabled:cursor-not-allowed disabled:opacity-40`}
-                  >
-                    Merge
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => activateTimelineTool(timelineTool === 'fade' ? 'select' : 'fade')}
-                    title={timelineTool === 'fade' ? 'Leave fade mode' : 'Click a clip, then drag the top dot inward'}
-                    className={`rounded-md px-3 py-2 text-sm font-medium ${
-                      timelineTool === 'fade'
-                        ? 'bg-cyan-600 text-white hover:bg-cyan-500'
-                        : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
-                    }`}
-                  >
-                    Fade
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void undoLatestTimelineEditRef.current()}
-                    className="rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-slate-300 hover:bg-slate-800"
-                  >
-                    Undo
-                  </button>
-                  <label className="ml-auto flex items-center gap-2 text-sm text-slate-300">
-                    <span className="uppercase tracking-[0.18em] text-slate-500">Snap</span>
-                    <select
-                      value={snapResolution}
-                      onChange={(e) => setSnapResolution(e.currentTarget.value as SnapResolution)}
-                      className="rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-sm text-white outline-none ring-indigo-500 focus:ring"
-                    >
-                      <option value="off">Off</option>
-                      <option value="bar">Bar</option>
-                      <option value="beat">Beat</option>
-                      <option value="halfBeat">Half beat</option>
-                      <option value="quarterBeat">Quarter beat</option>
-                    </select>
-                  </label>
-                </div>
-                <p className="text-xs text-slate-400">
-                  Select is the main cursor mode. Cut splits clips at the playhead. Merge uses explicit clip selections,
-                  and Fade lets you drag the fade handles on a clip.
-                </p>
-                {timelineTool === 'merge' ? (
-                  <div className="space-y-1 text-xs">
-                    {mergeSubmitting ? <p className="text-amber-300">Submitting merge request...</p> : null}
-                    {mergeError ? <p className="text-rose-300">{mergeError}</p> : null}
-                    {!mergeSubmitting && !mergeError && pendingMergeSelection ? (
-                      <p className="text-emerald-300">
-                        First clip selected. Click a second compatible clip on the same track, or press Escape to cancel.
-                      </p>
-                    ) : null}
-                    {!mergeSubmitting && !mergeError && !pendingMergeSelection ? (
-                      <p className="text-slate-500">Click the first clip you want to merge.</p>
-                    ) : null}
-                  </div>
-                ) : null}
-                {timelineTool === 'fade' ? (
-                  <div className="space-y-1 text-xs">
-                    {fadeError ? <p className="text-rose-300">{fadeError}</p> : null}
-                    <p className="text-cyan-300">
-                      Click a clip to reveal its fade dots, then drag a dot inward to update the fade.
-                    </p>
-                  </div>
-                ) : null}
-              </div>
-            </section>
-
             <section
               ref={versionTreeRailRef}
               className="border-t border-slate-800 bg-slate-950/90 px-4 py-4"
@@ -3667,13 +3605,7 @@ export function DemoDawClient({
             >
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-500">
-                    Version history rail
-                  </p>
-                  <h2 className="mt-1 text-sm font-semibold text-white">Commit graph</h2>
-                  <p className="mt-1 text-xs text-slate-400">
-                    The branch DAG stays docked here so history is always visible while you edit.
-                  </p>
+                  <h2 className="text-sm font-semibold text-white">Version history</h2>
                 </div>
                 <div className="flex items-center gap-2">
                   {toolbarTab === 'tree' ? (
@@ -3743,276 +3675,194 @@ export function DemoDawClient({
                   defaultExpanded
                 />
               </div>
-              {!isVersionTreeRailExpanded ? (
-                <div className="mt-3 rounded-lg border border-slate-800 bg-slate-950 px-4 py-3 text-xs text-slate-400">
-                  History is docked here, but collapsed. Expand the rail to browse branches, checkouts, and reverts.
-                </div>
-              ) : null}
+              {!isVersionTreeRailExpanded ? <div className="mt-3" /> : null}
             </section>
+          </div>
 
-            <section className="border-t border-slate-800 bg-slate-950/80">
-              <DawToolbarTabs activeTab={toolbarTab} onTabChange={setToolbarTab} />
-              <section className="border-t border-slate-800 bg-transparent p-4">
-                {toolbarTab === 'edit' ? (
-                  <div className="space-y-4">
-                    <div className="flex items-end justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-semibold text-white">Tools</p>
-                        <p className="text-xs text-slate-400">Edit and timeline actions live here.</p>
-                      </div>
+          <aside
+            className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-slate-700 bg-slate-950/80 shadow-sm shadow-black/20"
+            data-testid="inspector-rail"
+          >
+            <div className="border-b border-slate-800 px-4 py-4">
+              <h2 className="text-sm font-semibold text-white">Inspector</h2>
+            </div>
+            <div className="flex-1 min-h-0 space-y-4 overflow-y-auto p-4">
+              <section className="space-y-3 rounded-lg border border-slate-800 bg-slate-950 px-4 py-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-white">Selection</p>
+                  </div>
+                  {selectedTrack ? (
+                    <span className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2 py-1 text-[10px] font-semibold text-cyan-200">
+                      Active
+                    </span>
+                  ) : null}
+                </div>
+
+                {selectedTrack ? (
+                  <div className="space-y-3">
+                    <div>
+                      <p className="text-base font-semibold text-white">{selectedTrack.trackName}</p>
+                      <p className="break-all text-xs text-slate-500">{selectedTrack.trackVersionId}</p>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
                       <button
                         type="button"
-                        onClick={() => {
-                          activateTimelineTool('select');
-                        }}
-                        className={`rounded-md px-3 py-2 text-sm font-medium ${
-                          timelineTool === 'select'
-                            ? 'bg-indigo-600 text-white'
-                            : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
-                        }`}
-                      >
-                        Select
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          activateTimelineTool('split');
-                        }}
-                        className={`rounded-md px-3 py-2 text-sm font-medium ${
-                          timelineTool === 'split'
-                            ? 'bg-amber-600 text-white'
-                            : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
-                        }`}
-                      >
-                        Cut
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => activateTimelineTool(timelineTool === 'merge' ? 'select' : 'merge')}
-                        disabled={!canEnterMergeMode}
+                        onClick={() => toggleRecordArm(selectedTrack.trackVersionId)}
                         title={
-                          !canEnterMergeMode
-                            ? 'Add or upload at least two saved clips on a track before using Merge'
-                            : mergeSubmitting
-                              ? 'Submitting merge request'
-                              : timelineTool === 'merge'
-                                ? 'Leave merge mode'
-                                : 'Click two compatible clips on the same track to merge them'
+                          recordArmedTrackVersionId === selectedTrack.trackVersionId
+                            ? 'Disarm track for recording'
+                            : 'Arm track for recording'
                         }
-                        className={`rounded-md px-3 py-2 text-sm font-medium ${
-                          timelineTool === 'merge'
-                            ? 'bg-emerald-600 text-white hover:bg-emerald-500'
-                            : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
-                        } disabled:cursor-not-allowed disabled:opacity-40`}
-                      >
-                        Merge
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => activateTimelineTool(timelineTool === 'fade' ? 'select' : 'fade')}
-                        title={timelineTool === 'fade' ? 'Leave fade mode' : 'Click a clip, then drag the top dot inward'}
-                        className={`rounded-md px-3 py-2 text-sm font-medium ${
-                          timelineTool === 'fade'
-                            ? 'bg-cyan-600 text-white hover:bg-cyan-500'
+                        aria-pressed={recordArmedTrackVersionId === selectedTrack.trackVersionId}
+                        className={`rounded-md px-3 py-2 text-xs font-semibold transition-colors ${
+                          recordArmedTrackVersionId === selectedTrack.trackVersionId
+                            ? 'bg-red-500/20 text-red-300 ring-1 ring-red-500/40'
                             : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
                         }`}
                       >
-                        Fade
+                        {recordArmedTrackVersionId === selectedTrack.trackVersionId ? 'Record armed' : 'Arm record'}
                       </button>
                       <button
                         type="button"
-                        onClick={() => void undoLatestTimelineEditRef.current()}
-                        className="rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-slate-300 hover:bg-slate-800"
+                        onClick={() => toggleMute(selectedTrack.trackVersionId)}
+                        title={mutedTrackVersionIds.has(selectedTrack.trackVersionId) ? 'Unmute track' : 'Mute track'}
+                        className={`rounded-md px-3 py-2 text-xs font-semibold transition-colors ${
+                          mutedTrackVersionIds.has(selectedTrack.trackVersionId)
+                            ? 'bg-yellow-500/20 text-yellow-300 ring-1 ring-yellow-500/40'
+                            : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
+                        }`}
                       >
-                        Undo
+                        {mutedTrackVersionIds.has(selectedTrack.trackVersionId) ? 'Muted' : 'Mute'}
                       </button>
-                      <label className="ml-auto flex items-center gap-2 text-sm text-slate-300">
-                        <span className="uppercase tracking-[0.18em] text-slate-500">Snap</span>
-                        <select
-                          value={snapResolution}
-                          onChange={(e) => setSnapResolution(e.currentTarget.value as SnapResolution)}
-                          className="rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-sm text-white outline-none ring-indigo-500 focus:ring"
-                        >
-                          <option value="off">Off</option>
-                          <option value="bar">Bar</option>
-                          <option value="beat">Beat</option>
-                          <option value="halfBeat">Half beat</option>
-                          <option value="quarterBeat">Quarter beat</option>
-                        </select>
-                      </label>
+                      <button
+                        type="button"
+                        onClick={() => toggleSolo(selectedTrack.trackVersionId)}
+                        title={soloTrackVersionIds.has(selectedTrack.trackVersionId) ? 'Unsolo track' : 'Solo track'}
+                        className={`rounded-md px-3 py-2 text-xs font-semibold transition-colors ${
+                          soloTrackVersionIds.has(selectedTrack.trackVersionId)
+                            ? 'bg-cyan-500/20 text-cyan-300 ring-1 ring-cyan-500/40'
+                            : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
+                        }`}
+                      >
+                        {soloTrackVersionIds.has(selectedTrack.trackVersionId) ? 'Soloed' : 'Solo'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => startRename(selectedTrack)}
+                        className="rounded-md bg-slate-900 px-3 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800"
+                      >
+                        Rename
+                      </button>
                     </div>
-                    <p className="text-xs text-slate-400">
-                      Select is the main cursor mode. Cut splits clips at the playhead. Merge uses explicit clip selections,
-                      and Fade lets you drag the fade handles on a clip.
-                    </p>
-                    {timelineTool === 'merge' ? (
-                      <div className="space-y-1 text-xs">
-                        {mergeSubmitting ? <p className="text-amber-300">Submitting merge request...</p> : null}
-                        {mergeError ? <p className="text-rose-300">{mergeError}</p> : null}
-                        {!mergeSubmitting && !mergeError && pendingMergeSelection ? (
-                          <p className="text-emerald-300">
-                            First clip selected. Click a second compatible clip on the same track, or press Escape to cancel.
-                          </p>
-                        ) : null}
-                        {!mergeSubmitting && !mergeError && !pendingMergeSelection ? (
-                          <p className="text-slate-500">Click the first clip you want to merge.</p>
-                        ) : null}
-                      </div>
-                    ) : null}
-                    {timelineTool === 'fade' ? (
-                      <div className="space-y-1 text-xs">
-                        {fadeError ? <p className="text-rose-300">{fadeError}</p> : null}
-                        <p className="text-cyan-300">
-                          Click a clip to reveal its fade dots, then drag a dot inward to update the fade.
-                        </p>
-                      </div>
-                    ) : null}
-                  </div>
-                ) : null}
-
-                {toolbarTab === 'tree' ? (
-                  <div className="space-y-3 rounded-lg border border-slate-800 bg-slate-950 px-4 py-4 text-sm text-slate-300">
-                    <div>
-                      <p className="text-sm font-semibold text-white">Version history</p>
-                      <p className="mt-1 text-xs text-slate-400">
-                        The commit graph now lives in the docked rail above. Use the rail controls to expand, collapse,
-                        or jump back to the latest head.
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        versionTreeRailShouldPersistRef.current = true;
-                        setIsVersionTreeRailExpanded(true);
-                        versionTreeRailRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                      }}
-                      className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-3 py-1 text-[11px] font-semibold text-cyan-200 transition-colors hover:bg-cyan-500/20 hover:text-cyan-100"
-                    >
-                      Reveal history rail
-                    </button>
-                  </div>
-                ) : null}
-                {toolbarTab === 'upload' || toolbarTab === 'plugins' || toolbarTab === 'members' ? (
-                  <div className="space-y-3 rounded-lg border border-slate-800 bg-slate-950 px-4 py-4 text-sm text-slate-300">
-                    <p className="text-sm font-semibold text-white">Browser rail</p>
-                    <p className="text-xs text-slate-400">
-                      This surface moved to the left browser rail. Use the browser tabs to edit upload, plugin, and member
-                      state without leaving the workspace.
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (toolbarTab === 'upload' || toolbarTab === 'plugins' || toolbarTab === 'members') {
-                          setBrowserTab(toolbarTab);
-                        }
-                      }}
-                      className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-3 py-1 text-[11px] font-semibold text-cyan-200 transition-colors hover:bg-cyan-500/20 hover:text-cyan-100"
-                    >
-                      Focus browser rail
-                    </button>
+                    <label className="block space-y-1">
+                      <span className="block text-[10px] uppercase tracking-[0.18em] text-slate-400">Volume</span>
+                      <input
+                        type="range"
+                        min={0}
+                        max={2}
+                        step={0.01}
+                        value={gainByTrackVersionId[selectedTrack.trackVersionId] ?? 1}
+                        onChange={(e) => setTrackGain(selectedTrack.trackVersionId, Number(e.currentTarget.value))}
+                        className="h-1 w-full accent-indigo-500"
+                      />
+                    </label>
                   </div>
                 ) : null}
               </section>
-            </section>
-          </div>
-        </div>
 
-      {addCommentModalOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
-          <div className="w-full max-w-md rounded-lg border border-slate-700 bg-slate-950 p-5 shadow-2xl shadow-black/40">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <h3 className="text-base font-semibold text-white">Add Comment</h3>
-                <p className="mt-1 text-sm text-slate-400">Attach a note to the current playhead or a specific track.</p>
-              </div>
-              <button
-                type="button"
-                onClick={closeAddCommentModal}
-                className="text-sm text-slate-400 hover:text-slate-200"
-              >
-                Close
-              </button>
-            </div>
-
-            <div className="mt-4 rounded-md border border-slate-800 bg-slate-900/80 px-3 py-2">
-              <div className="flex flex-wrap items-center justify-between gap-3">
+              <section className="space-y-3 rounded-lg border border-slate-800 bg-slate-950 px-4 py-4">
                 <div>
-                  <p className="text-[10px] uppercase tracking-[0.18em] text-slate-500">Timestamp</p>
-                  <p className="mt-1 text-sm font-medium text-slate-100">
-                    {selectedTiming?.tempoBpm
-                      ? formatBarBeatLabel(addCommentTimestampMs / 1000, selectedTiming) ?? formatTimeMs(addCommentTimestampMs)
-                      : formatTimeMs(addCommentTimestampMs)}
-                  </p>
+                  <p className="text-sm font-semibold text-white">Clip</p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setAddCommentTimestampMs(currentTimeMs)}
-                  className="rounded-md bg-slate-800 px-2.5 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-700"
-                >
-                  Use playhead
-                </button>
-              </div>
+                {selectedTrackSegment ? (
+                  <div className="space-y-2 rounded-md border border-slate-800 bg-slate-900/70 px-3 py-2 text-xs text-slate-300">
+                    <p className="font-medium text-white">{selectedTrackSegment.id}</p>
+                    <p>
+                      Timeline {formatTimeMs(selectedTrackSegment.timelineStartMs)} to{' '}
+                      {formatTimeMs(selectedTrackSegment.timelineEndMs)}
+                    </p>
+                    <p>Duration {formatTimeMs(selectedTrackSegment.durationMs)}</p>
+                    <p>
+                      Fade in {formatTimeMs(selectedTrackSegment.fadeInMs)} · Fade out {formatTimeMs(selectedTrackSegment.fadeOutMs)}
+                    </p>
+                    <p>{selectedTrackSegment.isImplicit ? 'Implicit clip' : 'Saved clip'}</p>
+                  </div>
+                ) : null}
+              </section>
+
+              <section
+                className={`space-y-3 rounded-lg border px-4 py-4 ${
+                  addCommentModalOpen ? 'border-cyan-500/30 bg-cyan-500/10' : 'border-slate-800 bg-slate-950'
+                }`}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-white">Comments</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={openAddCommentModal}
+                    className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-3 py-1 text-[11px] font-semibold text-cyan-200 transition-colors hover:bg-cyan-500/20 hover:text-cyan-100"
+                  >
+                    {addCommentModalOpen ? 'Draft' : 'New'}
+                  </button>
+                </div>
+
+                <div className="rounded-md border border-slate-800 bg-slate-900/80 px-3 py-2 text-xs text-slate-300">
+                  <p className="mt-1 text-sm font-medium text-slate-100">{inspectorCommentTimestampLabel}</p>
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setAddCommentTimestampMs(currentTimeMs)}
+                      className="rounded-md bg-slate-800 px-2.5 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-700"
+                    >
+                      Use playhead
+                    </button>
+                    {selectedTrack ? (
+                      <button
+                        type="button"
+                        onClick={() => setAddCommentTrackId(selectedTrack.trackId)}
+                        className="rounded-md bg-slate-800 px-2.5 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-700"
+                      >
+                        Track
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+
+                <label className="block space-y-1">
+                  <select
+                    value={addCommentTrackId ?? ''}
+                    onChange={(e) => setAddCommentTrackId(e.currentTarget.value || null)}
+                    className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none ring-indigo-500 focus:ring"
+                  >
+                    <option value="">Project / all tracks</option>
+                    {selectedTracks.map((track) => (
+                      <option key={track.trackId} value={track.trackId}>
+                        {track.trackName}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <CommentInput
+                  value={addCommentBody}
+                  submitting={addCommentSubmitting}
+                  error={addCommentError}
+                  onChange={setAddCommentBody}
+                  onSubmit={() => void submitAddComment()}
+                  onCancel={closeAddCommentModal}
+                />
+              </section>
             </div>
-
-            <label className="mt-4 block space-y-1">
-              <span className="block text-[10px] uppercase tracking-[0.18em] text-slate-400">Scope</span>
-              <select
-                value={addCommentTrackId ?? ''}
-                onChange={(e) => setAddCommentTrackId(e.currentTarget.value || null)}
-                className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none ring-indigo-500 focus:ring"
-              >
-                <option value="">Project / all tracks</option>
-                {selectedTracks.map((track) => (
-                  <option key={track.trackId} value={track.trackId}>
-                    {track.trackName}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="mt-4 block space-y-1">
-              <span className="block text-[10px] uppercase tracking-[0.18em] text-slate-400">Comment</span>
-              <textarea
-                rows={4}
-                value={addCommentBody}
-                onChange={(e) => setAddCommentBody(e.currentTarget.value)}
-                placeholder="Leave a note for this moment..."
-                className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none ring-indigo-500 focus:ring"
-              />
-            </label>
-
-            {addCommentError ? <p className="mt-2 text-xs text-red-400">{addCommentError}</p> : null}
-
-            <div className="mt-4 flex items-center justify-end gap-3">
-              <button
-                type="button"
-                onClick={closeAddCommentModal}
-                className="rounded-md bg-slate-800 px-3 py-2 text-sm font-medium text-slate-200 hover:bg-slate-700"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => void submitAddComment()}
-                disabled={addCommentSubmitting}
-                className="rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {addCommentSubmitting ? 'Saving…' : 'Add comment'}
-              </button>
-            </div>
-          </div>
+          </aside>
         </div>
-      ) : null}
 
       {uploadModalState.open ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
           <div className="w-full max-w-md rounded-lg border border-gray-700 bg-gray-950 p-5 shadow-2xl">
             <h3 className="text-base font-semibold text-white">Choose upload timing</h3>
-            <p className="mt-2 text-sm text-gray-300">
-              This project already has tempo metadata. Pick how the new upload should behave.
-            </p>
             <div className="mt-4 space-y-2">
               <button
                 type="button"
@@ -4056,27 +3906,9 @@ export function DemoDawClient({
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
           <div className="w-full max-w-md rounded-lg border border-gray-700 bg-gray-950 p-5 shadow-2xl">
             <h3 className="text-base font-semibold text-white">Tempo analysis</h3>
-            <p className="mt-2 text-sm text-gray-300">
-              {tempoAnalysisPrompt.trackName} was analyzed locally.
-            </p>
             <div className="mt-4 rounded-md border border-gray-800 bg-gray-900 px-3 py-2">
-              <p className="text-xs uppercase tracking-wide text-gray-500">Detected tempo</p>
               <p className="text-2xl font-semibold text-white">{tempoAnalysisPrompt.tempoBpm.toFixed(1)} BPM</p>
-              <p className="mt-1 text-xs text-gray-400">
-                Confidence {Math.round(tempoAnalysisPrompt.confidence * 100)}%
-              </p>
-              {tempoAnalysisPrompt.confidence < 0.35 ? (
-                <p className="mt-2 text-xs text-amber-300">
-                  Low confidence, so this is only a suggestion until you choose to apply it.
-                </p>
-              ) : null}
             </div>
-            {tempoAnalysisPrompt.error ? (
-              <p className="mt-3 text-sm text-red-400">{tempoAnalysisPrompt.error}</p>
-            ) : null}
-            {activeTempoAnalysisJob?.status === 'COMPLETE' ? (
-              <p className="mt-3 text-xs text-emerald-300">Analysis is complete.</p>
-            ) : null}
             <div className="mt-4 flex items-center justify-between gap-3">
               <button
                 type="button"
@@ -4085,7 +3917,6 @@ export function DemoDawClient({
               >
                 Dismiss
               </button>
-              <p className="text-xs text-slate-400">Project tempo edits are disabled in this version.</p>
             </div>
           </div>
         </div>
@@ -4095,7 +3926,126 @@ export function DemoDawClient({
         <p className="text-sm text-red-400">{dragError}</p>
       ) : null}
 
-      <div className="space-y-4">
+      <section className="space-y-4">
+        <div ref={toolsStickySentinelRef} aria-hidden="true" className="h-px" />
+        <div
+          ref={toolsBarRef}
+          className="sticky z-30 rounded-xl border border-slate-700 bg-slate-950/95 px-4 py-4 shadow-lg shadow-black/20 backdrop-blur"
+          style={toolsStickyTop > 0 ? { top: `${toolsStickyTop}px` } : undefined}
+        >
+          <div className="flex flex-col items-start gap-3">
+            <p className="text-sm font-semibold text-white">Tools</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  activateTimelineTool('select');
+                }}
+                className={`rounded-md px-3 py-2 text-sm font-medium ${
+                  timelineTool === 'select'
+                    ? 'bg-indigo-600 text-white'
+                    : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
+                }`}
+              >
+                Select
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  activateTimelineTool('split');
+                }}
+                className={`rounded-md px-3 py-2 text-sm font-medium ${
+                  timelineTool === 'split'
+                    ? 'bg-amber-600 text-white'
+                    : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
+                }`}
+              >
+                Cut
+              </button>
+              <button
+                type="button"
+                onClick={() => activateTimelineTool(timelineTool === 'merge' ? 'select' : 'merge')}
+                disabled={!canEnterMergeMode}
+                title={
+                  !canEnterMergeMode
+                    ? 'Add or upload at least two saved clips on a track before using Merge'
+                    : mergeSubmitting
+                      ? 'Submitting merge request'
+                      : timelineTool === 'merge'
+                        ? 'Leave merge mode'
+                        : 'Click two compatible clips on the same track to merge them'
+                }
+                className={`rounded-md px-3 py-2 text-sm font-medium ${
+                  timelineTool === 'merge'
+                    ? 'bg-emerald-600 text-white hover:bg-emerald-500'
+                    : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
+                } disabled:cursor-not-allowed disabled:opacity-40`}
+              >
+                Merge
+              </button>
+              <button
+                type="button"
+                onClick={() => activateTimelineTool(timelineTool === 'fade' ? 'select' : 'fade')}
+                title={timelineTool === 'fade' ? 'Leave fade mode' : 'Click a clip, then drag the top dot inward'}
+                className={`rounded-md px-3 py-2 text-sm font-medium ${
+                  timelineTool === 'fade'
+                    ? 'bg-cyan-600 text-white hover:bg-cyan-500'
+                    : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
+                }`}
+              >
+                Fade
+              </button>
+              <button
+                type="button"
+                onClick={() => void undoLatestTimelineEditRef.current()}
+                className="rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-slate-300 hover:bg-slate-800"
+              >
+                Undo
+              </button>
+              <label className="flex items-center gap-2 text-sm text-slate-300">
+                <span className="uppercase tracking-[0.18em] text-slate-500">Snap</span>
+                <select
+                  value={snapResolution}
+                  onChange={(e) => setSnapResolution(e.currentTarget.value as SnapResolution)}
+                  className="rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-sm text-white outline-none ring-indigo-500 focus:ring"
+                >
+                  <option value="off">Off</option>
+                  <option value="bar">Bar</option>
+                  <option value="beat">Beat</option>
+                  <option value="halfBeat">Half beat</option>
+                  <option value="quarterBeat">Quarter beat</option>
+                </select>
+              </label>
+            </div>
+          </div>
+          {timelineTool === 'merge' ? (
+            <div className="mt-3 space-y-1 text-xs">
+              {mergeSubmitting ? <p className="text-amber-300">Submitting merge request...</p> : null}
+              {mergeError ? <p className="text-rose-300">{mergeError}</p> : null}
+              {!mergeSubmitting && !mergeError && pendingMergeSelection ? (
+                <p className="text-emerald-300">
+                  First clip selected. Click a second compatible clip on the same track, or press Escape to cancel.
+                </p>
+              ) : null}
+              {!mergeSubmitting && !mergeError && !pendingMergeSelection ? (
+                <p className="text-slate-500">Select two clips to merge.</p>
+              ) : null}
+            </div>
+          ) : null}
+          {timelineTool === 'fade' ? (
+            <div className="mt-3 space-y-1 text-xs">
+              {fadeError ? <p className="text-rose-300">{fadeError}</p> : null}
+            </div>
+          ) : null}
+        </div>
+
+        <div
+          aria-hidden="true"
+          className="shrink-0"
+          style={{ height: isToolsBarStuck ? `${toolsBarHeight}px` : 0 }}
+        />
+
+        <div className="space-y-4">
         <section className="min-w-0 space-y-3 rounded-lg border border-gray-800 bg-gray-950 p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-400">Timeline</h2>
@@ -4108,7 +4058,6 @@ export function DemoDawClient({
             </button>
           </div>
           <div className="flex items-center gap-3 text-xs">{splitError ? <p className="text-amber-300">{splitError}</p> : null}</div>
-          <p className="text-[11px] text-gray-500">Comments can be anchored to the playhead or scoped to a specific track.</p>
 
           {hasTimelineContent ? (
             <div ref={tracksScrollContainerRef} className="overflow-x-auto rounded-md border border-gray-800">
@@ -4617,6 +4566,7 @@ export function DemoDawClient({
           ) : null}
         </div>
       </div>
+      </section>
       </div>
       </div>
   );

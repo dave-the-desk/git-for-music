@@ -251,7 +251,7 @@ export function AudioInputSelector({
   const iconTitle = status;
 
   return (
-    <div className="relative">
+    <div className="flex flex-col gap-2">
       <button
         type="button"
         ref={buttonRef}
@@ -273,7 +273,7 @@ export function AudioInputSelector({
       {isOpen ? (
         <div
           ref={panelRef}
-          className="absolute right-0 z-30 mt-2 w-80 rounded-md border border-gray-700 bg-gray-950 p-3 shadow-2xl shadow-black/40"
+          className="w-full max-w-[20rem] rounded-md border border-gray-700 bg-gray-950 p-3 shadow-2xl shadow-black/40"
           role="dialog"
           aria-label="Audio input selector"
         >

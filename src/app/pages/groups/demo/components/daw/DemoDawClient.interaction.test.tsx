@@ -206,11 +206,13 @@ vi.mock('next/navigation', () => ({
 vi.mock('./RecordingControls', () => {
   const RecordingControls = forwardRef(function RecordingControlsMock(
     {
+      microphoneSelector,
       recordingTarget,
       recordedTempoBpm,
       onStreamReady,
       onStopped,
     }: {
+      microphoneSelector?: React.ReactNode;
       recordingTarget: {
         trackId: string;
         trackVersionId: string;
@@ -243,6 +245,7 @@ vi.mock('./RecordingControls', () => {
     return createElement(
       'div',
       { 'data-testid': 'recording-controls' },
+      microphoneSelector,
       createElement(
         'button',
         {
@@ -549,7 +552,7 @@ describe('DemoDawClient recording regression', () => {
     });
 
     const user = userEvent.setup();
-    render(
+    const { container } = render(
       <DemoDawClient
         groupSlug="demo-group"
         projectSlug="demo-project"
@@ -575,7 +578,7 @@ describe('DemoDawClient recording regression', () => {
     await user.click(await screen.findByRole('button', { name: 'Start mock recording' }));
 
     await waitFor(() => {
-      expect(screen.getAllByText('Track 1').length).toBe(2);
+      expect(container.querySelectorAll('[data-track-version-id]').length).toBe(1);
     });
 
     await user.click(screen.getByRole('button', { name: 'Stop mock recording' }));
@@ -585,16 +588,16 @@ describe('DemoDawClient recording regression', () => {
     });
 
     await waitFor(() => {
-      expect(screen.getAllByText('Track 1').length).toBe(1);
+      expect(container.querySelectorAll('[data-track-version-id]').length).toBe(1);
     });
 
     await user.click(screen.getAllByRole('button', { name: '+ Add track' })[0]);
 
     await waitFor(() => {
-      expect(screen.getByText('Track 2')).toBeTruthy();
+      expect(container.querySelectorAll('[data-track-version-id]').length).toBe(2);
     });
 
-    expect(screen.getAllByText('Track 1')).toHaveLength(1);
+    expect(container.querySelectorAll('[data-track-version-id]').length).toBe(2);
     expect(mockIngest.lastUploadAudioFileSourceVersionId).toBe('recorded-version-1');
 
     await act(async () => {
@@ -651,7 +654,7 @@ describe('DemoDawClient recording regression', () => {
     });
 
     const user = userEvent.setup();
-    render(
+    const { container } = render(
       <DemoDawClient
         groupSlug="demo-group"
         projectSlug="demo-project"
@@ -679,12 +682,99 @@ describe('DemoDawClient recording regression', () => {
 
     await user.click(browser.getByRole('button', { name: 'Plugins' }));
     await waitFor(() => {
-      expect(browser.getByText('No plugins match the current browser search.')).toBeTruthy();
+      expect(browser.getByRole('button', { name: 'Plugins' }).getAttribute('aria-pressed')).toBe('true');
     });
 
     await user.click(browser.getByRole('button', { name: 'Members' }));
     await waitFor(() => {
-      expect(browser.getByText('No collaborators match the current browser search.')).toBeTruthy();
+      expect(browser.getByRole('button', { name: 'Members' }).getAttribute('aria-pressed')).toBe('true');
+    });
+  });
+
+  it('collapses and restores the timing and recording row', async () => {
+    const initialVersion = makeVersion('version-1', ['Track 1'], {
+      isCurrent: true,
+      operationSeq: 1,
+      createdAt: '2026-07-05T00:00:00.000Z',
+      tracks: [makeTrack('Track 1', 'version-1-track-1', { trackId: 'track-1', trackPosition: 0 })],
+    });
+
+    render(
+      <DemoDawClient
+        groupSlug="demo-group"
+        projectSlug="demo-project"
+        projectId="project-1"
+        demoId="demo-1"
+        currentUserId="user-1"
+        demoName="Demo"
+        demoDescription={null}
+        initialCurrentVersionId={initialVersion.id}
+        initialActiveVersionId={initialVersion.id}
+        initialIsFollowingHead={true}
+        initialVersions={[initialVersion]}
+      />,
+    );
+
+    expect(screen.getByTestId('project-timing-controls')).toBeTruthy();
+    expect(screen.getByTestId('transport-controls')).toBeTruthy();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Minimize timing and recording controls' }));
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('project-timing-controls')).toBeNull();
+      expect(screen.queryByTestId('transport-controls')).toBeNull();
+    });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Restore timing and recording controls' }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('project-timing-controls')).toBeTruthy();
+      expect(screen.getByTestId('transport-controls')).toBeTruthy();
+    });
+  });
+
+  it('renders the right inspector with mirrored track controls and inline comments', async () => {
+    const initialVersion = makeVersion('version-1', ['Track 1'], {
+      isCurrent: true,
+      operationSeq: 1,
+      createdAt: '2026-07-05T00:00:00.000Z',
+      tracks: [makeTrack('Track 1', 'version-1-track-1', { trackId: 'track-1', trackPosition: 0 })],
+    });
+
+    const user = userEvent.setup();
+    const { container } = render(
+      <DemoDawClient
+        groupSlug="demo-group"
+        projectSlug="demo-project"
+        projectId="project-1"
+        demoId="demo-1"
+        currentUserId="user-1"
+        demoName="Demo"
+        demoDescription={null}
+        initialCurrentVersionId={initialVersion.id}
+        initialActiveVersionId={initialVersion.id}
+        initialIsFollowingHead={true}
+        initialVersions={[initialVersion]}
+      />,
+    );
+
+    const inspectorRail = screen.getByTestId('inspector-rail');
+    const inspector = within(inspectorRail);
+
+    expect(inspector.getByText('Inspector')).toBeTruthy();
+    expect(inspector.getByText('Track 1', { selector: 'p' })).toBeTruthy();
+    expect(inspector.getByRole('button', { name: 'Record armed' })).toBeTruthy();
+    expect(inspector.getByRole('button', { name: 'Mute' })).toBeTruthy();
+    expect(inspector.getByRole('button', { name: 'Solo' })).toBeTruthy();
+    expect(inspector.getByLabelText('Volume')).toBeTruthy();
+    expect(inspector.getByText('Comments')).toBeTruthy();
+    expect(inspector.queryByText('Attached to track Track 1.', { selector: 'p' })).toBeNull();
+    expect(inspector.getByRole('button', { name: 'New' })).toBeTruthy();
+
+    await user.click(screen.getByRole('button', { name: 'Add Comment' }));
+
+    await waitFor(() => {
+      expect(inspector.getByRole('button', { name: 'Draft' })).toBeTruthy();
     });
   });
 
@@ -705,7 +795,7 @@ describe('DemoDawClient recording regression', () => {
     });
 
     const user = userEvent.setup();
-    render(
+    const { container } = render(
       <DemoDawClient
         groupSlug="demo-group"
         projectSlug="demo-project"
@@ -735,11 +825,11 @@ describe('DemoDawClient recording regression', () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText('Remote Update Track')).toBeTruthy();
+      expect(container.querySelector('[data-track-version-id]')?.textContent).toContain('Remote Update Track');
     });
 
     await user.click((await screen.findAllByRole('button', { name: 'Enable mock mic' }))[0]);
-    expect(screen.getByText('Remote Update Track')).toBeTruthy();
+    expect(container.querySelector('[data-track-version-id]')?.textContent).toContain('Remote Update Track');
   });
 
   it('keeps two simultaneous DAW clients aligned when one adds a track to a blank demo', async () => {
@@ -789,14 +879,14 @@ describe('DemoDawClient recording regression', () => {
     const clientA = screen.getByTestId('client-a');
     const clientB = screen.getByTestId('client-b');
 
-    expect(within(clientA).queryByText('Track 1')).toBeNull();
-    expect(within(clientB).queryByText('Track 1')).toBeNull();
+    expect(clientA.querySelectorAll('[data-track-version-id]').length).toBe(0);
+    expect(clientB.querySelectorAll('[data-track-version-id]').length).toBe(0);
 
     await user.click(within(clientA).getByRole('button', { name: '+ Add track' }));
 
     await waitFor(() => {
-      expect(within(clientA).getByText('Track 1')).toBeTruthy();
-      expect(within(clientB).getByText('Track 1')).toBeTruthy();
+      expect(clientA.querySelectorAll('[data-track-version-id]').length).toBe(1);
+      expect(clientB.querySelectorAll('[data-track-version-id]').length).toBe(1);
     });
   });
 });
