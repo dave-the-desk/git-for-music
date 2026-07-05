@@ -232,6 +232,10 @@ function resolveArmedRecordingTarget(
   };
 }
 
+function getVersionTreeRailStorageKey(projectId: string, currentUserId: string) {
+  return `git-for-music:daw:version-tree-rail:${projectId}:${currentUserId}`;
+}
+
 export function DemoDawClient({
   groupSlug,
   projectSlug,
@@ -277,6 +281,7 @@ export function DemoDawClient({
   const [selectedAudioInputDeviceId, setSelectedAudioInputDeviceId] = useState<string | null>(null);
   const [audioInputReady, setAudioInputReady] = useState(false);
   const [toolbarTab, setToolbarTab] = useState<DawToolbarTab>('edit');
+  const [isVersionTreeRailExpanded, setIsVersionTreeRailExpanded] = useState(true);
   const [selectedTrackVersionId, setSelectedTrackVersionId] = useState<string | null>(null);
   const [presenceRecords, setPresenceRecords] = useState<ProjectPresenceRecord[]>([]);
   const [pluginDefinitions, setPluginDefinitions] = useState<
@@ -334,6 +339,8 @@ export function DemoDawClient({
   const startPlayheadMsRef = useRef<number>(0);
   const lastAppliedTempoBpmRef = useRef<number>(0);
   const tracksScrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const versionTreeRailRef = useRef<HTMLDivElement | null>(null);
+  const hasHydratedVersionTreeRailRef = useRef(false);
   const metronomeAudioRef = useRef<AudioContext | null>(null);
   const metronomeTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const metronomeScheduledBeatRef = useRef<number | null>(null);
@@ -455,14 +462,6 @@ export function DemoDawClient({
     [selectedTrackVersionId, selectedTracks],
   );
   useEffect(() => {
-    console.log('[DemoDawClient] mounted', {
-      projectId,
-      demoId,
-      initialCurrentVersionId,
-      initialActiveVersionId,
-    });
-  }, [demoId, initialActiveVersionId, initialCurrentVersionId, projectId]);
-  useEffect(() => {
     if (recordArmedTrackVersionId && selectedTracks.some((track) => track.trackVersionId === recordArmedTrackVersionId)) {
       recordArmInitializedRef.current = true;
       return;
@@ -570,6 +569,48 @@ export function DemoDawClient({
       });
     });
   }, [projectSyncEngine]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const storageKey = getVersionTreeRailStorageKey(projectId, currentUserId);
+    let nextExpanded = true;
+    const fallbackExpanded = window.innerWidth >= 1280;
+
+    try {
+      const storedValue = window.localStorage.getItem(storageKey);
+      if (storedValue === 'true' || storedValue === 'false') {
+        nextExpanded = storedValue === 'true';
+      } else {
+        nextExpanded = fallbackExpanded;
+      }
+    } catch {
+      nextExpanded = fallbackExpanded;
+    }
+
+    setIsVersionTreeRailExpanded(nextExpanded);
+    hasHydratedVersionTreeRailRef.current = true;
+  }, [currentUserId, projectId]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!hasHydratedVersionTreeRailRef.current) return;
+
+    try {
+      window.localStorage.setItem(
+        getVersionTreeRailStorageKey(projectId, currentUserId),
+        isVersionTreeRailExpanded ? 'true' : 'false',
+      );
+    } catch {
+      // The rail state is a convenience only.
+    }
+  }, [currentUserId, isVersionTreeRailExpanded, projectId]);
+
+  useEffect(() => {
+    if (toolbarTab !== 'tree') return;
+    setIsVersionTreeRailExpanded(true);
+    versionTreeRailRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [toolbarTab]);
 
   useEffect(() => {
     let cancelled = false;
@@ -3224,408 +3265,602 @@ export function DemoDawClient({
           </div>
         </header>
 
-        <div className="grid grid-cols-1 items-stretch gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
-          <div className="order-first flex h-full min-h-0 min-w-0 flex-col gap-4 xl:order-none xl:col-start-2 xl:row-start-1 xl:self-stretch">
-            <ProjectTimingControls
-              sharedDemoTempoBpm={sharedDemoTempoBpm}
-              localTempoBpm={localTempoBpmInput}
-              onLocalTempoChange={setLocalTempoBpmInput}
-            />
-            <TransportControls
-              isPlaying={isPlaying}
-              currentTimeMs={currentTimeMs}
-              onPlay={() => playTransport()}
-              onPause={pauseTransport}
-              onStop={handleTransportStop}
-              leadingSlot={
-                <RecordingControls
-                  ref={recordingControlsRef}
-                  currentTimeMs={currentTimeMs}
-                  recordedTempoBpm={resolvedLocalTempoBpm}
-                  isDisabled={temporaryRecordingTrack !== null || !audioInputReady || !selectedAudioInputDeviceId}
-                  recordingTarget={activeRecordingTarget}
-                  selectedAudioInputDeviceId={selectedAudioInputDeviceId}
-                  isAudioInputReady={audioInputReady}
-                  onNeedsAudioInput={() => {}}
-                  onStreamReady={handleRecordingStreamReady}
-                  onDurationUpdate={handleRecordingDurationUpdate}
-                  onStopped={handleRecordingStopped}
-                />
-              }
-              trailingSlot={
-                <button
-                  type="button"
-                  onClick={() => setMetronomeEnabled((prev) => !prev)}
-                  className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
-                    metronomeEnabled
-                      ? 'bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/40'
-                      : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
-                  }`}
-                >
-                  Metronome {metronomeEnabled ? 'On' : 'Off'}
-                </button>
-              }
-            />
-          </div>
-          <div className="order-last flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-slate-700 bg-slate-950/80 shadow-sm shadow-black/20 xl:order-none xl:col-start-1 xl:row-start-1 xl:self-stretch">
-            <DawToolbarTabs activeTab={toolbarTab} onTabChange={setToolbarTab} />
-            <section className="flex-1 border-t border-slate-800 bg-transparent p-4">
-              {toolbarTab === 'edit' ? (
-                <div className="space-y-4">
-                  <div className="flex items-end justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-semibold text-white">Tools</p>
-                      <p className="text-xs text-slate-400">Edit and timeline actions live here.</p>
-                    </div>
+        <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
+          <div className="order-last flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-slate-700 bg-slate-950/80 shadow-sm shadow-black/20 xl:order-none xl:self-stretch">
+            <section className="flex-1 border-t-0 border-slate-800 bg-transparent p-4">
+              <div className="space-y-4">
+                <div className="flex items-end justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-white">Tools</p>
+                    <p className="text-xs text-slate-400">Edit and timeline actions live here.</p>
                   </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        activateTimelineTool('select');
-                      }}
-                      className={`rounded-md px-3 py-2 text-sm font-medium ${
-                        timelineTool === 'select'
-                          ? 'bg-indigo-600 text-white'
-                          : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
-                      }`}
-                    >
-                      Select
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        activateTimelineTool('split');
-                      }}
-                      className={`rounded-md px-3 py-2 text-sm font-medium ${
-                        timelineTool === 'split'
-                          ? 'bg-amber-600 text-white'
-                          : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
-                      }`}
-                    >
-                      Cut
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => activateTimelineTool(timelineTool === 'merge' ? 'select' : 'merge')}
-                      disabled={!canEnterMergeMode}
-                      title={
-                        !canEnterMergeMode
-                          ? 'Add or upload at least two saved clips on a track before using Merge'
-                          : mergeSubmitting
-                            ? 'Submitting merge request'
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      activateTimelineTool('select');
+                    }}
+                    className={`rounded-md px-3 py-2 text-sm font-medium ${
+                      timelineTool === 'select'
+                        ? 'bg-indigo-600 text-white'
+                        : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
+                    }`}
+                  >
+                    Select
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      activateTimelineTool('split');
+                    }}
+                    className={`rounded-md px-3 py-2 text-sm font-medium ${
+                      timelineTool === 'split'
+                        ? 'bg-amber-600 text-white'
+                        : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
+                    }`}
+                  >
+                    Cut
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => activateTimelineTool(timelineTool === 'merge' ? 'select' : 'merge')}
+                    disabled={!canEnterMergeMode}
+                    title={
+                      !canEnterMergeMode
+                        ? 'Add or upload at least two saved clips on a track before using Merge'
+                        : mergeSubmitting
+                          ? 'Submitting merge request'
                           : timelineTool === 'merge'
                             ? 'Leave merge mode'
                             : 'Click two compatible clips on the same track to merge them'
-                      }
-                      className={`rounded-md px-3 py-2 text-sm font-medium ${
-                        timelineTool === 'merge'
-                          ? 'bg-emerald-600 text-white hover:bg-emerald-500'
-                          : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
-                      } disabled:cursor-not-allowed disabled:opacity-40`}
-                      >
-                      Merge
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => activateTimelineTool(timelineTool === 'fade' ? 'select' : 'fade')}
-                      title={timelineTool === 'fade' ? 'Leave fade mode' : 'Click a clip, then drag the top dot inward'}
-                      className={`rounded-md px-3 py-2 text-sm font-medium ${
-                        timelineTool === 'fade'
-                          ? 'bg-cyan-600 text-white hover:bg-cyan-500'
-                          : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
-                      }`}
+                    }
+                    className={`rounded-md px-3 py-2 text-sm font-medium ${
+                      timelineTool === 'merge'
+                        ? 'bg-emerald-600 text-white hover:bg-emerald-500'
+                        : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
+                    } disabled:cursor-not-allowed disabled:opacity-40`}
+                  >
+                    Merge
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => activateTimelineTool(timelineTool === 'fade' ? 'select' : 'fade')}
+                    title={timelineTool === 'fade' ? 'Leave fade mode' : 'Click a clip, then drag the top dot inward'}
+                    className={`rounded-md px-3 py-2 text-sm font-medium ${
+                      timelineTool === 'fade'
+                        ? 'bg-cyan-600 text-white hover:bg-cyan-500'
+                        : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
+                    }`}
+                  >
+                    Fade
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void undoLatestTimelineEditRef.current()}
+                    className="rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-slate-300 hover:bg-slate-800"
+                  >
+                    Undo
+                  </button>
+                  <label className="ml-auto flex items-center gap-2 text-sm text-slate-300">
+                    <span className="uppercase tracking-[0.18em] text-slate-500">Snap</span>
+                    <select
+                      value={snapResolution}
+                      onChange={(e) => setSnapResolution(e.currentTarget.value as SnapResolution)}
+                      className="rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-sm text-white outline-none ring-indigo-500 focus:ring"
                     >
-                      Fade
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void undoLatestTimelineEditRef.current()}
-                      className="rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-slate-300 hover:bg-slate-800"
-                    >
-                      Undo
-                    </button>
-                    <label className="ml-auto flex items-center gap-2 text-sm text-slate-300">
-                      <span className="uppercase tracking-[0.18em] text-slate-500">Snap</span>
-                      <select
-                        value={snapResolution}
-                        onChange={(e) => setSnapResolution(e.currentTarget.value as SnapResolution)}
-                        className="rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-sm text-white outline-none ring-indigo-500 focus:ring"
-                      >
-                        <option value="off">Off</option>
-                        <option value="bar">Bar</option>
-                        <option value="beat">Beat</option>
-                        <option value="halfBeat">Half beat</option>
-                        <option value="quarterBeat">Quarter beat</option>
-                      </select>
-                    </label>
-                  </div>
-                  <p className="text-xs text-slate-400">
-                    Select is the main cursor mode. Cut splits clips at the playhead. Merge uses explicit clip selections,
-                    and Fade lets you drag the fade handles on a clip.
-                  </p>
-                  {timelineTool === 'merge' ? (
-                    <div className="space-y-1 text-xs">
-                      {mergeSubmitting ? <p className="text-amber-300">Submitting merge request...</p> : null}
-                      {mergeError ? <p className="text-rose-300">{mergeError}</p> : null}
-                      {!mergeSubmitting && !mergeError && pendingMergeSelection ? (
-                        <p className="text-emerald-300">
-                          First clip selected. Click a second compatible clip on the same track, or press Escape to cancel.
-                        </p>
-                      ) : null}
-                      {!mergeSubmitting && !mergeError && !pendingMergeSelection ? (
-                        <p className="text-slate-500">Click the first clip you want to merge.</p>
-                      ) : null}
-                    </div>
-                  ) : null}
-                  {timelineTool === 'fade' ? (
-                    <div className="space-y-1 text-xs">
-                      {fadeError ? <p className="text-rose-300">{fadeError}</p> : null}
-                      <p className="text-cyan-300">
-                        Click a clip to reveal its fade dots, then drag a dot inward to update the fade.
-                      </p>
-                    </div>
-                  ) : null}
+                      <option value="off">Off</option>
+                      <option value="bar">Bar</option>
+                      <option value="beat">Beat</option>
+                      <option value="halfBeat">Half beat</option>
+                      <option value="quarterBeat">Quarter beat</option>
+                    </select>
+                  </label>
                 </div>
-              ) : null}
-
-              {toolbarTab === 'upload' ? (
-                <form onSubmit={onUploadTrack} className="space-y-4">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-semibold text-white">Upload</p>
-                      <p className="text-xs text-slate-400">Uploads and recordings create new assets through the signed ingest flow.</p>
-                    </div>
-                  </div>
-
-                  <div className="grid gap-3 lg:grid-cols-2">
-                    <label className="space-y-1">
-                      <span className="block text-[10px] uppercase tracking-[0.18em] text-slate-400">Track name</span>
-                      <input
-                        type="text"
-                        value={uploadName}
-                        onChange={(e) => setUploadName(e.currentTarget.value)}
-                        className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none ring-indigo-500 focus:ring"
-                        placeholder="Lead Vocal"
-                      />
-                    </label>
-                    <label className="space-y-1">
-                      <span className="block text-[10px] uppercase tracking-[0.18em] text-slate-400">Audio file</span>
-                      <input
-                        type="file"
-                        accept="audio/*"
-                        onChange={(e) => handleUploadFilePicked(e.currentTarget.files?.[0] ?? null)}
-                        className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-200 file:mr-3 file:rounded-md file:border-0 file:bg-indigo-600 file:px-3 file:py-1.5 file:text-sm file:font-semibold file:text-white hover:file:bg-indigo-500"
-                      />
-                    </label>
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-3">
-                    <button
-                      type="submit"
-                      disabled={isUploading}
-                      className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {isUploading ? 'Uploading…' : 'Upload audio'}
-                    </button>
-                  </div>
-
-                  {processingJobIds.length > 0 ? (
-                    <div className="rounded-md border border-indigo-500/30 bg-indigo-500/10 px-3 py-2 text-xs text-indigo-100">
-                      <p className="font-medium">
-                        Processing {processingJobIds.length} job{processingJobIds.length === 1 ? '' : 's'}…
+                <p className="text-xs text-slate-400">
+                  Select is the main cursor mode. Cut splits clips at the playhead. Merge uses explicit clip selections,
+                  and Fade lets you drag the fade handles on a clip.
+                </p>
+                {timelineTool === 'merge' ? (
+                  <div className="space-y-1 text-xs">
+                    {mergeSubmitting ? <p className="text-amber-300">Submitting merge request...</p> : null}
+                    {mergeError ? <p className="text-rose-300">{mergeError}</p> : null}
+                    {!mergeSubmitting && !mergeError && pendingMergeSelection ? (
+                      <p className="text-emerald-300">
+                        First clip selected. Click a second compatible clip on the same track, or press Escape to cancel.
                       </p>
-                      {processingMessage ? <p className="mt-1 text-indigo-200">{processingMessage}</p> : null}
-                      {processingElapsedSeconds !== null ? (
-                        <p className="mt-1 text-indigo-200/80">Started {processingElapsedSeconds}s ago</p>
-                      ) : null}
-                      {activeProcessingJobs.length > 0 ? (
-                        <ul className="mt-1 space-y-0.5 text-indigo-200/90">
-                          {activeProcessingJobs.map((job) => (
-                            <li key={job.id}>
-                              {job.type} · {job.status} · {job.progress}%
-                            </li>
-                          ))}
-                        </ul>
-                      ) : null}
-                    </div>
-                  ) : processingMessage ? (
-                    <p className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100">
-                      {processingMessage}
+                    ) : null}
+                    {!mergeSubmitting && !mergeError && !pendingMergeSelection ? (
+                      <p className="text-slate-500">Click the first clip you want to merge.</p>
+                    ) : null}
+                  </div>
+                ) : null}
+                {timelineTool === 'fade' ? (
+                  <div className="space-y-1 text-xs">
+                    {fadeError ? <p className="text-rose-300">{fadeError}</p> : null}
+                    <p className="text-cyan-300">
+                      Click a clip to reveal its fade dots, then drag a dot inward to update the fade.
                     </p>
-                  ) : null}
-                  {uploadError ? <p className="text-sm text-red-400">{uploadError}</p> : null}
-                </form>
-              ) : null}
-
-              {toolbarTab === 'plugins' ? (
-                <div className="space-y-3">
-                  <div>
-                    <p className="text-sm font-semibold text-white">Plugins</p>
-                    <p className="text-xs text-slate-400">Built-in plugin host support is not wired yet, so this tab stays read-only.</p>
                   </div>
-                  {pluginDefinitions.length > 0 ? (
-                    <ul className="grid gap-2 md:grid-cols-2">
-                      {pluginDefinitions.map((plugin) => (
-                        <li key={plugin.id} className="rounded-md border border-slate-700 bg-slate-950 px-3 py-2">
-                          <p className="text-sm font-medium text-white">{plugin.name}</p>
-                          <p className="text-xs text-slate-400">
-                            {plugin.manufacturer ?? 'Unknown maker'} · {plugin.version}
-                          </p>
-                        </li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <div className="rounded-md border border-slate-700 bg-slate-950 px-4 py-5 text-sm text-slate-400">
-                      Plugins not available yet.
-                    </div>
-                  )}
-                </div>
-              ) : null}
+                ) : null}
+              </div>
+            </section>
 
-              {toolbarTab === 'tree' ? (
+            <section
+              ref={versionTreeRailRef}
+              className="border-t border-slate-800 bg-slate-950/90 px-4 py-4"
+              data-testid="version-tree-rail"
+            >
+              <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  {historyOperationSeq !== null ? (
-                    <div className="mb-3 rounded-lg border border-cyan-400/30 bg-cyan-500/10 px-4 py-3 text-sm text-cyan-50">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div>
-                          <p className="font-semibold">
-                            {historyLoading ? 'Loading history point' : 'Viewing history point'}
-                          </p>
-                          <p className="text-xs text-cyan-100/80">
-                            {historyLoading
-                              ? 'Rewinding the project to the selected activity.'
-                              : `Rewound to operation sequence ${historyOperationSeq}.`}
-                          </p>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => jumpToHistoryOperation(null)}
-                          className="rounded-full border border-cyan-300/30 bg-cyan-950/40 px-3 py-1 text-[11px] font-semibold text-cyan-50 transition-colors hover:border-cyan-200/70 hover:bg-cyan-900/60 hover:text-white"
-                        >
-                          Back to latest
-                        </button>
-                      </div>
-                      {historyError ? <p className="mt-2 text-xs text-rose-200">{historyError}</p> : null}
-                    </div>
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-500">
+                    Version history rail
+                  </p>
+                  <h2 className="mt-1 text-sm font-semibold text-white">Commit graph</h2>
+                  <p className="mt-1 text-xs text-slate-400">
+                    The branch DAG stays docked here so history is always visible while you edit.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  {toolbarTab === 'tree' ? (
+                    <span className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2 py-1 text-[10px] font-semibold text-cyan-200">
+                      Focused
+                    </span>
                   ) : null}
-                  <VersionHistoryTree
-                    projectId={projectId}
-                    demoId={demoId}
-                    baseOperationSeq={displayProjectState?.lastVersionOperationSeq ?? projectSyncState.lastSyncedOperationSeq}
-                    liveVersions={liveVersions}
-                    operationHistory={liveProjectState?.operationHistory ?? []}
-                    currentVersionId={liveBranchHeadVersionId}
-                    activeVersionId={liveActiveVersionId}
-                    selectedVersionId={selectedVersionId}
-                    selectedHistoryOperationSeq={historyOperationSeq}
-                    isFollowingHead={isFollowingHead}
-                    isHistoryViewActive={isHistoryViewActive}
-                    highlightedVersionId={projectSyncState.versionTreeAttention?.versionId ?? null}
-                    highlightedVersionCreatedAt={projectSyncState.versionTreeAttention?.createdAt ?? null}
-                    onSelectVersion={(id) => {
-                      setSelectedVersionId(id);
-                      stopTransport();
-                    }}
-                    onCheckoutSelectedVersion={checkoutSelectedVersion}
-                    onSelectHistoryOperation={jumpToHistoryOperation}
-                    onCreateBranch={createBranchFromSelectedVersion}
-                    onRevertToVersion={revertToSelectedVersion}
-                  />
+                  <button
+                    type="button"
+                    onClick={() => setIsVersionTreeRailExpanded((prev) => !prev)}
+                    className="rounded-full border border-slate-700 bg-slate-900 px-3 py-1 text-[11px] font-semibold text-slate-200 transition-colors hover:bg-slate-800 hover:text-white"
+                    aria-expanded={isVersionTreeRailExpanded}
+                    aria-label={isVersionTreeRailExpanded ? 'Collapse version history rail' : 'Expand version history rail'}
+                  >
+                    {isVersionTreeRailExpanded ? 'Collapse rail' : 'Expand rail'}
+                  </button>
+                </div>
+              </div>
+              {historyOperationSeq !== null ? (
+                <div className="mt-3 rounded-lg border border-cyan-400/30 bg-cyan-500/10 px-4 py-3 text-sm text-cyan-50">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <p className="font-semibold">{historyLoading ? 'Loading history point' : 'Viewing history point'}</p>
+                      <p className="text-xs text-cyan-100/80">
+                        {historyLoading
+                          ? 'Rewinding the project to the selected activity.'
+                          : `Rewound to operation sequence ${historyOperationSeq}.`}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => jumpToHistoryOperation(null)}
+                      className="rounded-full border border-cyan-300/30 bg-cyan-950/40 px-3 py-1 text-[11px] font-semibold text-cyan-50 transition-colors hover:border-cyan-200/70 hover:bg-cyan-900/60 hover:text-white"
+                    >
+                      Back to latest
+                    </button>
+                  </div>
+                  {historyError ? <p className="mt-2 text-xs text-rose-200">{historyError}</p> : null}
                 </div>
               ) : null}
-
-              {toolbarTab === 'comments' ? (
-                <div className="space-y-4">
-                  <div className="space-y-2">
-                    <p className="text-sm font-semibold text-white">Comments</p>
-                    {allComments.length > 0 ? (
-                      <div className="space-y-2">
-                        {allComments.map((comment, index) => {
-                          const track = comment.trackId
-                            ? selectedTracks.find((entry) => entry.trackId === comment.trackId) ?? null
-                            : null;
-                          const timestampLabel =
-                            comment.startTimeMs != null
-                              ? selectedTiming?.tempoBpm
-                                ? formatBarBeatLabel(comment.startTimeMs / 1000, selectedTiming) ??
-                                  formatTimeMs(comment.startTimeMs)
-                                : formatTimeMs(comment.startTimeMs)
-                              : 'Timestamp not set';
-
-                          return (
-                            <button
-                              key={`${comment.id ?? 'comment'}:${comment.createdAt}:${index}`}
-                              type="button"
-                              onClick={() => {
-                                if (track) {
-                                  setSelectedTrackVersionId(track.trackVersionId);
-                                }
-                                if (comment.startTimeMs != null) {
-                                  handleSeek(comment.startTimeMs);
-                                }
-                              }}
-                              className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-left transition-colors hover:border-indigo-500/50 hover:bg-slate-900/70"
-                            >
-                              <div className="flex flex-wrap items-center justify-between gap-2">
-                                <p className="text-xs font-medium text-slate-300">
-                                  {comment.author.name ?? comment.createdBy ?? 'Unknown'}
-                                </p>
-                                <p className="text-[10px] text-slate-500">{timestampLabel}</p>
-                              </div>
-                              <p className="mt-1 break-words text-sm text-slate-100">{comment.body}</p>
-                              <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-slate-400">
-                                <span className="rounded bg-slate-800 px-2 py-0.5">
-                                  {track ? track.trackName : 'Project / all tracks'}
-                                </span>
-                                {comment.resolved ? (
-                                  <span className="rounded bg-emerald-500/20 px-2 py-0.5 text-emerald-200">
-                                    Resolved
-                                  </span>
-                                ) : null}
-                              </div>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    ) : (
-                      <div className="rounded-md border border-slate-700 bg-slate-950 px-4 py-5 text-sm text-slate-400">
-                        No comments yet. Use Add Comment near the timeline to add one.
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ) : null}
-
-              {toolbarTab === 'members' ? (
-                <div className="space-y-3">
-                  <div>
-                    <p className="text-sm font-semibold text-white">Members and Presence</p>
-                    <p className="text-xs text-slate-400">Live collaborators appear here when presence is available.</p>
-                  </div>
-                  {presenceRecords.length > 0 ? (
-                    <div className="grid gap-2 md:grid-cols-2">
-                      {presenceRecords.map((presence) => (
-                        <div key={presence.presenceId} className="rounded-md border border-slate-700 bg-slate-950 px-3 py-2">
-                          <p className="text-sm font-medium text-white">{presence.actorUserId}</p>
-                          <p className="text-xs text-slate-400">
-                            {presence.status} · {presence.currentTool} · {presence.recordingState}
-                          </p>
-                          <p className="mt-1 text-xs text-slate-500">
-                            {presence.selectedTrackId ? `Track ${presence.selectedTrackId}` : 'No track selected'}
-                          </p>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="rounded-md border border-slate-700 bg-slate-950 px-4 py-5 text-sm text-slate-400">
-                      No collaborators are currently visible.
-                    </div>
-                  )}
+              <div className={`${isVersionTreeRailExpanded ? 'mt-4' : 'mt-4 max-h-0 overflow-hidden'}`}>
+                <VersionHistoryTree
+                  projectId={projectId}
+                  demoId={demoId}
+                  baseOperationSeq={displayProjectState?.lastVersionOperationSeq ?? projectSyncState.lastSyncedOperationSeq}
+                  liveVersions={liveVersions}
+                  operationHistory={liveProjectState?.operationHistory ?? []}
+                  currentVersionId={liveBranchHeadVersionId}
+                  activeVersionId={liveActiveVersionId}
+                  selectedVersionId={selectedVersionId}
+                  selectedHistoryOperationSeq={historyOperationSeq}
+                  isFollowingHead={isFollowingHead}
+                  isHistoryViewActive={isHistoryViewActive}
+                  highlightedVersionId={projectSyncState.versionTreeAttention?.versionId ?? null}
+                  highlightedVersionCreatedAt={projectSyncState.versionTreeAttention?.createdAt ?? null}
+                  onSelectVersion={(id) => {
+                    setSelectedVersionId(id);
+                    stopTransport();
+                  }}
+                  onCheckoutSelectedVersion={checkoutSelectedVersion}
+                  onSelectHistoryOperation={jumpToHistoryOperation}
+                  onCreateBranch={createBranchFromSelectedVersion}
+                  onRevertToVersion={revertToSelectedVersion}
+                  defaultExpanded
+                />
+              </div>
+              {!isVersionTreeRailExpanded ? (
+                <div className="mt-3 rounded-lg border border-slate-800 bg-slate-950 px-4 py-3 text-xs text-slate-400">
+                  History is docked here, but collapsed. Expand the rail to browse branches, checkouts, and reverts.
                 </div>
               ) : null}
             </section>
+
+            <section className="border-t border-slate-800 bg-slate-950/80">
+              <DawToolbarTabs activeTab={toolbarTab} onTabChange={setToolbarTab} />
+              <section className="border-t border-slate-800 bg-transparent p-4">
+                {toolbarTab === 'edit' ? (
+                  <div className="space-y-4">
+                    <div className="flex items-end justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-white">Tools</p>
+                        <p className="text-xs text-slate-400">Edit and timeline actions live here.</p>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          activateTimelineTool('select');
+                        }}
+                        className={`rounded-md px-3 py-2 text-sm font-medium ${
+                          timelineTool === 'select'
+                            ? 'bg-indigo-600 text-white'
+                            : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
+                        }`}
+                      >
+                        Select
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          activateTimelineTool('split');
+                        }}
+                        className={`rounded-md px-3 py-2 text-sm font-medium ${
+                          timelineTool === 'split'
+                            ? 'bg-amber-600 text-white'
+                            : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
+                        }`}
+                      >
+                        Cut
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => activateTimelineTool(timelineTool === 'merge' ? 'select' : 'merge')}
+                        disabled={!canEnterMergeMode}
+                        title={
+                          !canEnterMergeMode
+                            ? 'Add or upload at least two saved clips on a track before using Merge'
+                            : mergeSubmitting
+                              ? 'Submitting merge request'
+                              : timelineTool === 'merge'
+                                ? 'Leave merge mode'
+                                : 'Click two compatible clips on the same track to merge them'
+                        }
+                        className={`rounded-md px-3 py-2 text-sm font-medium ${
+                          timelineTool === 'merge'
+                            ? 'bg-emerald-600 text-white hover:bg-emerald-500'
+                            : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
+                        } disabled:cursor-not-allowed disabled:opacity-40`}
+                      >
+                        Merge
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => activateTimelineTool(timelineTool === 'fade' ? 'select' : 'fade')}
+                        title={timelineTool === 'fade' ? 'Leave fade mode' : 'Click a clip, then drag the top dot inward'}
+                        className={`rounded-md px-3 py-2 text-sm font-medium ${
+                          timelineTool === 'fade'
+                            ? 'bg-cyan-600 text-white hover:bg-cyan-500'
+                            : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
+                        }`}
+                      >
+                        Fade
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void undoLatestTimelineEditRef.current()}
+                        className="rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-slate-300 hover:bg-slate-800"
+                      >
+                        Undo
+                      </button>
+                      <label className="ml-auto flex items-center gap-2 text-sm text-slate-300">
+                        <span className="uppercase tracking-[0.18em] text-slate-500">Snap</span>
+                        <select
+                          value={snapResolution}
+                          onChange={(e) => setSnapResolution(e.currentTarget.value as SnapResolution)}
+                          className="rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-sm text-white outline-none ring-indigo-500 focus:ring"
+                        >
+                          <option value="off">Off</option>
+                          <option value="bar">Bar</option>
+                          <option value="beat">Beat</option>
+                          <option value="halfBeat">Half beat</option>
+                          <option value="quarterBeat">Quarter beat</option>
+                        </select>
+                      </label>
+                    </div>
+                    <p className="text-xs text-slate-400">
+                      Select is the main cursor mode. Cut splits clips at the playhead. Merge uses explicit clip selections,
+                      and Fade lets you drag the fade handles on a clip.
+                    </p>
+                    {timelineTool === 'merge' ? (
+                      <div className="space-y-1 text-xs">
+                        {mergeSubmitting ? <p className="text-amber-300">Submitting merge request...</p> : null}
+                        {mergeError ? <p className="text-rose-300">{mergeError}</p> : null}
+                        {!mergeSubmitting && !mergeError && pendingMergeSelection ? (
+                          <p className="text-emerald-300">
+                            First clip selected. Click a second compatible clip on the same track, or press Escape to cancel.
+                          </p>
+                        ) : null}
+                        {!mergeSubmitting && !mergeError && !pendingMergeSelection ? (
+                          <p className="text-slate-500">Click the first clip you want to merge.</p>
+                        ) : null}
+                      </div>
+                    ) : null}
+                    {timelineTool === 'fade' ? (
+                      <div className="space-y-1 text-xs">
+                        {fadeError ? <p className="text-rose-300">{fadeError}</p> : null}
+                        <p className="text-cyan-300">
+                          Click a clip to reveal its fade dots, then drag a dot inward to update the fade.
+                        </p>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {toolbarTab === 'upload' ? (
+                  <form onSubmit={onUploadTrack} className="space-y-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-white">Upload</p>
+                        <p className="text-xs text-slate-400">Uploads and recordings create new assets through the signed ingest flow.</p>
+                      </div>
+                    </div>
+
+                    <div className="grid gap-3 lg:grid-cols-2">
+                      <label className="space-y-1">
+                        <span className="block text-[10px] uppercase tracking-[0.18em] text-slate-400">Track name</span>
+                        <input
+                          type="text"
+                          value={uploadName}
+                          onChange={(e) => setUploadName(e.currentTarget.value)}
+                          className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none ring-indigo-500 focus:ring"
+                          placeholder="Lead Vocal"
+                        />
+                      </label>
+                      <label className="space-y-1">
+                        <span className="block text-[10px] uppercase tracking-[0.18em] text-slate-400">Audio file</span>
+                        <input
+                          type="file"
+                          accept="audio/*"
+                          onChange={(e) => handleUploadFilePicked(e.currentTarget.files?.[0] ?? null)}
+                          className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-200 file:mr-3 file:rounded-md file:border-0 file:bg-indigo-600 file:px-3 file:py-1.5 file:text-sm file:font-semibold file:text-white hover:file:bg-indigo-500"
+                        />
+                      </label>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-3">
+                      <button
+                        type="submit"
+                        disabled={isUploading}
+                        className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {isUploading ? 'Uploading…' : 'Upload audio'}
+                      </button>
+                    </div>
+
+                    {processingJobIds.length > 0 ? (
+                      <div className="rounded-md border border-indigo-500/30 bg-indigo-500/10 px-3 py-2 text-xs text-indigo-100">
+                        <p className="font-medium">
+                          Processing {processingJobIds.length} job{processingJobIds.length === 1 ? '' : 's'}…
+                        </p>
+                        {processingMessage ? <p className="mt-1 text-indigo-200">{processingMessage}</p> : null}
+                        {processingElapsedSeconds !== null ? (
+                          <p className="mt-1 text-indigo-200/80">Started {processingElapsedSeconds}s ago</p>
+                        ) : null}
+                        {activeProcessingJobs.length > 0 ? (
+                          <ul className="mt-1 space-y-0.5 text-indigo-200/90">
+                            {activeProcessingJobs.map((job) => (
+                              <li key={job.id}>
+                                {job.type} · {job.status} · {job.progress}%
+                              </li>
+                            ))}
+                          </ul>
+                        ) : null}
+                      </div>
+                    ) : processingMessage ? (
+                      <p className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100">
+                        {processingMessage}
+                      </p>
+                    ) : null}
+                    {uploadError ? <p className="text-sm text-red-400">{uploadError}</p> : null}
+                  </form>
+                ) : null}
+
+                {toolbarTab === 'plugins' ? (
+                  <div className="space-y-3">
+                    <div>
+                      <p className="text-sm font-semibold text-white">Plugins</p>
+                      <p className="text-xs text-slate-400">Built-in plugin host support is not wired yet, so this tab stays read-only.</p>
+                    </div>
+                    {pluginDefinitions.length > 0 ? (
+                      <ul className="grid gap-2 md:grid-cols-2">
+                        {pluginDefinitions.map((plugin) => (
+                          <li key={plugin.id} className="rounded-md border border-slate-700 bg-slate-950 px-3 py-2">
+                            <p className="text-sm font-medium text-white">{plugin.name}</p>
+                            <p className="text-xs text-slate-400">
+                              {plugin.manufacturer ?? 'Unknown maker'} · {plugin.version}
+                            </p>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <div className="rounded-md border border-slate-700 bg-slate-950 px-4 py-5 text-sm text-slate-400">
+                        Plugins not available yet.
+                      </div>
+                    )}
+                  </div>
+                ) : null}
+
+                {toolbarTab === 'tree' ? (
+                  <div className="space-y-3 rounded-lg border border-slate-800 bg-slate-950 px-4 py-4 text-sm text-slate-300">
+                    <div>
+                      <p className="text-sm font-semibold text-white">Version history</p>
+                      <p className="mt-1 text-xs text-slate-400">
+                        The commit graph now lives in the docked rail above. Use the rail controls to expand, collapse,
+                        or jump back to the latest head.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsVersionTreeRailExpanded(true);
+                        versionTreeRailRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                      }}
+                      className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-3 py-1 text-[11px] font-semibold text-cyan-200 transition-colors hover:bg-cyan-500/20 hover:text-cyan-100"
+                    >
+                      Reveal history rail
+                    </button>
+                  </div>
+                ) : null}
+
+                {toolbarTab === 'comments' ? (
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <p className="text-sm font-semibold text-white">Comments</p>
+                      {allComments.length > 0 ? (
+                        <div className="space-y-2">
+                          {allComments.map((comment, index) => {
+                            const track = comment.trackId
+                              ? selectedTracks.find((entry) => entry.trackId === comment.trackId) ?? null
+                              : null;
+                            const timestampLabel =
+                              comment.startTimeMs != null
+                                ? selectedTiming?.tempoBpm
+                                  ? formatBarBeatLabel(comment.startTimeMs / 1000, selectedTiming) ??
+                                    formatTimeMs(comment.startTimeMs)
+                                  : formatTimeMs(comment.startTimeMs)
+                                : 'Timestamp not set';
+
+                            return (
+                              <button
+                                key={`${comment.id ?? 'comment'}:${comment.createdAt}:${index}`}
+                                type="button"
+                                onClick={() => {
+                                  if (track) {
+                                    setSelectedTrackVersionId(track.trackVersionId);
+                                  }
+                                  if (comment.startTimeMs != null) {
+                                    handleSeek(comment.startTimeMs);
+                                  }
+                                }}
+                                className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-left transition-colors hover:border-indigo-500/50 hover:bg-slate-900/70"
+                              >
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <p className="text-xs font-medium text-slate-300">
+                                    {comment.author.name ?? comment.createdBy ?? 'Unknown'}
+                                  </p>
+                                  <p className="text-[10px] text-slate-500">{timestampLabel}</p>
+                                </div>
+                                <p className="mt-1 break-words text-sm text-slate-100">{comment.body}</p>
+                                <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-slate-400">
+                                  <span className="rounded bg-slate-800 px-2 py-0.5">
+                                    {track ? track.trackName : 'Project / all tracks'}
+                                  </span>
+                                  {comment.resolved ? (
+                                    <span className="rounded bg-emerald-500/20 px-2 py-0.5 text-emerald-200">
+                                      Resolved
+                                    </span>
+                                  ) : null}
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div className="rounded-md border border-slate-700 bg-slate-950 px-4 py-5 text-sm text-slate-400">
+                          No comments yet. Use Add Comment near the timeline to add one.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : null}
+
+                {toolbarTab === 'members' ? (
+                  <div className="space-y-3">
+                    <div>
+                      <p className="text-sm font-semibold text-white">Members and Presence</p>
+                      <p className="text-xs text-slate-400">Live collaborators appear here when presence is available.</p>
+                    </div>
+                    {presenceRecords.length > 0 ? (
+                      <div className="grid gap-2 md:grid-cols-2">
+                        {presenceRecords.map((presence) => (
+                          <div key={presence.presenceId} className="rounded-md border border-slate-700 bg-slate-950 px-3 py-2">
+                            <p className="text-sm font-medium text-white">{presence.actorUserId}</p>
+                            <p className="text-xs text-slate-400">
+                              {presence.status} · {presence.currentTool} · {presence.recordingState}
+                            </p>
+                            <p className="mt-1 text-xs text-slate-500">
+                              {presence.selectedTrackId ? `Track ${presence.selectedTrackId}` : 'No track selected'}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="rounded-md border border-slate-700 bg-slate-950 px-4 py-5 text-sm text-slate-400">
+                        No collaborators are currently visible.
+                      </div>
+                    )}
+                  </div>
+                ) : null}
+              </section>
+            </section>
           </div>
+          <aside className="order-first flex h-full min-h-0 min-w-0 flex-col gap-4 xl:order-none xl:sticky xl:top-4 xl:self-start xl:max-h-[calc(100vh-2rem)] xl:overflow-y-auto">
+            <section className="rounded-xl border border-slate-700 bg-slate-950/80 shadow-sm shadow-black/20">
+              <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-800 px-4 py-3">
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Project controls</p>
+                  <h2 className="mt-1 text-sm font-semibold text-white">Transport and timing</h2>
+                </div>
+                <AudioInputSelector
+                  selectedAudioInputDeviceId={selectedAudioInputDeviceId}
+                  onSelectedAudioInputDeviceIdChange={setSelectedAudioInputDeviceId}
+                  isAudioInputReady={audioInputReady}
+                  onAudioInputReadyChange={setAudioInputReady}
+                />
+              </div>
+              <div className="space-y-3 p-4">
+                <ProjectTimingControls
+                  sharedDemoTempoBpm={sharedDemoTempoBpm}
+                  localTempoBpm={localTempoBpmInput}
+                  onLocalTempoChange={setLocalTempoBpmInput}
+                />
+                <TransportControls
+                  isPlaying={isPlaying}
+                  currentTimeMs={currentTimeMs}
+                  onPlay={() => playTransport()}
+                  onPause={pauseTransport}
+                  onStop={handleTransportStop}
+                  leadingSlot={
+                    <RecordingControls
+                      ref={recordingControlsRef}
+                      currentTimeMs={currentTimeMs}
+                      recordedTempoBpm={resolvedLocalTempoBpm}
+                      isDisabled={temporaryRecordingTrack !== null || !audioInputReady || !selectedAudioInputDeviceId}
+                      recordingTarget={activeRecordingTarget}
+                      selectedAudioInputDeviceId={selectedAudioInputDeviceId}
+                      isAudioInputReady={audioInputReady}
+                      onNeedsAudioInput={() => {}}
+                      onStreamReady={handleRecordingStreamReady}
+                      onDurationUpdate={handleRecordingDurationUpdate}
+                      onStopped={handleRecordingStopped}
+                    />
+                  }
+                  trailingSlot={
+                    <button
+                      type="button"
+                      onClick={() => setMetronomeEnabled((prev) => !prev)}
+                      className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                        metronomeEnabled
+                          ? 'bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/40'
+                          : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+                      }`}
+                    >
+                      Metronome {metronomeEnabled ? 'On' : 'Off'}
+                    </button>
+                  }
+                />
+              </div>
+            </section>
+          </aside>
         </div>
 
       {addCommentModalOpen ? (

@@ -86,6 +86,7 @@ export type VersionHistoryTreeProps = {
   onSelectHistoryOperation: (operationSeq: number | null) => void;
   onCreateBranch: (sourceVersionId: string, label: string) => Promise<{ versionId: string; label: string } | null>;
   onRevertToVersion: (sourceVersionId: string) => Promise<{ versionId: string; label: string } | null>;
+  defaultExpanded?: boolean;
 };
 
 export function VersionHistoryTree({
@@ -107,11 +108,12 @@ export function VersionHistoryTree({
   onSelectHistoryOperation,
   onCreateBranch,
   onRevertToVersion,
+  defaultExpanded = false,
 }: VersionHistoryTreeProps) {
   const [renameState, setRenameState] = useState<RenameState | null>(null);
   const [branchState, setBranchState] = useState<BranchState | null>(null);
   const [revertState, setRevertState] = useState<RevertState | null>(null);
-  const [isExpanded, setIsExpanded] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(defaultExpanded);
   const [animatedVersionId, setAnimatedVersionId] = useState<string | null>(null);
 
   useEffect(() => {

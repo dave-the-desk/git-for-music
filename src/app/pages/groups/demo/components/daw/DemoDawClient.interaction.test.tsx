@@ -560,7 +560,10 @@ describe('DemoDawClient recording regression', () => {
       />,
     );
 
-    await user.click(await screen.findByRole('button', { name: 'Enable mock mic' }));
+    expect(screen.getByTestId('version-tree-rail')).toBeTruthy();
+    expect(screen.getByTestId('version-history-tree')).toBeTruthy();
+
+    await user.click((await screen.findAllByRole('button', { name: 'Enable mock mic' }))[0]);
     await user.click(await screen.findByRole('button', { name: 'Start mock recording' }));
 
     await waitFor(() => {
@@ -641,7 +644,7 @@ describe('DemoDawClient recording regression', () => {
       expect(screen.getByText('Remote Update Track')).toBeTruthy();
     });
 
-    await user.click(await screen.findByRole('button', { name: 'Enable mock mic' }));
+    await user.click((await screen.findAllByRole('button', { name: 'Enable mock mic' }))[0]);
     expect(screen.getByText('Remote Update Track')).toBeTruthy();
   });
 

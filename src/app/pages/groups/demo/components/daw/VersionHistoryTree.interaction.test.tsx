@@ -204,3 +204,47 @@ describe('VersionHistoryTree live version updates', () => {
     expect(onCheckoutSelectedVersion).not.toHaveBeenCalled();
   });
 });
+
+describe('VersionHistoryTree docked rail mode', () => {
+  it('renders expanded when the docked rail asks for the graph up front', () => {
+    const root = makeVersion('version-root', {
+      isCurrent: true,
+      operationSeq: 1,
+      createdAt: '2025-01-01T00:00:00.000Z',
+    });
+    const head = makeVersion('version-head', {
+      parentId: root.id,
+      parentVersionId: root.id,
+      isCurrent: true,
+      operationSeq: 2,
+      createdAt: '2025-01-02T00:00:00.000Z',
+    });
+
+    render(
+      createElement(VersionHistoryTree, {
+        projectId: 'project-1',
+        demoId: 'demo-1',
+        baseOperationSeq: 2,
+        liveVersions: [root, head],
+        operationHistory: [],
+        currentVersionId: head.id,
+        activeVersionId: head.id,
+        selectedVersionId: head.id,
+        selectedHistoryOperationSeq: null,
+        isFollowingHead: true,
+        isHistoryViewActive: false,
+        highlightedVersionId: null,
+        highlightedVersionCreatedAt: null,
+        onSelectVersion: vi.fn(),
+        onCheckoutSelectedVersion: vi.fn(),
+        onSelectHistoryOperation: vi.fn(),
+        onCreateBranch: vi.fn().mockResolvedValue(null),
+        onRevertToVersion: vi.fn().mockResolvedValue(null),
+        defaultExpanded: true,
+      }),
+    );
+
+    expect(screen.getByRole('button', { name: 'Minimize version tree' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Create Branch' })).toBeTruthy();
+  });
+});
