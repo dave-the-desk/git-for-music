@@ -98,7 +98,6 @@ describe('VersionHistoryTree revert action', () => {
       }),
     );
 
-    await user.click(screen.getByRole('button', { name: 'Maximize version tree' }));
     await user.click(screen.getByRole('button', { name: 'Revert to this version' }));
 
     await waitFor(() => {
@@ -145,7 +144,6 @@ describe('VersionHistoryTree live version updates', () => {
     const onCreateBranch = vi.fn().mockResolvedValue(null);
     const onRevertToVersion = vi.fn().mockResolvedValue(null);
 
-    const user = userEvent.setup();
     const { rerender } = render(
       createElement(VersionHistoryTree, {
         projectId: 'project-1',
@@ -169,7 +167,6 @@ describe('VersionHistoryTree live version updates', () => {
       }),
     );
 
-    await user.click(screen.getByRole('button', { name: 'Maximize version tree' }));
     expect(screen.queryByText('Revert to root')).toBeNull();
 
     rerender(
@@ -240,11 +237,10 @@ describe('VersionHistoryTree docked rail mode', () => {
         onSelectHistoryOperation: vi.fn(),
         onCreateBranch: vi.fn().mockResolvedValue(null),
         onRevertToVersion: vi.fn().mockResolvedValue(null),
-        defaultExpanded: true,
       }),
     );
 
-    expect(screen.getByRole('button', { name: 'Minimize version tree' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Create Branch' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Revert to this version' })).toBeTruthy();
   });
 });

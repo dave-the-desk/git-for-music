@@ -714,7 +714,8 @@ describe('DemoDawClient recording regression', () => {
     const browser = within(browserRail);
 
     expect(browser.getByText('Browser')).toBeTruthy();
-    expect(browser.getByLabelText('Search browser')).toBeTruthy();
+    expect(browser.getByText('Name the track, choose a file, then send it into the demo.')).toBeTruthy();
+    expect(browser.getByText('Choose file')).toBeTruthy();
     expect(browser.getByRole('button', { name: 'Upload audio' })).toBeTruthy();
     expect(browser.getByRole('button', { name: 'Upload' })).toBeTruthy();
     expect(browser.getByRole('button', { name: 'Plugins' })).toBeTruthy();

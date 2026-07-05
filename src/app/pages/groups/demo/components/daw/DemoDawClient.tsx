@@ -317,6 +317,8 @@ export function DemoDawClient({
   const [addCommentSubmitting, setAddCommentSubmitting] = useState(false);
   const [addCommentError, setAddCommentError] = useState<string | null>(null);
   const [timelineCommentOpenId, setTimelineCommentOpenId] = useState<string | null>(null);
+  const inspectorScrollRef = useRef<HTMLDivElement | null>(null);
+  const [inspectorScrollHeightPx, setInspectorScrollHeightPx] = useState<number | null>(null);
   const recordingPreviewUrlRef = useRef<string | null>(null);
   const isLiveRecordingRef = useRef(false);
   const recordingSessionRef = useRef<RecordingSession | null>(null);
@@ -354,6 +356,20 @@ export function DemoDawClient({
 
     updateTopOffset();
     const observer = new ResizeObserver(updateTopOffset);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const element = inspectorScrollRef.current;
+    if (!element || typeof ResizeObserver === 'undefined') return undefined;
+
+    const updateInspectorScrollHeight = () => {
+      setInspectorScrollHeightPx(element.getBoundingClientRect().height);
+    };
+
+    updateInspectorScrollHeight();
+    const observer = new ResizeObserver(updateInspectorScrollHeight);
     observer.observe(element);
     return () => observer.disconnect();
   }, []);
@@ -3359,11 +3375,19 @@ export function DemoDawClient({
   );
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100">
-      <div className="mx-auto flex min-h-screen max-w-[1760px] flex-col gap-4 px-4 pb-4">
+    <div className="relative min-h-screen bg-[#060816] text-slate-100">
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(56,189,248,0.11),_transparent_34%),radial-gradient(circle_at_top_right,_rgba(14,165,233,0.09),_transparent_30%),linear-gradient(to_bottom,_rgba(15,23,42,0.94),_rgba(2,6,23,1))]"
+      />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 bg-[linear-gradient(rgba(148,163,184,0.035)_1px,transparent_1px),linear-gradient(90deg,rgba(148,163,184,0.035)_1px,transparent_1px)] bg-[size:72px_72px] opacity-25"
+      />
+      <div className="relative mx-auto flex min-h-screen max-w-[1760px] flex-col gap-5 px-4 pb-4">
         <div
           ref={topShellRef}
-          className="sticky top-0 z-40 space-y-2 overflow-hidden rounded-b-2xl border border-slate-700 border-t-0 bg-slate-950/95 px-3 pb-3 pt-3 shadow-lg shadow-black/30 backdrop-blur"
+          className="sticky top-0 z-50 space-y-2 overflow-hidden rounded-b-[1.75rem] border border-slate-800/80 border-t-0 bg-slate-950/88 px-3 pb-3 pt-3 shadow-[0_20px_60px_-28px_rgba(0,0,0,0.85)] backdrop-blur-xl"
         >
           <header className="flex flex-wrap items-start justify-between gap-3">
             <div className="flex items-start gap-3">
@@ -3376,7 +3400,7 @@ export function DemoDawClient({
                     router.push(`/groups/${groupSlug}/projects/${projectSlug}`);
                   }
                 }}
-                className="mt-1 inline-flex h-9 items-center justify-center rounded-full border border-slate-700 bg-slate-950 px-3 text-xs font-semibold text-slate-100 hover:bg-slate-900"
+                className="mt-1 inline-flex h-9 items-center justify-center rounded-full border border-slate-700 bg-slate-950/80 px-3 text-xs font-semibold text-slate-100 shadow-sm shadow-black/20 hover:bg-slate-900"
               >
                 Back
               </button>
@@ -3390,7 +3414,7 @@ export function DemoDawClient({
               <button
                 type="button"
                 onClick={() => setIsTopControlRowCollapsed((prev) => !prev)}
-                className="rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-800 hover:text-white"
+                className="rounded-full border border-slate-700 bg-slate-900/90 px-3 py-1.5 text-xs font-medium text-slate-200 shadow-sm shadow-black/20 hover:bg-slate-800 hover:text-white"
                 aria-expanded={!isTopControlRowCollapsed}
                 aria-label={isTopControlRowCollapsed ? 'Restore timing and recording controls' : 'Minimize timing and recording controls'}
               >
@@ -3453,26 +3477,13 @@ export function DemoDawClient({
           ) : null}
         </div>
 
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(280px,0.72fr)_minmax(0,1.58fr)_minmax(280px,0.7fr)]">
+          <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(280px,0.72fr)_minmax(0,1.58fr)_minmax(280px,0.7fr)] lg:items-stretch">
             <aside
-              className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-slate-700 bg-slate-950/80 shadow-sm shadow-black/20"
+              className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-slate-800/80 bg-slate-950/80 shadow-[0_18px_60px_-36px_rgba(0,0,0,0.85)] backdrop-blur"
               data-testid="browser-rail"
             >
-            <div className="border-b border-slate-800 px-4 py-4">
-              <h2 className="text-sm font-semibold text-white">Browser</h2>
-            </div>
-            <div className="border-b border-slate-800 px-4 py-3">
-                <label className="block space-y-1">
-                  <span className="sr-only">Search browser</span>
-                  <input
-                    type="search"
-                    value={browserQuery}
-                    aria-label="Search browser"
-                    onChange={(e) => setBrowserQuery(e.currentTarget.value)}
-                    placeholder="Filter uploads, plugins, members"
-                    className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none ring-indigo-500 focus:ring"
-                />
-              </label>
+            <div className="border-b border-slate-800/80 bg-slate-950/40 px-4 py-4">
+              <h2 className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-200">Browser</h2>
             </div>
             <div className="flex flex-wrap gap-2 border-b border-slate-800 px-4 py-3">
               {([
@@ -3503,29 +3514,39 @@ export function DemoDawClient({
             </div>
             <div className="flex-1 min-h-0 overflow-y-auto p-4">
               {browserTab === 'upload' ? (
-                <form onSubmit={onUploadTrack} className="space-y-4">
+                <form onSubmit={onUploadTrack} className="space-y-5">
                   <div className="space-y-1">
-                    <p className="text-sm font-semibold text-white">Upload</p>
+                    <p className="text-sm font-semibold text-white">Upload audio</p>
+                    <p className="text-xs text-slate-400">Name the track, choose a file, then send it into the demo.</p>
                   </div>
 
-                  <div className="space-y-3">
-                    <label className="space-y-1">
+                  <label className="block space-y-1.5">
                     <span className="block text-[10px] uppercase tracking-[0.18em] text-slate-400">Track name</span>
-                      <input
-                        type="text"
-                        value={uploadName}
-                        onChange={(e) => setUploadName(e.currentTarget.value)}
-                        className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none ring-indigo-500 focus:ring"
-                        placeholder="Lead Vocal"
-                      />
-                    </label>
-                    <label className="space-y-1">
+                    <input
+                      type="text"
+                      value={uploadName}
+                      onChange={(e) => setUploadName(e.currentTarget.value)}
+                      className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-3 text-sm text-white outline-none transition-colors ring-indigo-500 placeholder:text-slate-500 focus:border-slate-500 focus:ring"
+                      placeholder="Lead Vocal"
+                    />
+                  </label>
+
+                  <div className="space-y-1.5">
                     <span className="block text-[10px] uppercase tracking-[0.18em] text-slate-400">Audio file</span>
+                    <label className="flex cursor-pointer flex-col gap-3 rounded-xl border border-slate-700 bg-slate-950/80 p-3 transition-colors hover:border-slate-600 hover:bg-slate-900/80">
+                      <div className="flex items-center gap-3">
+                        <span className="inline-flex rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-indigo-500">
+                          Choose file
+                        </span>
+                        <span className="min-w-0 flex-1 truncate text-sm text-slate-300">
+                          {uploadFile ? uploadFile.name : 'No file selected'}
+                        </span>
+                      </div>
                       <input
                         type="file"
                         accept="audio/*"
                         onChange={(e) => handleUploadFilePicked(e.currentTarget.files?.[0] ?? null)}
-                        className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-200 file:mr-3 file:rounded-md file:border-0 file:bg-indigo-600 file:px-3 file:py-1.5 file:text-sm file:font-semibold file:text-white hover:file:bg-indigo-500"
+                        className="sr-only"
                       />
                     </label>
                   </div>
@@ -3534,7 +3555,7 @@ export function DemoDawClient({
                     <button
                       type="submit"
                       disabled={isUploading}
-                      className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
+                      className="rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-[0_10px_20px_rgba(79,70,229,0.28)] transition-colors hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       {isUploading ? 'Uploading…' : 'Upload audio'}
                     </button>
@@ -3612,91 +3633,99 @@ export function DemoDawClient({
               ) : null}
             </div>
           </aside>
-          <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-slate-700 bg-slate-950/80 shadow-sm shadow-black/20">
+          <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-slate-800/80 bg-slate-950/80 shadow-[0_18px_60px_-36px_rgba(0,0,0,0.85)] backdrop-blur">
             <section
               ref={versionTreeRailRef}
-              className="border-t border-slate-800 bg-slate-950/90 px-4 py-4"
+              className="flex h-full min-h-0 flex-col overflow-hidden border-t border-slate-800/80 bg-slate-950/90 px-4 py-4"
+              style={inspectorScrollHeightPx ? { height: `${inspectorScrollHeightPx + 45}px` } : undefined}
               data-testid="version-tree-rail"
             >
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <h2 className="text-sm font-semibold text-white">Version history</h2>
-                </div>
-                <div className="flex items-center gap-2">
-                  {toolbarTab === 'tree' ? (
-                    <span className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2 py-1 text-[10px] font-semibold text-cyan-200">
-                      Focused
-                    </span>
-                  ) : null}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      versionTreeRailShouldPersistRef.current = true;
-                      setIsVersionTreeRailExpanded((prev) => !prev);
-                    }}
-                    className="rounded-full border border-slate-700 bg-slate-900 px-3 py-1 text-[11px] font-semibold text-slate-200 transition-colors hover:bg-slate-800 hover:text-white"
-                    aria-expanded={isVersionTreeRailExpanded}
-                    aria-label={isVersionTreeRailExpanded ? 'Collapse version history rail' : 'Expand version history rail'}
-                  >
-                    {isVersionTreeRailExpanded ? 'Collapse rail' : 'Expand rail'}
-                  </button>
-                </div>
-              </div>
-              {historyOperationSeq !== null ? (
-                <div className="mt-3 rounded-lg border border-cyan-400/30 bg-cyan-500/10 px-4 py-3 text-sm text-cyan-50">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div>
-                      <p className="font-semibold">{historyLoading ? 'Loading history point' : 'Viewing history point'}</p>
-                    </div>
+              <div className="flex min-h-0 flex-col gap-3">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h2 className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-200">Version history</h2>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {toolbarTab === 'tree' ? (
+                      <span className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2 py-1 text-[10px] font-semibold text-cyan-200">
+                        Focused
+                      </span>
+                    ) : null}
                     <button
                       type="button"
-                      onClick={() => jumpToHistoryOperation(null)}
-                      className="rounded-full border border-cyan-300/30 bg-cyan-950/40 px-3 py-1 text-[11px] font-semibold text-cyan-50 transition-colors hover:border-cyan-200/70 hover:bg-cyan-900/60 hover:text-white"
+                      onClick={() => {
+                        versionTreeRailShouldPersistRef.current = true;
+                        setIsVersionTreeRailExpanded((prev) => !prev);
+                      }}
+                      className="rounded-full border border-slate-700 bg-slate-900 px-3 py-1 text-[11px] font-semibold text-slate-200 transition-colors hover:bg-slate-800 hover:text-white"
+                      aria-expanded={isVersionTreeRailExpanded}
+                      aria-label={isVersionTreeRailExpanded ? 'Collapse version history rail' : 'Expand version history rail'}
                     >
-                      Back to latest
+                      {isVersionTreeRailExpanded ? 'Collapse rail' : 'Expand rail'}
                     </button>
                   </div>
-                  {historyError ? <p className="mt-2 text-xs text-rose-200">{historyError}</p> : null}
                 </div>
-              ) : null}
-              <div className={`${isVersionTreeRailExpanded ? 'mt-4' : 'mt-4 max-h-0 overflow-hidden'}`}>
-                <VersionHistoryTree
-                  projectId={projectId}
-                  demoId={demoId}
-                  baseOperationSeq={displayProjectState?.lastVersionOperationSeq ?? projectSyncState.lastSyncedOperationSeq}
-                  liveVersions={liveVersions}
-                  operationHistory={liveProjectState?.operationHistory ?? []}
-                  currentVersionId={liveBranchHeadVersionId}
-                  activeVersionId={liveActiveVersionId}
-                  selectedVersionId={selectedVersionId}
-                  selectedHistoryOperationSeq={historyOperationSeq}
-                  isFollowingHead={isFollowingHead}
-                  isHistoryViewActive={isHistoryViewActive}
-                  highlightedVersionId={projectSyncState.versionTreeAttention?.versionId ?? null}
-                  highlightedVersionCreatedAt={projectSyncState.versionTreeAttention?.createdAt ?? null}
-                  onSelectVersion={(id) => {
-                    setSelectedVersionId(id);
-                    stopTransport();
-                  }}
-                  onCheckoutSelectedVersion={checkoutSelectedVersion}
-                  onSelectHistoryOperation={jumpToHistoryOperation}
-                  onCreateBranch={createBranchFromSelectedVersion}
-                  onRevertToVersion={revertToSelectedVersion}
-                  defaultExpanded
-                />
+                {historyOperationSeq !== null ? (
+                  <div className="rounded-lg border border-cyan-400/30 bg-cyan-500/10 px-4 py-3 text-sm text-cyan-50">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <p className="font-semibold">{historyLoading ? 'Loading history point' : 'Viewing history point'}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => jumpToHistoryOperation(null)}
+                        className="rounded-full border border-cyan-300/30 bg-cyan-950/40 px-3 py-1 text-[11px] font-semibold text-cyan-50 transition-colors hover:border-cyan-200/70 hover:bg-cyan-900/60 hover:text-white"
+                      >
+                        Back to latest
+                      </button>
+                    </div>
+                    {historyError ? <p className="mt-2 text-xs text-rose-200">{historyError}</p> : null}
+                  </div>
+                ) : null}
+              </div>
+              <div
+                className={`mt-4 min-h-0 flex-1 rounded-xl border border-slate-800/70 bg-slate-950/70 ${
+                  isVersionTreeRailExpanded ? 'overflow-auto' : 'max-h-0 overflow-hidden'
+                }`}
+              >
+                <div className="flex min-h-0 min-w-full flex-1 overflow-auto">
+                  <VersionHistoryTree
+                    projectId={projectId}
+                    demoId={demoId}
+                    baseOperationSeq={displayProjectState?.lastVersionOperationSeq ?? projectSyncState.lastSyncedOperationSeq}
+                    liveVersions={liveVersions}
+                    operationHistory={liveProjectState?.operationHistory ?? []}
+                    currentVersionId={liveBranchHeadVersionId}
+                    activeVersionId={liveActiveVersionId}
+                    selectedVersionId={selectedVersionId}
+                    selectedHistoryOperationSeq={historyOperationSeq}
+                    isFollowingHead={isFollowingHead}
+                    isHistoryViewActive={isHistoryViewActive}
+                    highlightedVersionId={projectSyncState.versionTreeAttention?.versionId ?? null}
+                    highlightedVersionCreatedAt={projectSyncState.versionTreeAttention?.createdAt ?? null}
+                    onSelectVersion={(id) => {
+                      setSelectedVersionId(id);
+                      stopTransport();
+                    }}
+                    onCheckoutSelectedVersion={checkoutSelectedVersion}
+                    onSelectHistoryOperation={jumpToHistoryOperation}
+                    onCreateBranch={createBranchFromSelectedVersion}
+                    onRevertToVersion={revertToSelectedVersion}
+                  />
+                </div>
               </div>
               {!isVersionTreeRailExpanded ? <div className="mt-3" /> : null}
             </section>
           </div>
 
           <aside
-            className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-slate-700 bg-slate-950/80 shadow-sm shadow-black/20"
+            className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-slate-800/80 bg-slate-950/80 shadow-[0_18px_60px_-36px_rgba(0,0,0,0.85)] backdrop-blur"
             data-testid="inspector-rail"
           >
-            <div className="border-b border-slate-800 px-4 py-4">
-              <h2 className="text-sm font-semibold text-white">Inspector</h2>
+            <div className="border-b border-slate-800/80 bg-slate-950/40 px-4 py-4">
+              <h2 className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-200">Inspector</h2>
             </div>
-            <div className="flex-1 min-h-0 space-y-4 overflow-y-auto p-4">
+            <div ref={inspectorScrollRef} className="flex-1 min-h-0 space-y-4 overflow-y-auto p-4">
               <section
                 className={`space-y-3 rounded-lg border px-4 py-4 ${
                   addCommentModalOpen ? 'border-cyan-500/30 bg-cyan-500/10' : 'border-slate-800 bg-slate-950'
@@ -3836,11 +3865,11 @@ export function DemoDawClient({
         <div ref={toolsStickySentinelRef} aria-hidden="true" className="h-px" />
         <div
           ref={toolsBarRef}
-          className="sticky z-30 rounded-xl border border-slate-700 bg-slate-950/95 px-4 py-4 shadow-lg shadow-black/20 backdrop-blur"
+          className="sticky z-30 rounded-2xl border border-slate-800/80 bg-slate-950/92 px-4 py-4 shadow-[0_18px_60px_-36px_rgba(0,0,0,0.85)] backdrop-blur-xl"
           style={toolsStickyTop > 0 ? { top: `${toolsStickyTop}px` } : undefined}
         >
           <div className="flex flex-col items-start gap-3">
-            <p className="text-sm font-semibold text-white">Tools</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-200">Tools</p>
             <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
@@ -3952,9 +3981,9 @@ export function DemoDawClient({
         />
 
         <div className="space-y-4">
-        <section className="min-w-0 space-y-3 rounded-lg border border-gray-800 bg-gray-950 p-4">
+        <section className="min-w-0 space-y-3 rounded-2xl border border-slate-800/80 bg-slate-950/80 p-4 shadow-[0_18px_60px_-36px_rgba(0,0,0,0.85)]">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-400">Timeline</h2>
+            <h2 className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-200">Timeline</h2>
             <button
               type="button"
               onClick={openAddCommentModal}
@@ -3966,14 +3995,14 @@ export function DemoDawClient({
           <div className="flex items-center gap-3 text-xs">{splitError ? <p className="text-amber-300">{splitError}</p> : null}</div>
 
           {hasTimelineContent ? (
-            <div ref={tracksScrollContainerRef} className="overflow-x-auto rounded-md border border-gray-800">
+            <div ref={tracksScrollContainerRef} className="overflow-x-auto rounded-xl border border-slate-800/80">
               <div className="flex" style={{ minWidth: TRACK_LABEL_WIDTH + totalTimelineWidth }}>
                 <div
-                  className="shrink-0 border-b border-r border-gray-800 bg-gray-900"
+                  className="shrink-0 border-b border-r border-slate-800/80 bg-slate-900/90"
                   style={{ width: TRACK_LABEL_WIDTH }}
                 />
                 <div
-                  className="shrink-0 overflow-hidden border-b border-gray-800"
+                  className="shrink-0 overflow-hidden border-b border-slate-800/80"
                   style={{ width: totalTimelineWidth }}
                 >
                   <TimelineRuler
@@ -3986,7 +4015,7 @@ export function DemoDawClient({
               </div>
 
               {projectTimelineComments.length > 0 ? (
-                <div className="relative border-b border-gray-800 bg-gray-950" style={{ minWidth: TRACK_LABEL_WIDTH + totalTimelineWidth, height: 28 }}>
+                <div className="relative border-b border-slate-800/80 bg-slate-950" style={{ minWidth: TRACK_LABEL_WIDTH + totalTimelineWidth, height: 28 }}>
                   <div className="absolute inset-y-0 left-0" style={{ width: TRACK_LABEL_WIDTH }} />
                   <div className="absolute inset-y-0 left-0 overflow-visible" style={{ left: TRACK_LABEL_WIDTH, width: totalTimelineWidth }}>
                     {projectTimelineComments.map((comment, index) => {

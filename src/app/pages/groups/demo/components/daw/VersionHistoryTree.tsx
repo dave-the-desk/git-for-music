@@ -86,7 +86,6 @@ export type VersionHistoryTreeProps = {
   onSelectHistoryOperation: (operationSeq: number | null) => void;
   onCreateBranch: (sourceVersionId: string, label: string) => Promise<{ versionId: string; label: string } | null>;
   onRevertToVersion: (sourceVersionId: string) => Promise<{ versionId: string; label: string } | null>;
-  defaultExpanded?: boolean;
 };
 
 export function VersionHistoryTree({
@@ -108,12 +107,10 @@ export function VersionHistoryTree({
   onSelectHistoryOperation,
   onCreateBranch,
   onRevertToVersion,
-  defaultExpanded = false,
 }: VersionHistoryTreeProps) {
   const [renameState, setRenameState] = useState<RenameState | null>(null);
   const [branchState, setBranchState] = useState<BranchState | null>(null);
   const [revertState, setRevertState] = useState<RevertState | null>(null);
-  const [isExpanded, setIsExpanded] = useState(defaultExpanded);
   const [animatedVersionId, setAnimatedVersionId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -316,164 +313,134 @@ export function VersionHistoryTree({
       : layout.height;
 
   return (
-    <div className="space-y-4 text-slate-100">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <div className="flex items-center gap-2">
-            <h2 className="text-sm font-semibold text-white">Version Tree</h2>
+    <div className="flex h-full min-h-0 flex-col gap-4 text-slate-100">
+      <div className="flex flex-col gap-3 rounded-xl border border-slate-800 bg-slate-950/40 px-3 py-3 text-[11px] text-slate-400">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="flex items-center gap-1.5 rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2.5 py-1 text-cyan-200">
+            <span className="h-2.5 w-2.5 rounded-full bg-cyan-400" />
+            branch head
+          </span>
+          <span className="flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-emerald-200">
+            <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
+            my active version
+          </span>
+          <span className="flex items-center gap-1.5 rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-amber-200">
+            <span className="h-2.5 w-2.5 rounded-full bg-amber-400" />
+            selected node
+          </span>
+          <span
+            className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 ${
+              isFollowingHead
+                ? 'border-slate-700 bg-slate-900 text-slate-300'
+                : 'border-violet-500/30 bg-violet-500/10 text-violet-200'
+            }`}
+          >
+            <span className={`h-2.5 w-2.5 rounded-full ${isFollowingHead ? 'bg-slate-500' : 'bg-violet-400'}`} />
+            {isFollowingHead ? 'following head' : 'pinned checkout'}
+          </span>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-start gap-2">
+          {selectedVersionId !== activeVersionId && !isHistoryViewActive ? (
             <button
               type="button"
-              onClick={() => setIsExpanded((prev) => !prev)}
-              className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-slate-700 bg-slate-900 text-slate-200 transition-colors hover:bg-slate-800 hover:text-white"
-              aria-label={isExpanded ? 'Minimize version tree' : 'Maximize version tree'}
-              title={isExpanded ? 'Minimize' : 'Maximize'}
+              onClick={onCheckoutSelectedVersion}
+              className="rounded-full border border-emerald-400/50 bg-emerald-500/20 px-4 py-2 text-[12px] font-semibold text-emerald-100 shadow-[0_10px_18px_rgba(16,185,129,0.14)] transition-colors hover:bg-emerald-500/30 hover:text-white"
             >
-              {isExpanded ? <span className="text-sm leading-none">−</span> : <span className="text-sm leading-none">+</span>}
+              Checkout selected
             </button>
-          </div>
-          <p className="mt-1 max-w-2xl text-xs text-slate-400">
-            Versions render in topological rows with branch-colored columns, and the canvas scrolls when it gets wide.
-          </p>
+          ) : null}
+          <button
+            type="button"
+            onClick={branchState ? () => setBranchState(null) : openCreateBranch}
+            disabled={!branchState && !branchSourceVersion}
+            className="rounded-full border border-cyan-400/50 bg-cyan-500/20 px-4 py-2 text-[12px] font-semibold text-cyan-100 shadow-[0_10px_18px_rgba(6,182,212,0.14)] transition-colors hover:bg-cyan-500/30 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {branchState ? 'Cancel branch' : isHistoryViewActive ? 'Branch from this point' : 'Create Branch'}
+          </button>
+          <button
+            type="button"
+            onClick={() => void commitRevert()}
+            disabled={!branchSourceVersion || revertState?.saving === true}
+            className="rounded-full border border-rose-400/50 bg-rose-500/20 px-4 py-2 text-[12px] font-semibold text-rose-100 shadow-[0_10px_18px_rgba(244,63,94,0.14)] transition-colors hover:bg-rose-500/30 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {revertState?.saving ? 'Reverting…' : 'Revert to this version'}
+          </button>
         </div>
       </div>
-
-      {!isExpanded ? (
-          <div className="rounded-lg border border-slate-700 bg-slate-900 px-4 py-3">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Branch head</p>
-            <p className="mt-2 text-sm font-semibold text-white">{currentVersionLabel}</p>
-            <p className="mt-1 text-xs text-slate-400">{currentVersionSummary}</p>
-            {currentVersion ? (
-              <p className="mt-1 text-xs text-slate-500">
-                {formatDate(currentVersion.createdAt)} · {currentVersion.tracks.length} tracks · {shortId(currentVersion.id)}
+      {branchState ? (
+        <div className="mt-3 rounded-lg border border-cyan-500/20 bg-cyan-500/5 px-4 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-200/70">
+                Create branch
               </p>
-            ) : null}
-        </div>
-      ) : (
-        <>
-          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-800 bg-slate-950/40 px-4 py-3 text-[11px] text-slate-400">
-            <span className="flex items-center gap-1.5 rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2 py-1 text-cyan-200">
-              <span className="h-2.5 w-2.5 rounded-full bg-cyan-400" />
-              branch head
-            </span>
-            <span className="flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-emerald-200">
-              <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
-              my active version
-            </span>
-            <span className="flex items-center gap-1.5 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-amber-200">
-              <span className="h-2.5 w-2.5 rounded-full bg-amber-400" />
-              selected node
-            </span>
-            <span
-              className={`flex items-center gap-1.5 rounded-full border px-2 py-1 ${
-                isFollowingHead
-                  ? 'border-slate-700 bg-slate-900 text-slate-300'
-                  : 'border-violet-500/30 bg-violet-500/10 text-violet-200'
-              }`}
-            >
-              <span
-                className={`h-2.5 w-2.5 rounded-full ${isFollowingHead ? 'bg-slate-500' : 'bg-violet-400'}`}
-              />
-              {isFollowingHead ? 'following head' : 'pinned checkout'}
-            </span>
-            {selectedVersionId !== activeVersionId && !isHistoryViewActive ? (
-              <button
-                type="button"
-                onClick={onCheckoutSelectedVersion}
-                className="ml-auto rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-1 text-[11px] font-semibold text-emerald-200 transition-colors hover:bg-emerald-500/20 hover:text-emerald-100"
-              >
-                Checkout selected
-              </button>
-            ) : null}
+              <p className="mt-1 text-xs text-slate-300">
+                Branching from <span className="font-semibold text-white">{branchState.sourceVersionLabel}</span>.
+                Leave the name blank to use the default branch label.
+              </p>
+            </div>
             <button
               type="button"
-              onClick={branchState ? () => setBranchState(null) : openCreateBranch}
-              disabled={!branchState && !branchSourceVersion}
-              className="rounded-full border border-cyan-500/40 bg-cyan-500/10 px-3 py-1 text-[11px] font-semibold text-cyan-200 transition-colors hover:bg-cyan-500/20 hover:text-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
+              onClick={() => setBranchState(null)}
+              className="text-xs font-semibold text-slate-400 hover:text-slate-200"
             >
-              {branchState ? 'Cancel branch' : isHistoryViewActive ? 'Branch from this point' : 'Create Branch'}
-            </button>
-            <button
-              type="button"
-              onClick={() => void commitRevert()}
-              disabled={!branchSourceVersion || revertState?.saving === true}
-              className="rounded-full border border-rose-500/40 bg-rose-500/10 px-3 py-1 text-[11px] font-semibold text-rose-200 transition-colors hover:bg-rose-500/20 hover:text-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {revertState?.saving ? 'Reverting…' : 'Revert to this version'}
+              Close
             </button>
           </div>
-          {branchState ? (
-            <div className="mt-3 rounded-lg border border-cyan-500/20 bg-cyan-500/5 px-4 py-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-200/70">
-                    Create branch
-                  </p>
-                  <p className="mt-1 text-xs text-slate-300">
-                    Branching from <span className="font-semibold text-white">{branchState.sourceVersionLabel}</span>.
-                    Leave the name blank to use the default branch label.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setBranchState(null)}
-                  className="text-xs font-semibold text-slate-400 hover:text-slate-200"
-                >
-                  Close
-                </button>
-              </div>
-              <div className="mt-3 flex flex-col gap-2 md:flex-row md:items-center">
-                <input
-                  type="text"
-                  value={branchState.value}
-                  onChange={(e) => {
-                    const nextValue = e.currentTarget.value;
-                    setBranchState((prev) => (prev ? { ...prev, value: nextValue } : prev));
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') void commitBranchCreation();
-                    if (e.key === 'Escape') setBranchState(null);
-                  }}
-                  disabled={branchState.saving}
-                  className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none"
-                  placeholder="Branch name (optional)"
-                />
-                <button
-                  type="button"
-                  onClick={() => void commitBranchCreation()}
-                  disabled={branchState.saving}
-                  className="rounded-lg border border-cyan-500/40 bg-cyan-500/15 px-4 py-2 text-sm font-semibold text-cyan-100 transition-colors hover:bg-cyan-500/25 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {branchState.saving ? 'Creating…' : 'Create branch'}
-                </button>
-              </div>
-              {branchState.error ? <p className="mt-2 text-sm text-red-400">{branchState.error}</p> : null}
+          <div className="mt-3 flex flex-col gap-2 md:flex-row md:items-center">
+            <input
+              type="text"
+              value={branchState.value}
+              onChange={(e) => {
+                const nextValue = e.currentTarget.value;
+                setBranchState((prev) => (prev ? { ...prev, value: nextValue } : prev));
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void commitBranchCreation();
+                if (e.key === 'Escape') setBranchState(null);
+              }}
+              disabled={branchState.saving}
+              className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none"
+              placeholder="Branch name (optional)"
+            />
+            <button
+              type="button"
+              onClick={() => void commitBranchCreation()}
+              disabled={branchState.saving}
+              className="rounded-lg border border-cyan-500/40 bg-cyan-500/15 px-4 py-2 text-sm font-semibold text-cyan-100 transition-colors hover:bg-cyan-500/25 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {branchState.saving ? 'Creating…' : 'Create branch'}
+            </button>
+          </div>
+          {branchState.error ? <p className="mt-2 text-sm text-red-400">{branchState.error}</p> : null}
+        </div>
+      ) : null}
+      {revertState ? (
+        <div className="mt-3 rounded-lg border border-rose-500/20 bg-rose-500/5 px-4 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-rose-200/70">
+                Revert to version
+              </p>
+              <p className="mt-1 text-xs text-slate-300">
+                Reverting to <span className="font-semibold text-white">{revertState.sourceVersionLabel}</span>{' '}
+                creates a new version at the current branch head and preserves history.
+              </p>
             </div>
-          ) : null}
-          {revertState ? (
-            <div className="mt-3 rounded-lg border border-rose-500/20 bg-rose-500/5 px-4 py-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-rose-200/70">
-                    Revert to version
-                  </p>
-                  <p className="mt-1 text-xs text-slate-300">
-                    Reverting to <span className="font-semibold text-white">{revertState.sourceVersionLabel}</span>{' '}
-                    creates a new version at the current branch head and preserves history.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setRevertState(null)}
-                  className="text-xs font-semibold text-slate-400 hover:text-slate-200"
-                >
-                  Close
-                </button>
-              </div>
-              {revertState.error ? <p className="mt-2 text-sm text-red-400">{revertState.error}</p> : null}
-            </div>
-          ) : null}
+            <button
+              type="button"
+              onClick={() => setRevertState(null)}
+              className="text-xs font-semibold text-slate-400 hover:text-slate-200"
+            >
+              Close
+            </button>
+          </div>
+          {revertState.error ? <p className="mt-2 text-sm text-red-400">{revertState.error}</p> : null}
+        </div>
+      ) : null}
 
-          <div className="overflow-auto">
+          <div className="flex-1 min-h-0 overflow-auto">
             <div className="relative" style={{ minWidth: historyDiagramWidth, minHeight: historyDiagramHeight }}>
               <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_1px_1px,rgba(71,85,105,0.28)_1px,transparent_0)] [background-size:26px_26px] opacity-70" />
 
@@ -744,14 +711,8 @@ export function VersionHistoryTree({
                     );
                   })
                 : null}
-
-              <div className="pointer-events-none absolute bottom-4 right-4 rounded-full border border-slate-700 bg-slate-950/90 px-3 py-1 text-[11px] text-slate-500">
-                Scroll horizontally if the tree stretches wide
-              </div>
             </div>
           </div>
-        </>
-      )}
     </div>
   );
 }

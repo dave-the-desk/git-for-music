@@ -25,9 +25,9 @@ Captured from `DemoDawClient.tsx` and its component files:
 
 - **Top header** — back button, demo title + description, microphone status, `AudioInputSelector`.
   - `@/Users/davidriede/PROJECTS/git-for-music/src/app/pages/groups/demo/components/daw/DemoDawClient.tsx:3192-3227`
-- **Two-column grid body** (`xl:grid-cols-[1.35fr_1fr]`).
-  - `@/Users/davidriede/PROJECTS/git-for-music/src/app/pages/groups/demo/components/daw/DemoDawClient.tsx:3229-3272`
-- **Tabbed panel** — `DawToolbarTabs` with tabs `edit | upload | plugins | tree | comments | members`.
+- **Multi-rail body** — browser, timeline canvas, version tree rail, and inspector remain visible as separate zones.
+  - `@/Users/davidriede/PROJECTS/git-for-music/src/app/pages/groups/demo/components/daw/DemoDawClient.tsx:3456-3708`
+- **Browser / section controls** — left rail navigation for upload, plugins, and members; `DawToolbarTabs` remains a supporting sibling component.
   - `@/Users/davidriede/PROJECTS/git-for-music/src/app/pages/groups/demo/components/daw/DawToolbarTabs.tsx:3-17`
 - **Project timing** — shared demo tempo (fixed) + local tempo input.
   - `@/Users/davidriede/PROJECTS/git-for-music/src/app/pages/groups/demo/components/daw/ProjectTimingControls.tsx:14-43`
@@ -47,18 +47,18 @@ Captured from `DemoDawClient.tsx` and its component files:
 
 | Ideal principle (ref §2) | Today | Gap / opportunity |
 |---|---|---|
-| **1. Representation freedom** | Waveform/clip view only | No piano roll / notation / spectral / automation. Add a swappable **detail/edit pane** (tabs), never modal. |
+| **1. Representation freedom** | Waveform/clip view only | Keep the editing surface non-modal and readable; additional representations are out of scope for this alignment pass. |
 | **2. Metaphor as hint, not cage** | Timeline + clip metaphor is clear | Keep; add plain-language labels and expert shortcuts. |
-| **3. Progressive disclosure** | Tools live behind the `edit` tab | Fine baseline; keep a clean default surface, reveal advanced controls on demand. |
+| **3. Progressive disclosure** | Tools are visible in the rail shell | Fine baseline; keep a clean default surface and avoid cluttering the visible rails. |
 | **4. Multi-parameter control** | One mouse fader at a time (`Vol` per track) | Add mixer with grouped/rubber-band fader selection later; hardware/touch parity is aspirational. |
 | **5. Ear-first counterbalance** | Visual timeline dominant | Add audition-on-hover in browser, solo-in-place (solo exists), optional focus/dim mode. |
 | **6. Non-destructive everywhere** | **Strong** — versioning + tree already core | This is the project's superpower; make the tree/history **always visible**, not tab-hidden. |
 | **7. Defaults visible & escapable** | Tempo shown; grid implicit | Surface grid/meter/tempo in the ruler with one-click toggles. |
 | **8. One fluid environment** | Capture + edit + arrange in one page | Keep; reduce mode friction between panels. |
-| **9. Room for happy accidents** | None yet | Future: humanize/randomize, generative helpers. |
+| **9. Room for happy accidents** | None yet | Future experiments can live outside this alignment pass. |
 | **10. Consistency & recall** | Stable single-page layout | Add nameable/colorable tracks (rename exists), and a command palette later. |
 
-**Headline finding:** the project already nails the ideal's hardest principle — **non-destructive versioning (§2.6, §4)** — but hides its differentiator (the tree) inside a tab. The plan's spine is to promote the tree to a persistent, first-class zone while adopting the ideal's **three-zone frame** and **representation-freedom** editor.
+**Headline finding:** the project already nails the ideal's hardest principle - **non-destructive versioning (§2.6, §4)** - but still benefits from a clearer visual hierarchy. The plan's spine is to promote the tree to a persistent, first-class zone while tightening the browser, canvas, inspector, and top-bar presentation.
 
 ## 4. Target layout (adapts the ideal §3.1 frame to this app)
 
@@ -68,26 +68,22 @@ Re-map the ideal's browser · canvas · inspector frame onto existing pieces. Th
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ TOP BAR: back · demo name · transport · time · tempo (shared+local) ·          │
 │          metronome · record-mode · mic/AudioInputSelector · view/focus toggle  │
-├───────────┬────────────────────────────────────────────────┬──────────────────┤
-│ LEFT      │  MAIN CANVAS — Arrange / Timeline               │ RIGHT INSPECTOR  │
-│ BROWSER   │  • TimelineRuler (grid/tempo/meter visible)     │ • Track/clip props│
-│ (Upload · │  • Per-track lanes (label rail: name, R/M/S,    │ • Volume/pan/gain │
-│  Plugins ·│    Vol) + clips/waveforms/recording/comments    │ • (future) device │
-│  Members ·│  • Timeline tools: select/split/merge/fade      │   chain, sends    │
-│  Files)   ├────────────────────────────────────────────────┤ • Comments (ctx)  │
-│           │  DETAIL/EDIT PANE (tabs, non-modal):            │                   │
-│           │  waveform (now) → piano roll/notation/          │                   │
-│           │  automation/spectral (future)                   │                   │
-├───────────┴────────────────────────────────────────────────┴──────────────────┤
-│ VERSION TREE RAIL (first-class): commit-graph VersionHistoryTree — branch/       │
-│ checkout/revert/rename/follow-head/scrub, per-branch color, topological rows,   │
-│ column-assigned branches/merges. Collapsible, expandable full-screen, never     │
-│ removed. (See §10 for the visual model.)                                        │
+├───────────┬──────────────────────────────────────────┬──────────────────────┬──────────────────┤
+│ LEFT      │ MAIN CANVAS — Arrange / Timeline         │ VERSION TREE RAIL    │ RIGHT INSPECTOR  │
+│ BROWSER   │ • TimelineRuler (grid/tempo/meter)       │ • Commit graph       │ • Track/clip props│
+│ (Upload · │ • Per-track lanes (label rail: name,     │ • Branch head /      │ • Volume/pan/gain │
+│  Plugins ·│   R/M/S, Vol) + clips/waveforms/comments │   checkout / revert  │ • Comments (ctx)  │
+│  Members ·│ • Timeline tools: select/split/merge/fade│ • Expand / collapse  │ • future device   │
+│  Files)   │                                          │   full screen         │   chain, sends    │
+├───────────┴──────────────────────────────────────────┴──────────────────────┴──────────────────┤
+│ VERSION TREE RAIL (first-class): commit-graph VersionHistoryTree — branch/checkout/revert,       │
+│ rename/follow-head/scrub, per-branch color, topological rows, column-assigned branches/merges.    │
+│ Collapsible, expandable full-screen, never removed. (See §10 for the visual model.)              │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-- **Three-zone body + collapsible rails** gives the spatial stability the ideal calls for (§3.1, §2.10) and matches Apple HIG's *depth*/consistency foundations (§11.2).
-- Every existing feature keeps a home: tabs (`upload/plugins/members`) migrate into the **left browser**; comments become a **context inspector panel** and keep their timeline markers; timing/transport/metronome consolidate into the **top bar**.
+- **Body + collapsible rails** gives the spatial stability the ideal calls for (§3.1, §2.10) and matches Apple HIG's *depth*/consistency foundations (§11.2).
+- Every existing feature keeps a home: tabs (`upload/plugins/members`) migrate into the **left browser**; comments become a **context inspector panel** and keep their timeline markers; timing/transport/metronome consolidate into the **top bar**; the version tree remains a first-class rail.
 - **The tree is promoted, not moved out of reach** — it graduates from a tab to a dockable, collapsible rail rendered as a **commit-graph** (row/column DAG) per [realtime-versioning-and-tree.md](../60_BRANCHES/daw-realtime-collab/realtime-versioning-and-tree.md); it can also expand full-screen. Full visual spec in §10.
 
 ## 5. Phased implementation plan
@@ -95,7 +91,7 @@ Re-map the ideal's browser · canvas · inspector frame onto existing pieces. Th
 Each phase is independently shippable, additive, and preserves all current behavior. Run the relevant Jest tests after each phase (see §8).
 
 ### Phase 0 — Layout scaffolding (no feature change)
-- Introduce a three-zone shell wrapper around the existing content (CSS grid / flex), with each zone **collapsible and persisted per project + per user** (localStorage keyed by `projectId`).
+- Introduce a multi-rail shell wrapper around the existing content (CSS grid / flex), with each rail **collapsible and persisted per project + per user** (localStorage keyed by `projectId`).
 - Keep all current components mounted; only relocate their containers. Verify `DemoDawClient.interaction.test.tsx` still passes.
 
 ### Phase 1 — Promote the version tree to a first-class rail (commit-graph)
@@ -116,23 +112,15 @@ Each phase is independently shippable, additive, and preserves all current behav
 - Add a context inspector bound to the selected track/clip: name, `Vol`/gain, mute/solo/record-arm mirrored here, plus space for future pan, device chain, and sends (§3.4, §3.5).
 - Comments become an inspector panel; timeline comment markers stay.
 
-### Phase 5 — Detail/edit pane (representation freedom)
-- Add a non-modal, tabbed detail pane below the canvas. Ship **waveform** first (wraps existing `TrackWaveform`/`TrackSegmentClip` rendering).
-- Stub tabs for **piano roll**, **notation**, **automation**, **spectral** — disabled/"coming soon" until backed by data, so the frame exists without faking capability (§3.3, anti-pattern: dead-end stubs must be labeled).
-
-### Phase 6 — Ear-first + happy-accident affordances (optional/aspirational)
-- Focus/dim ("eyes-closed") mode, solo-in-place polish, and later humanize/randomize + generative helpers (§4, §2.9).
-
 ## 6. Component-level change map
 
 | Area | File | Change |
 |---|---|---|
-| Shell / zones | `DemoDawClient.tsx` | Wrap existing sections in a three-zone grid; add collapse state + persistence. |
+| Shell / zones | `DemoDawClient.tsx` | Wrap existing sections in a multi-rail grid; add collapse state + persistence. |
 | Tree rail | `VersionHistoryTree.tsx`, `version-tree-layout.ts`, `DemoDawClient.tsx` | Render tree in a persistent rail as a commit-graph (row/column DAG, per-branch color, live refresh); keep tab as alias. See §10. |
 | Top bar | `TransportControls.tsx`, `ProjectTimingControls.tsx`, `AudioInputSelector.tsx` | Compose into one sticky bar; add ruler grid/tempo toggles. |
 | Left browser | `DawToolbarTabs.tsx` | Repurpose tabs into browser sections (upload/plugins/members) + search. |
 | Inspector | new `TrackInspector.tsx` (proposed) | Selected-track props; mirror R/M/S/Vol; host `CommentInput`. |
-| Detail pane | new `DetailEditPane.tsx` (proposed) | Tabbed, non-modal; waveform now, others stubbed. |
 | Ruler | `TimelineRuler.tsx` | Make grid/tempo/meter visibly toggleable. |
 
 New components are **additive**; no existing component is deleted.
@@ -161,7 +149,6 @@ New components are **additive**; no existing component is deleted.
 
 - **Metaphor lock-in** — keep views swappable; never trap edits in a modal.
 - **Silent defaults** — surface grid/tempo/meter; don't hide 4/4 @ 120.
-- **Dead-end stubs** — label unbuilt editor tabs clearly; don't fake capability.
 - **Eye-over-ear tunnel vision** — pair the visual timeline with audition/focus tools.
 - **Regression by relocation** — every move must keep the feature reachable; the tree must never be less accessible than today.
 
@@ -213,7 +200,6 @@ Core claim: minimize **extraneous** cognitive load (imposed by the interface) so
 - **Cut extraneous complexity of output** — a clean default surface; advanced controls via progressive disclosure (ideal §2.3). Don't show every feature at once.
 - **Minimize interruptions** — avoid modal dialogs and blocking error messages mid-flow; prefer inline, non-blocking feedback (reinforces the "never trap edits in a modal" anti-pattern, §9). "Continuous partial attention" is the enemy of creative flow.
 - **Design out errors instead of reporting them** — structured, constrained inputs (e.g., ruler tempo/meter toggles, typed fields) reduce error states rather than surfacing them after the fact.
-- **Support multiple representations** — linguistic, diagrammatic, symbolic, numeric views the task needs; this is the research basis for the swappable **detail/edit pane** (waveform → piano roll/notation/automation/spectral, ideal §2.1, Phase 5).
 - **Multimodal / flexible input** — let users choose the input that is least error-prone for them (mouse, keyboard shortcuts, touch later); parity across modes lowers load and errors. Backs the multi-parameter control aspiration (ideal §2.4).
 - **Leverage existing engrained behavior** — reuse the git mental model and DAW timeline metaphors users already know rather than inventing new ones.
 
@@ -223,12 +209,12 @@ Adopt the HIG's core design pillars and foundations as review criteria for every
 
 - **Clarity** — legible type, precise iconography, purposeful use of color; the version tree and transport must be self-explanatory. Prefer plain-language labels (ideal §2.2).
 - **Deference** — the UI defers to content: the waveform/timeline and the music are the focus; chrome (rails, toolbars) is quiet and collapsible.
-- **Depth** — layering and transitions (collapsible rails, expandable tree, non-modal detail pane) communicate hierarchy without overwhelming; movement is meaningful, not decorative.
+- **Depth** — layering and transitions (collapsible rails, expandable tree, highlighted selection states) communicate hierarchy without overwhelming; movement is meaningful, not decorative.
 - **Foundations to honor:**
   - **Accessibility** — keyboard operability, focus order, sufficient contrast, and Dynamic-Type-style scalable text; every control reachable without a mouse (see §11.3).
   - **Consistency** — stable placement of transport/tempo/tools so muscle memory holds (ideal §2.10); same control means the same thing everywhere.
   - **Feedback** — immediate, proportionate response to every action (play/record state, checkpoint created, branch created), matching the optimistic-local-apply realtime model.
-  - **Layout & hit targets** — comfortable spacing and adequately sized targets for faders, R/M/S, and tree nodes; responsive from wide (three-zone) to narrow (stacked) screens.
+  - **Layout & hit targets** — comfortable spacing and adequately sized targets for faders, R/M/S, and tree nodes; responsive from wide (rail-based) to narrow (stacked) screens.
   - **Color & Dark Mode** — per-branch tree colors and state accents must remain distinguishable in light/dark and for color-vision deficiencies (pair color with shape/label).
 
 ### 11.3 React DOM implementation guidance (common components)
@@ -237,7 +223,7 @@ Concrete, framework-level rules for building the above accessibly and correctly,
 
 - **Accessibility props** — apply `aria-*` and `role` attributes on custom controls (tree nodes, faders, toolbar buttons) so they expose name/state/role; React passes ARIA and `data-*` attributes straight through to the DOM.
 - **Keyboard events** — implement `onKeyDown`/`onKeyUp` for tree navigation (arrow keys between nodes), transport (space to play/pause), and tools; never rely on `onClick`-only. Keyboard support is required for the HIG accessibility foundation (§11.2).
-- **Focus management** — use `onFocus`/`onBlur` and managed focus (via `ref`) when opening the detail pane, inspector, or expanding the tree, so focus lands predictably and returns on close (avoids the "interruption" load in §11.1).
+- **Focus management** — use `onFocus`/`onBlur` and managed focus (via `ref`) when opening the inspector or expanding the tree, so focus lands predictably and returns on close (avoids the "interruption" load in §11.1).
 - **Pointer over mouse events** — prefer `onPointerDown`/`onPointerMove`/`onPointerUp` for faders, clip drag, split/merge, and tree pan so touch, pen, and mouse work from one code path (the multimodal-parity point in §11.1/ideal §2.4).
 - **Controlled inputs** — keep tempo, rename, and comment fields controlled (value + `onChange`) so they stay in sync with `LocalProjectState`; this preserves the realtime "render from live state" rule.
 - **`style` vs `className`** — use `className` (Tailwind) for static styling and the `style` prop only for dynamic values not known ahead of time (e.g., computed node x/y, fader position, waveform width). Node positions from the §10.2 layout are exactly this dynamic case.

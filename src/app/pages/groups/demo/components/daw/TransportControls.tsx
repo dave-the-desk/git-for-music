@@ -28,18 +28,18 @@ export function TransportControls({
   trailingSlot,
 }: TransportControlsProps) {
   return (
-    <div className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-700 bg-slate-950/80 px-4 py-3">
+    <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-800/80 bg-slate-950/70 px-4 py-3 shadow-[0_18px_60px_-36px_rgba(0,0,0,0.85)]">
       {leadingSlot && (
         <>
           {leadingSlot}
-          <div className="h-5 w-px shrink-0 bg-slate-700" />
+          <div className="h-5 w-px shrink-0 bg-slate-700/80" />
         </>
       )}
 
       <button
         type="button"
         onClick={onStop}
-        className="flex h-9 w-9 items-center justify-center rounded-md bg-slate-800 text-white hover:bg-slate-700"
+        className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-800 text-white shadow-sm shadow-black/20 hover:bg-slate-700"
         title="Stop"
       >
         <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
@@ -50,7 +50,7 @@ export function TransportControls({
       <button
         type="button"
         onClick={isPlaying ? onPause : onPlay}
-        className="flex h-9 w-9 items-center justify-center rounded-md bg-indigo-600 text-white hover:bg-indigo-500"
+        className="flex h-9 w-9 items-center justify-center rounded-full bg-indigo-600 text-white shadow-sm shadow-indigo-950/40 hover:bg-indigo-500"
         title={isPlaying ? 'Pause' : 'Play'}
       >
         {isPlaying ? (
@@ -65,7 +65,9 @@ export function TransportControls({
         )}
       </button>
 
-      <span className="font-mono text-sm tabular-nums text-slate-100">{formatTime(currentTimeMs)}</span>
+      <span className="rounded-full border border-slate-800/80 bg-slate-900/60 px-3 py-1 font-mono text-sm tabular-nums text-slate-100">
+        {formatTime(currentTimeMs)}
+      </span>
 
       {trailingSlot}
     </div>
