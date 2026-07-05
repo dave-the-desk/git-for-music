@@ -8,6 +8,7 @@ import type {
   DawOperationPayloadSegmentSplit,
   DawOperationPayloadTrackOffsetUpdated,
   DawOperationPayloadTrackRenamed,
+  DawOperationPayloadTrackRemoved,
   DawSegmentSnapshot,
 } from '@git-for-music/server/app/lib/daw/protocol';
 import type { TrackTimelineSegment } from '@/app/lib/daw/state/local-project-state';
@@ -140,6 +141,16 @@ export class AudioEditingEngine {
         trackId,
         trackName,
       } satisfies DawOperationPayloadTrackRenamed,
+    };
+  }
+
+  deleteTrack(trackId: string): DawOperationCommitRequest {
+    return {
+      demoId: this.context.demoId,
+      operationType: 'TRACK_REMOVED',
+      payload: {
+        trackId,
+      } satisfies DawOperationPayloadTrackRemoved,
     };
   }
 

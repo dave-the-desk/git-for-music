@@ -21,6 +21,7 @@ type TimelineSegmentSnapshot = Pick<
 export type TimelineEditOperation = Extract<
   AcceptedDawProjectOperation,
   | { type: 'TRACK_RENAMED' }
+  | { type: 'TRACK_REMOVED' }
   | { type: 'TRACK_OFFSET_UPDATED' }
   | { type: 'SEGMENT_SPLIT' }
   | { type: 'SEGMENT_MOVED' }
@@ -98,6 +99,10 @@ export function applyTrackOffsetUpdate(
 
 export function applyTrackRename(tracks: DawTrack[], trackId: string, trackName: string) {
   return tracks.map((track) => (track.trackId === trackId ? { ...track, trackName } : track));
+}
+
+export function applyTrackRemove(tracks: DawTrack[], trackId: string) {
+  return tracks.filter((track) => track.trackId !== trackId);
 }
 
 export function applySegmentMove(

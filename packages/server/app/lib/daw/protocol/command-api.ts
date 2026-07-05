@@ -2,6 +2,7 @@ import type { JsonValue, TimingSource } from '@git-for-music/shared';
 
 export type DawOperationType =
   | 'TRACK_RENAMED'
+  | 'TRACK_REMOVED'
   | 'TRACK_OFFSET_UPDATED'
   | 'SEGMENT_SPLIT'
   | 'SEGMENT_MOVED'
@@ -49,6 +50,10 @@ export interface DawSegmentSnapshot {
 export interface DawOperationPayloadTrackRenamed {
   trackId: string;
   trackName: string;
+}
+
+export interface DawOperationPayloadTrackRemoved {
+  trackId: string;
 }
 
 export interface DawOperationPayloadTrackOffsetUpdated {
@@ -298,6 +303,7 @@ export interface DawOperationCommitMetadata {
 
 export type DawCommandPayload =
   | DawOperationPayloadTrackRenamed
+  | DawOperationPayloadTrackRemoved
   | DawOperationPayloadTrackOffsetUpdated
   | DawOperationPayloadSegmentSplit
   | DawOperationPayloadSegmentMoved
@@ -326,6 +332,7 @@ export type DawCommandPayload =
 
 export type DawOperationLogPayload =
   | DawOperationPayloadTrackRenamed
+  | DawOperationPayloadTrackRemoved
   | DawOperationPayloadTrackOffsetUpdated
   | {
       assetId: string;
@@ -511,6 +518,11 @@ export type DawOperationCommitRequest =
       demoId: string;
       operationType: 'TRACK_RENAMED';
       payload: DawOperationPayloadTrackRenamed;
+    })
+  | (DawOperationCommitMetadata & {
+      demoId: string;
+      operationType: 'TRACK_REMOVED';
+      payload: DawOperationPayloadTrackRemoved;
     })
   | (DawOperationCommitMetadata & {
       demoId: string;

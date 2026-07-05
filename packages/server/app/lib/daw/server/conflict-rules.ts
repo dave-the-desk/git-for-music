@@ -7,7 +7,7 @@ export type DawOperationConflictScope =
   | {
       kind: 'track-metadata';
       trackId: string;
-      field: 'trackName';
+      field: 'trackName' | 'trackRemoved';
       payloadSignature: string;
     }
   | {
@@ -204,6 +204,13 @@ async function resolveRequestScope(
         field: 'trackName',
         payloadSignature: stableSignature({ trackId: request.payload.trackId, trackName: request.payload.trackName.trim() }),
       };
+    case 'TRACK_REMOVED':
+      return {
+        kind: 'track-metadata',
+        trackId: request.targetTrackId ?? request.payload.trackId,
+        field: 'trackRemoved',
+        payloadSignature: stableSignature(request.payload),
+      };
     case 'TRACK_OFFSET_UPDATED': {
       const trackId = request.targetTrackId ?? (await resolveTrackVersionTrackId(client, workspace, request.payload.trackVersionId));
       if (!trackId) return null;
@@ -378,6 +385,15 @@ async function resolveExistingOperationScope(
         trackId: payload.trackId,
         field: 'trackName',
         payloadSignature: stableSignature({ trackId: payload.trackId, trackName: payload.trackName }),
+      };
+    }
+    case 'TRACK_REMOVED': {
+      const payload = operation.payload as { trackId: string };
+      return {
+        kind: 'track-metadata',
+        trackId: payload.trackId,
+        field: 'trackRemoved',
+        payloadSignature: stableSignature(payload),
       };
     }
     case 'TRACK_OFFSET_UPDATED': {

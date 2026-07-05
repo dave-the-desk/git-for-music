@@ -97,6 +97,7 @@ const VALID_DENOMINATORS = new Set([1, 2, 4, 8, 16, 32]);
 const VALID_TIMING_SOURCES = new Set<TimingSource>(['MANUAL', 'ANALYZED', 'IMPORTED']);
 const TIMELINE_EDIT_OPERATION_TYPES = new Set<DawOperationType>([
   'TRACK_RENAMED',
+  'TRACK_REMOVED',
   'TRACK_OFFSET_UPDATED',
   'SEGMENT_SPLIT',
   'SEGMENT_MOVED',
@@ -124,6 +125,7 @@ const VERSION_TREE_MUTATION_OPERATION_TYPES = new Set<DawOperationType>([
   'VERSION_OPERATION_SUMMARY_SET',
   'VERSION_NODE_ADDED',
   'VERSION_TIMING_UPDATED',
+  'TRACK_REMOVED',
   'TRACK_OFFSET_UPDATED',
   'SEGMENT_SPLIT',
   'SEGMENT_MOVED',
@@ -134,6 +136,7 @@ const VERSION_TREE_MUTATION_OPERATION_TYPES = new Set<DawOperationType>([
   'CROSSFADE_SET',
 ]);
 const AUTO_VERSION_SEMANTIC_OPERATION_TYPES = new Set<DawOperationType>([
+  'TRACK_REMOVED',
   'SEGMENT_SPLIT',
   'SEGMENT_MERGED',
   'TRACK_VERSION_CREATED',
@@ -182,6 +185,8 @@ export function getTimelineEditBranchLabel(operationType: DawOperationType) {
   switch (operationType) {
     case 'TRACK_RENAMED':
       return 'Track renamed';
+    case 'TRACK_REMOVED':
+      return 'Track removed';
     case 'SEGMENT_SPLIT':
       return 'Split clip';
     case 'SEGMENT_DELETED':
@@ -1032,6 +1037,37 @@ async function executeOperationMutation(
         logPayload: {
           trackId: track.id,
           trackName: request.payload.trackName.trim(),
+        },
+      };
+    }
+
+    case 'TRACK_REMOVED': {
+      const track = await client.track.findFirst({
+        where: {
+          id: request.payload.trackId,
+          demo: {
+            id: workspace.demo.id,
+            projectId: workspace.project.id,
+          },
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      if (!track) {
+        throw new Error('Track not found');
+      }
+
+      await client.track.delete({
+        where: {
+          id: track.id,
+        },
+      });
+
+      return {
+        logPayload: {
+          trackId: track.id,
         },
       };
     }
@@ -2168,6 +2204,7 @@ function translateRequestForBranch(
 
   switch (request.operationType) {
     case 'TRACK_RENAMED':
+    case 'TRACK_REMOVED':
       return request;
     case 'TRACK_OFFSET_UPDATED':
       return {

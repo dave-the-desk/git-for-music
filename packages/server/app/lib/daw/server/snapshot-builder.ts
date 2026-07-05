@@ -131,6 +131,7 @@ export interface DemoDawSnapshotAnnotation {
 
 export type DemoDawOperationType =
   | 'TRACK_RENAMED'
+  | 'TRACK_REMOVED'
   | 'TRACK_OFFSET_UPDATED'
   | 'SEGMENT_SPLIT'
   | 'SEGMENT_MOVED'
@@ -162,6 +163,9 @@ export type DemoDawOperationPayload =
   | {
       trackId: string;
       trackName: string;
+    }
+  | {
+      trackId: string;
     }
   | {
       trackVersionId: string;
@@ -680,6 +684,15 @@ function updateTrackName(snapshot: DemoDawSnapshotData, trackId: string, trackNa
   }
 }
 
+function removeTrack(snapshot: DemoDawSnapshotData, trackId: string) {
+  snapshot.versions = snapshot.versions.map((version) => ({
+    ...version,
+    tracks: version.tracks.filter((track) => track.trackId !== trackId),
+  }));
+  snapshot.comments = snapshot.comments.filter((comment) => comment.trackId !== trackId);
+  snapshot.annotations = snapshot.annotations.filter((annotation) => annotation.trackId !== trackId);
+}
+
 function updateTrackOffset(
   snapshot: DemoDawSnapshotData,
   trackVersionId: string,
@@ -1125,6 +1138,16 @@ function applyDemoOperation(snapshot: DemoDawSnapshotData, operation: DemoDawSna
       {
         const payload = operation.payload as Extract<DemoDawOperationPayload, { trackId: string; trackName: string }>;
         updateTrackName(snapshot, payload.trackId, payload.trackName);
+        const historyItem = buildOperationHistoryItem(snapshot, operation);
+        if (historyItem) {
+          upsertOperationHistory(snapshot, historyItem);
+        }
+      }
+      return snapshot;
+    case 'TRACK_REMOVED':
+      {
+        const payload = operation.payload as Extract<DemoDawOperationPayload, { trackId: string }>;
+        removeTrack(snapshot, payload.trackId);
         const historyItem = buildOperationHistoryItem(snapshot, operation);
         if (historyItem) {
           upsertOperationHistory(snapshot, historyItem);
@@ -1613,6 +1636,15 @@ function buildOperationHistoryItem(
         ...baseItem,
         trackId: payload.trackId,
         summary: track ? `Renamed track to ${payload.trackName.trim()}` : 'Renamed track',
+      };
+    }
+    case 'TRACK_REMOVED': {
+      const payload = operation.payload as Extract<DemoDawOperationPayload, { trackId: string }>;
+      const track = findTrackById(snapshot, payload.trackId);
+      return {
+        ...baseItem,
+        trackId: payload.trackId,
+        summary: track ? `Deleted track ${track.trackName}` : 'Deleted track',
       };
     }
     case 'TRACK_VERSION_CREATED': {

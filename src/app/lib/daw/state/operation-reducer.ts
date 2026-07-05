@@ -23,6 +23,7 @@ import {
   applySegmentSplit,
   applySegmentTrim,
   applyTrackOffsetUpdate,
+  applyTrackRemove,
   applyTrackRename,
 } from './timeline-edit-transforms';
 
@@ -525,6 +526,15 @@ function buildOperationHistoryEntry(
         summary: `Renamed track to ${payload.trackName.trim()}`,
       };
     }
+    case 'TRACK_REMOVED': {
+      const payload = operation.payload as { trackId: string };
+      const track = findTrackByTrackId(state, payload.trackId);
+      return {
+        ...baseEntry,
+        trackId: payload.trackId,
+        summary: track ? `Deleted track ${track.trackName}` : 'Deleted track',
+      };
+    }
     case 'TRACK_VERSION_CREATED': {
       const payload = operation.payload as { trackId?: string; track?: { trackId: string; trackName: string } };
       const track = payload.trackId ? findTrackByTrackId(state, payload.trackId) : null;
@@ -779,6 +789,18 @@ export function applyAcceptedProjectOperation(
           ...version,
           tracks: applyTrackRename(version.tracks, payload.trackId, payload.trackName),
         })),
+      }, operation);
+    }
+    case 'TRACK_REMOVED': {
+      const payload = operation.payload as { trackId: string };
+      return appendOperationHistory({
+        ...state,
+        versions: state.versions.map((version) => ({
+          ...version,
+          tracks: applyTrackRemove(version.tracks, payload.trackId),
+        })),
+        comments: state.comments.filter((comment) => comment.trackId !== payload.trackId),
+        annotations: state.annotations.filter((annotation) => annotation.trackId !== payload.trackId),
       }, operation);
     }
     case 'TRACK_OFFSET_UPDATED': {

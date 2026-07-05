@@ -1841,6 +1841,7 @@ export function DemoDawClient({
   ) {
     switch (operationType) {
       case 'TRACK_RENAMED':
+      case 'TRACK_REMOVED':
         return (payload as Extract<DawCommandPayload, { trackId: string }>).trackId;
       case 'TRACK_OFFSET_UPDATED':
         return findTrackByVersionId(
@@ -2796,6 +2797,20 @@ export function DemoDawClient({
     setRenameState(null);
   }
 
+  async function deleteTrack(track: DawTrack) {
+    try {
+      await commitEditingOperation(audioEditingEngine.deleteTrack(track.trackId));
+      if (selectedTrackVersionId === track.trackVersionId) {
+        setSelectedTrackVersionId(null);
+      }
+      if (selectedSegmentId && selectedTrackSegment?.trackVersionId === track.trackVersionId) {
+        setSelectedSegmentId(null);
+      }
+    } catch (error) {
+      setDragError(error instanceof Error ? error.message : 'Could not delete track');
+    }
+  }
+
   function buildCommentOperationPayload(input: {
     trackId: string | null;
     body: string;
@@ -3632,11 +3647,6 @@ export function DemoDawClient({
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div>
                       <p className="font-semibold">{historyLoading ? 'Loading history point' : 'Viewing history point'}</p>
-                      <p className="text-xs text-cyan-100/80">
-                        {historyLoading
-                          ? 'Rewinding the project to the selected activity.'
-                          : `Rewound to operation sequence ${historyOperationSeq}.`}
-                      </p>
                     </div>
                     <button
                       type="button"
@@ -3687,110 +3697,6 @@ export function DemoDawClient({
               <h2 className="text-sm font-semibold text-white">Inspector</h2>
             </div>
             <div className="flex-1 min-h-0 space-y-4 overflow-y-auto p-4">
-              <section className="space-y-3 rounded-lg border border-slate-800 bg-slate-950 px-4 py-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-semibold text-white">Selection</p>
-                  </div>
-                  {selectedTrack ? (
-                    <span className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2 py-1 text-[10px] font-semibold text-cyan-200">
-                      Active
-                    </span>
-                  ) : null}
-                </div>
-
-                {selectedTrack ? (
-                  <div className="space-y-3">
-                    <div>
-                      <p className="text-base font-semibold text-white">{selectedTrack.trackName}</p>
-                      <p className="break-all text-xs text-slate-500">{selectedTrack.trackVersionId}</p>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => toggleRecordArm(selectedTrack.trackVersionId)}
-                        title={
-                          recordArmedTrackVersionId === selectedTrack.trackVersionId
-                            ? 'Disarm track for recording'
-                            : 'Arm track for recording'
-                        }
-                        aria-pressed={recordArmedTrackVersionId === selectedTrack.trackVersionId}
-                        className={`rounded-md px-3 py-2 text-xs font-semibold transition-colors ${
-                          recordArmedTrackVersionId === selectedTrack.trackVersionId
-                            ? 'bg-red-500/20 text-red-300 ring-1 ring-red-500/40'
-                            : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
-                        }`}
-                      >
-                        {recordArmedTrackVersionId === selectedTrack.trackVersionId ? 'Record armed' : 'Arm record'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => toggleMute(selectedTrack.trackVersionId)}
-                        title={mutedTrackVersionIds.has(selectedTrack.trackVersionId) ? 'Unmute track' : 'Mute track'}
-                        className={`rounded-md px-3 py-2 text-xs font-semibold transition-colors ${
-                          mutedTrackVersionIds.has(selectedTrack.trackVersionId)
-                            ? 'bg-yellow-500/20 text-yellow-300 ring-1 ring-yellow-500/40'
-                            : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
-                        }`}
-                      >
-                        {mutedTrackVersionIds.has(selectedTrack.trackVersionId) ? 'Muted' : 'Mute'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => toggleSolo(selectedTrack.trackVersionId)}
-                        title={soloTrackVersionIds.has(selectedTrack.trackVersionId) ? 'Unsolo track' : 'Solo track'}
-                        className={`rounded-md px-3 py-2 text-xs font-semibold transition-colors ${
-                          soloTrackVersionIds.has(selectedTrack.trackVersionId)
-                            ? 'bg-cyan-500/20 text-cyan-300 ring-1 ring-cyan-500/40'
-                            : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
-                        }`}
-                      >
-                        {soloTrackVersionIds.has(selectedTrack.trackVersionId) ? 'Soloed' : 'Solo'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => startRename(selectedTrack)}
-                        className="rounded-md bg-slate-900 px-3 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800"
-                      >
-                        Rename
-                      </button>
-                    </div>
-                    <label className="block space-y-1">
-                      <span className="block text-[10px] uppercase tracking-[0.18em] text-slate-400">Volume</span>
-                      <input
-                        type="range"
-                        min={0}
-                        max={2}
-                        step={0.01}
-                        value={gainByTrackVersionId[selectedTrack.trackVersionId] ?? 1}
-                        onChange={(e) => setTrackGain(selectedTrack.trackVersionId, Number(e.currentTarget.value))}
-                        className="h-1 w-full accent-indigo-500"
-                      />
-                    </label>
-                  </div>
-                ) : null}
-              </section>
-
-              <section className="space-y-3 rounded-lg border border-slate-800 bg-slate-950 px-4 py-4">
-                <div>
-                  <p className="text-sm font-semibold text-white">Clip</p>
-                </div>
-                {selectedTrackSegment ? (
-                  <div className="space-y-2 rounded-md border border-slate-800 bg-slate-900/70 px-3 py-2 text-xs text-slate-300">
-                    <p className="font-medium text-white">{selectedTrackSegment.id}</p>
-                    <p>
-                      Timeline {formatTimeMs(selectedTrackSegment.timelineStartMs)} to{' '}
-                      {formatTimeMs(selectedTrackSegment.timelineEndMs)}
-                    </p>
-                    <p>Duration {formatTimeMs(selectedTrackSegment.durationMs)}</p>
-                    <p>
-                      Fade in {formatTimeMs(selectedTrackSegment.fadeInMs)} · Fade out {formatTimeMs(selectedTrackSegment.fadeOutMs)}
-                    </p>
-                    <p>{selectedTrackSegment.isImplicit ? 'Implicit clip' : 'Saved clip'}</p>
-                  </div>
-                ) : null}
-              </section>
-
               <section
                 className={`space-y-3 rounded-lg border px-4 py-4 ${
                   addCommentModalOpen ? 'border-cyan-500/30 bg-cyan-500/10' : 'border-slate-800 bg-slate-950'
@@ -4248,6 +4154,17 @@ export function DemoDawClient({
                                     <path d="M12.854.146a.5.5 0 0 0-.707 0L10.5 1.793 14.207 5.5l1.647-1.646a.5.5 0 0 0 0-.708zm.646 6.061L9.793 2.5 3.293 9H3.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.207zm-7.468 7.468A.5.5 0 0 1 6 13.5V13h-.5a.5.5 0 0 1-.5-.5V12h-.5a.5.5 0 0 1-.5-.5V11h-.5a.5.5 0 0 1-.5-.5V10h-.5a.499.499 0 0 1-.175-.032l-.179.178a.5.5 0 0 0-.11.168l-2 5a.5.5 0 0 0 .65.65l5-2a.5.5 0 0 0 .168-.11z" />
                                   </svg>
                                 </button>
+                                <button
+                                  type="button"
+                                  onClick={() => void deleteTrack(track)}
+                                  title="Delete track"
+                                  aria-label={`Delete track ${track.trackName}`}
+                                  className="shrink-0 text-rose-500 transition-colors hover:text-rose-300"
+                                >
+                                  <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" aria-hidden>
+                                    <path d="M6.5 1.5a1 1 0 0 0-.9.55L5.01 3H2.5a.5.5 0 0 0 0 1h.68l.74 9.06A2 2 0 0 0 5.91 15h4.18a2 2 0 0 0 1.99-1.94L12.82 4h.68a.5.5 0 0 0 0-1h-2.51l-.59-.95a1 1 0 0 0-.9-.55h-3zm.42 1h2.16l.25.5H6.67l.25-.5zM6.5 6a.5.5 0 0 1 .5.5v5a.5.5 0 0 1-1 0v-5A.5.5 0 0 1 6.5 6zm3 0a.5.5 0 0 1 .5.5v5a.5.5 0 0 1-1 0v-5a.5.5 0 0 1 .5-.5z" />
+                                  </svg>
+                                </button>
                               </div>
                               <button
                                 type="button"
@@ -4556,6 +4473,7 @@ export function DemoDawClient({
             </div>
           )}
         </section>
+
         <div className="fixed bottom-4 right-4 z-[60] pointer-events-none">
           {isLocalOnlySync ? (
             <div className="max-w-xs rounded-md border border-amber-500/40 bg-amber-950/90 px-3 py-2 text-[10px] uppercase tracking-[0.18em] text-amber-100 shadow-lg shadow-black/40 backdrop-blur">

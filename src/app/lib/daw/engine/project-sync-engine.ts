@@ -45,6 +45,7 @@ type ProjectSyncSnapshot = {
 
 const VERSION_TREE_REFRESH_OPERATION_TYPES = new Set<DawOperationType>([
   'TRACK_RENAMED',
+  'TRACK_REMOVED',
   'SEGMENT_SPLIT',
   'SEGMENT_DELETED',
   'SEGMENT_TRIMMED',

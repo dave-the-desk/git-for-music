@@ -331,6 +331,13 @@ vi.mock('@/app/lib/daw/engine/audio-editing-engine', () => ({
     constructor() {}
     moveTrack() {}
     moveSegment() {}
+    deleteTrack(trackId: string) {
+      return {
+        demoId: 'demo-1',
+        operationType: 'TRACK_REMOVED',
+        payload: { trackId },
+      };
+    }
     deleteSegment() {}
     splitSegment() {}
     setSegmentFade() {}
@@ -496,6 +503,39 @@ vi.mock('@/app/lib/daw/engine/project-sync-engine', () => ({
       });
     }
     async setTrackTempoMetadata() {}
+    async commitOperation(request: { operationType: string; payload: { trackId?: string } }) {
+      const currentState = mockProjectSync.getState();
+      const projectState = currentState.projectState;
+      if (!projectState) {
+        throw new Error('Project state missing');
+      }
+
+      if (request.operationType === 'TRACK_REMOVED' && request.payload.trackId) {
+        const nextProjectState: LocalProjectState = {
+          ...projectState,
+          versions: projectState.versions.map((version) => ({
+            ...version,
+            tracks: version.tracks.filter((track) => track.trackId !== request.payload.trackId),
+          })),
+        };
+        mockProjectSync.updateProjectState(nextProjectState);
+      }
+
+      return {
+        id: `operation-${request.operationType}`,
+        projectId: 'project-1',
+        demoId: 'demo-1',
+        type: request.operationType,
+        createdAt: new Date().toISOString(),
+        actorUserId: 'user-1',
+        baseSnapshotId: null,
+        baseOperationSeq: 0,
+        operationSeq: 1,
+        payload: request.payload,
+        idempotencyKey: 'mock-idempotency',
+        clientOperationId: 'mock-client-operation',
+      };
+    }
     async loadHistoricalProjectState() {
       return null;
     }
@@ -762,19 +802,51 @@ describe('DemoDawClient recording regression', () => {
     const inspector = within(inspectorRail);
 
     expect(inspector.getByText('Inspector')).toBeTruthy();
-    expect(inspector.getByText('Track 1', { selector: 'p' })).toBeTruthy();
-    expect(inspector.getByRole('button', { name: 'Record armed' })).toBeTruthy();
-    expect(inspector.getByRole('button', { name: 'Mute' })).toBeTruthy();
-    expect(inspector.getByRole('button', { name: 'Solo' })).toBeTruthy();
-    expect(inspector.getByLabelText('Volume')).toBeTruthy();
     expect(inspector.getByText('Comments')).toBeTruthy();
-    expect(inspector.queryByText('Attached to track Track 1.', { selector: 'p' })).toBeNull();
     expect(inspector.getByRole('button', { name: 'New' })).toBeTruthy();
 
     await user.click(screen.getByRole('button', { name: 'Add Comment' }));
 
     await waitFor(() => {
       expect(inspector.getByRole('button', { name: 'Draft' })).toBeTruthy();
+    });
+  });
+
+  it('deletes a track through the realtime commit path', async () => {
+    const initialVersion = makeVersion('version-1', ['Track 1'], {
+      isCurrent: true,
+      operationSeq: 1,
+      createdAt: '2026-07-05T00:00:00.000Z',
+      tracks: [makeTrack('Track 1', 'version-1-track-1', { trackId: 'track-1', trackPosition: 0 })],
+    });
+
+    const user = userEvent.setup();
+    render(
+      <DemoDawClient
+        groupSlug="demo-group"
+        projectSlug="demo-project"
+        projectId="project-1"
+        demoId="demo-1"
+        currentUserId="user-1"
+        demoName="Demo"
+        demoDescription={null}
+        initialCurrentVersionId={initialVersion.id}
+        initialActiveVersionId={initialVersion.id}
+        initialIsFollowingHead={true}
+        initialVersions={[initialVersion]}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Delete track Track 1' })).toBeTruthy();
+
+    await user.click(screen.getByRole('button', { name: 'Delete track Track 1' }));
+
+    await waitFor(() => {
+      expect(mockProjectSync.projectState?.versions[0].tracks).toHaveLength(0);
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: 'Delete track Track 1' })).toBeNull();
     });
   });
 

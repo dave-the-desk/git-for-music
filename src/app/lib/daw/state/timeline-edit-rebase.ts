@@ -299,6 +299,10 @@ export function rebaseTimelineEditRequest(
       const lookup = findTrackByTrackId(state, request.payload.trackId);
       return lookup ? request : null;
     }
+    case 'TRACK_REMOVED': {
+      const lookup = findTrackByTrackId(state, request.payload.trackId);
+      return lookup ? request : null;
+    }
     case 'TRACK_OFFSET_UPDATED': {
       const lookup = findTrackByTrackVersionId(state, request.payload.trackVersionId);
       return lookup ? request : null;
