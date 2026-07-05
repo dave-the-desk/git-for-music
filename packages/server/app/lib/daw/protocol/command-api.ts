@@ -214,6 +214,7 @@ export interface DawOperationPayloadTrackVersionCreated {
   trackId?: string;
   trackVersionId?: string;
   operationSummary?: string | null;
+  version?: DawVersionTreeNodeSnapshot;
   track: DawVersionTreeTrackSnapshot;
 }
 

@@ -63,6 +63,9 @@ const VERSION_TREE_REFRESH_OPERATION_TYPES = new Set<DawOperationType>([
   'VERSION_TIMING_UPDATED',
 ]);
 
+const REALTIME_SILENCE_TIMEOUT_MS = 30_000;
+const REALTIME_CATCH_UP_INTERVAL_MS = 15_000;
+
 type RealtimeAcceptedOperationEvent = {
   type: 'accepted_operation';
   projectId: string;
@@ -326,6 +329,8 @@ export class ProjectSyncEngine {
   private readonly presenceListeners = new Set<ProjectSyncPresenceListener>();
   private readonly inFlightByIdempotencyKey = new Map<string, Promise<DawProjectOperationRecord>>();
   private versionTreeAttentionClearTimer: ReturnType<typeof setTimeout> | null = null;
+  private realtimeSilenceTimer: ReturnType<typeof setTimeout> | null = null;
+  private realtimeCatchUpTimer: ReturnType<typeof setTimeout> | null = null;
   private realtimeSource: EventSource | null = null;
   private projectId: string | null = null;
   private demoId: string | null = null;
@@ -599,7 +604,56 @@ export class ProjectSyncEngine {
       this.realtimeSource.close();
       this.realtimeSource = null;
     }
+    if (this.realtimeSilenceTimer) {
+      clearTimeout(this.realtimeSilenceTimer);
+      this.realtimeSilenceTimer = null;
+    }
+    if (this.realtimeCatchUpTimer) {
+      clearTimeout(this.realtimeCatchUpTimer);
+      this.realtimeCatchUpTimer = null;
+    }
     this.clearVersionTreeAttentionTimer();
+  }
+
+  private armRealtimeSilenceWatchdog() {
+    if (this.realtimeSilenceTimer) {
+      clearTimeout(this.realtimeSilenceTimer);
+    }
+
+    if (!this.realtimeSource) {
+      this.realtimeSilenceTimer = null;
+      return;
+    }
+
+    this.realtimeSilenceTimer = setTimeout(() => {
+      this.realtimeSilenceTimer = null;
+      if (!this.realtimeSource) return;
+      void this.handleReconnect();
+    }, REALTIME_SILENCE_TIMEOUT_MS);
+  }
+
+  private armRealtimeCatchUpLoop() {
+    if (this.realtimeCatchUpTimer) {
+      clearTimeout(this.realtimeCatchUpTimer);
+    }
+
+    if (!this.realtimeSource) {
+      this.realtimeCatchUpTimer = null;
+      return;
+    }
+
+    this.realtimeCatchUpTimer = setTimeout(async () => {
+      this.realtimeCatchUpTimer = null;
+      if (!this.realtimeSource) return;
+
+      try {
+        await this.refreshVersionTreeFromServer();
+      } catch {
+        // Best-effort catch-up; the silence watchdog still handles hard stalls.
+      } finally {
+        this.armRealtimeCatchUpLoop();
+      }
+    }, REALTIME_CATCH_UP_INTERVAL_MS);
   }
 
   private readonly handleRealtimeAcceptedOperation = async (event: MessageEvent<string>) => {
@@ -607,6 +661,7 @@ export class ProjectSyncEngine {
       const payload = JSON.parse(event.data) as RealtimeAcceptedOperationEvent;
       if (payload.type !== 'accepted_operation') return;
       if (payload.projectId !== this.projectId || payload.demoId !== this.demoId) return;
+      this.armRealtimeSilenceWatchdog();
       await this.receiveAcceptedRemoteOperations([payload.operation]);
     } catch {
       // Realtime is best-effort; the EventSource reconnect will backfill if needed.
@@ -618,6 +673,7 @@ export class ProjectSyncEngine {
       const payload = JSON.parse(event.data) as RealtimeAssetProcessingStatusEvent;
       if (payload.type !== 'asset_processing_status') return;
       if (payload.projectId !== this.projectId || payload.demoId !== this.demoId) return;
+      this.armRealtimeSilenceWatchdog();
       for (const listener of this.assetStatusListeners) {
         listener(payload);
       }
@@ -631,6 +687,7 @@ export class ProjectSyncEngine {
       const payload = JSON.parse(event.data) as RealtimePresenceEvent;
       if (payload.type !== 'presence') return;
       if (payload.projectId !== this.projectId || payload.demoId !== this.demoId) return;
+      this.armRealtimeSilenceWatchdog();
       for (const listener of this.presenceListeners) {
         listener(payload);
       }
@@ -656,6 +713,7 @@ export class ProjectSyncEngine {
       )
         return;
       if (payload.projectId !== this.projectId || payload.demoId !== this.demoId) return;
+      this.armRealtimeSilenceWatchdog();
       const attentionVersionId =
         payload.type === 'version_created' ||
         payload.type === 'branch_created' ||
@@ -684,6 +742,7 @@ export class ProjectSyncEngine {
           `[daw] project_rebootstrap_required received for ${payload.projectId}/${payload.demoId}: ${payload.reason}`,
         );
       }
+      this.armRealtimeSilenceWatchdog();
       await this.refreshVersionTreeFromServer();
     } catch {
       // Fallback resync is best-effort.
@@ -701,6 +760,11 @@ export class ProjectSyncEngine {
 
     source.addEventListener('open', () => {
       this.setState({ isOnline: true, lastError: null });
+      this.armRealtimeSilenceWatchdog();
+      this.armRealtimeCatchUpLoop();
+      void this.catchUpFromServer().catch(() => {
+        // The realtime stream is best-effort; the next reconnect will backfill.
+      });
     });
 
     source.addEventListener('accepted_operation', (event) => {

@@ -29,12 +29,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "30_UI/daw-ui-ideal-alignment-plan.md",
+                "file": "30_UI/ui-routing.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "daw-ui-ideal-alignment-plan"
+              "title": "ui-routing"
             }
           }
         ]
@@ -200,10 +200,15 @@
       "bases:Create new base": false
     }
   },
-  "active": "0c277a4707285d99",
+  "active": "890ad97988d33610",
   "lastOpenFiles": [
-    "30_UI/ideal-daw-ui-ux-design.md",
+    "60_BRANCHES/daw-realtime-collab/session-problems-and-solutions.md",
+    "papers/general-ui-design-practices/systemusabilityscale%28sus%29_comp%5B1%5D.pdf",
+    "papers/general-ui-design-practices/1180639.1180831.pdf",
+    "papers/general-ui-design-practices",
     "30_UI/daw-ui-ideal-alignment-plan.md",
+    "60_BRANCHES/daw-realtime-collab/realtime-first-open-not-updating.md",
+    "30_UI/ideal-daw-ui-ux-design.md",
     "40_FEATURES/daw-add-track-duplicate-after-recording.md",
     "papers/daw-UI/thesis_access.pdf",
     "papers/daw-UI/Metaphors_for_Electronic_Music_Productio.pdf",
@@ -228,15 +233,10 @@
     "60_BRANCHES/daw-realtime-collab",
     "papers/git-docs/2312.13644v2.pdf",
     "papers/git-docs/2009.03115v2.pdf",
-    "papers/git-docs",
-    "papers/realtime-collab/289444.289469.pdf",
-    "papers/realtime-collab/215585.215706.pdf",
     "papers/realtime-collaboration-plan.md",
     "papers-on-sync/README.md",
     "daily-logging/2026-06-28.md",
     "40_FEATURES/workflows.md",
-    "40_FEATURES/storage-model.md",
-    "40_FEATURES/realtime-system.md",
-    "40_FEATURES/offline-sync-model.md"
+    "40_FEATURES/storage-model.md"
   ]
 }

@@ -421,6 +421,23 @@ export async function completeUploadedOriginalAsset(input: {
           trackId,
           trackVersionId: trackVersion.id,
           operationSummary: branchLabel,
+          version: serializeCreatedDemoVersionTreeNode({
+            id: branchVersion.id,
+            label: branchVersion.label,
+            description: branchVersion.description,
+            parentId: branchVersion.parentId,
+            createdAt: branchVersion.createdAt,
+            branchMode,
+            tempoBpm: branchVersion.tempoBpm,
+            timeSignatureNum: branchVersion.timeSignatureNum,
+            timeSignatureDen: branchVersion.timeSignatureDen,
+            musicalKey: branchVersion.musicalKey,
+            tempoSource: branchVersion.tempoSource,
+            keySource: branchVersion.keySource,
+            kind: branchVersion.kind,
+            isCurrent: true,
+            tracks: branchVersion.tracks,
+          }),
           track: serializeCreatedDemoTrackVersionTreeTrack({
             trackId,
             trackName,
@@ -513,7 +530,7 @@ export async function completeUploadedOriginalAsset(input: {
       actorUserId: input.userId,
       versionId: branchPayload.versionId ?? 'unknown',
       parentVersionId: branchPayload.parentVersionId ?? null,
-      branchMode: branchPayload.branchMode ?? branchMode,
+      branchMode: branchPayload.branchMode ?? 'continue',
       operationSeq: recordedVersionBranchOperation.operationSeq,
     });
   }

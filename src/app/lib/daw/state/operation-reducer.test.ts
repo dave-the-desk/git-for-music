@@ -672,6 +672,46 @@ test('track versions remain attached when the version is created before the trac
   assert.equal(applied.currentVersionId, branchVersion.id);
 });
 
+test('TRACK_VERSION_CREATED advances follow-head clients to the new version head', () => {
+  const root = makeVersion('version-root', { isCurrent: true });
+  const initial = createLocalProjectStateFromBootstrap(makeBootstrap([root], root.id));
+
+  const branchVersion = makeVersion('version-branch', {
+    label: 'Branch label',
+    name: 'Branch label',
+    branchName: 'Branch label',
+    parentId: root.id,
+    parentVersionId: root.id,
+    createdAt: '2025-01-02T00:00:00.000Z',
+    isCurrent: true,
+    operationSeq: 2,
+  });
+  const track = makeTrack('track-version-1', {
+    trackId: 'track-1',
+    trackName: 'Uploaded track',
+  });
+
+  const trackCreated = makeOperation('TRACK_VERSION_CREATED', 3, {
+    versionId: branchVersion.id,
+    trackId: track.trackId,
+    trackVersionId: track.trackVersionId,
+    operationSummary: 'Added audio track',
+    track,
+    version: branchVersion,
+  });
+
+  const applied = applyAcceptedProjectOperation(initial, trackCreated);
+  const version = applied.versions.find((candidate) => candidate.id === branchVersion.id);
+
+  assert.ok(version);
+  assert.equal(applied.currentVersionId, branchVersion.id);
+  assert.equal(applied.activeVersionId, branchVersion.id);
+  assert.equal(version?.isCurrent, true);
+  assert.equal(applied.versions.find((candidate) => candidate.id === root.id)?.isCurrent, false);
+  assert.equal(version?.tracks.length, 1);
+  assert.equal(version?.tracks[0]?.trackVersionId, track.trackVersionId);
+});
+
 test('TRACK_VERSION_CREATED replaces the copied track entry when it targets an existing trackId', () => {
   const root = makeVersion('version-root', {
     isCurrent: true,

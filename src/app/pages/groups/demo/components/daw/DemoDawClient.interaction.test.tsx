@@ -1,5 +1,5 @@
 import { createElement, forwardRef, useImperativeHandle } from 'react';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DawTrack, DawVersion, LocalProjectState } from '@/app/lib/daw/state/local-project-state';
@@ -588,6 +588,118 @@ describe('DemoDawClient recording regression', () => {
 
     await act(async () => {
       await mockPendingActiveVersionUpdates.flush();
+    });
+  });
+
+  it('follows a collaborator-created blank-daw track without requiring refresh', async () => {
+    const initialVersion = makeVersion('version-1', [], {
+      isCurrent: true,
+      operationSeq: 1,
+      createdAt: '2026-07-05T00:00:00.000Z',
+      tracks: [],
+    });
+    const remoteVersion = makeVersion('version-2', ['Remote Update Track'], {
+      parentId: initialVersion.id,
+      parentVersionId: initialVersion.id,
+      isCurrent: true,
+      operationSeq: 2,
+      createdAt: '2026-07-05T00:00:01.000Z',
+      tracks: [makeTrack('Remote Update Track', 'version-2-track-1', { trackId: 'track-2', trackPosition: 0 })],
+    });
+
+    const user = userEvent.setup();
+    render(
+      <DemoDawClient
+        groupSlug="demo-group"
+        projectSlug="demo-project"
+        projectId="project-1"
+        demoId="demo-1"
+        currentUserId="user-2"
+        demoName="Demo"
+        demoDescription={null}
+        initialCurrentVersionId={initialVersion.id}
+        initialActiveVersionId={initialVersion.id}
+        initialIsFollowingHead={false}
+        initialVersions={[initialVersion]}
+      />,
+    );
+
+    expect(screen.queryByText('Remote Update Track')).toBeNull();
+
+    await act(async () => {
+      mockProjectSync.updateProjectState({
+        ...makeProjectState([initialVersion, remoteVersion]),
+        currentVersionId: remoteVersion.id,
+        activeVersionId: initialVersion.id,
+        isFollowingHead: false,
+        lastVersionOperationSeq: 2,
+        lastSeenOperationSeq: 2,
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Remote Update Track')).toBeTruthy();
+    });
+
+    await user.click(await screen.findByRole('button', { name: 'Enable mock mic' }));
+    expect(screen.getByText('Remote Update Track')).toBeTruthy();
+  });
+
+  it('keeps two simultaneous DAW clients aligned when one adds a track to a blank demo', async () => {
+    const initialVersion = makeVersion('version-1', [], {
+      isCurrent: true,
+      operationSeq: 1,
+      createdAt: '2026-07-05T00:00:00.000Z',
+      tracks: [],
+    });
+
+    const user = userEvent.setup();
+    render(
+      <div>
+        <section data-testid="client-a">
+          <DemoDawClient
+            groupSlug="demo-group"
+            projectSlug="demo-project"
+            projectId="project-1"
+            demoId="demo-1"
+            currentUserId="user-a"
+            demoName="Demo"
+            demoDescription={null}
+            initialCurrentVersionId={initialVersion.id}
+            initialActiveVersionId={initialVersion.id}
+            initialIsFollowingHead={true}
+            initialVersions={[initialVersion]}
+          />
+        </section>
+        <section data-testid="client-b">
+          <DemoDawClient
+            groupSlug="demo-group"
+            projectSlug="demo-project"
+            projectId="project-1"
+            demoId="demo-1"
+            currentUserId="user-b"
+            demoName="Demo"
+            demoDescription={null}
+            initialCurrentVersionId={initialVersion.id}
+            initialActiveVersionId={initialVersion.id}
+            initialIsFollowingHead={true}
+            initialVersions={[initialVersion]}
+          />
+        </section>
+      </div>,
+    );
+
+    const clientA = screen.getByTestId('client-a');
+    const clientB = screen.getByTestId('client-b');
+
+    expect(within(clientA).queryByText('Track 1')).toBeNull();
+    expect(within(clientB).queryByText('Track 1')).toBeNull();
+
+    await user.click(within(clientA).getByRole('button', { name: '+ Add track' }));
+
+    await waitFor(() => {
+      expect(within(clientA).getByText('Track 1')).toBeTruthy();
+      expect(within(clientB).getByText('Track 1')).toBeTruthy();
     });
   });
 });

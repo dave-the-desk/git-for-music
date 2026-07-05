@@ -3126,6 +3126,271 @@ test('ProjectSyncEngine reboots when a realtime version_tree_changed event arriv
   }
 });
 
+test('ProjectSyncEngine catches up on open and reconnects when realtime goes silent', async () => {
+  const root = makeVersion('version-root', { isCurrent: true });
+  const sourceSegment: TrackTimelineSegment = {
+    id: 'segment-source',
+    trackVersionId: 'track-version-a',
+    sourceStartMs: 0,
+    sourceEndMs: 1000,
+    timelineStartMs: 0,
+    timelineEndMs: 1000,
+    durationMs: 1000,
+    startMs: 0,
+    endMs: 1000,
+    gainDb: 0,
+    fadeInMs: 0,
+    fadeOutMs: 0,
+    isMuted: false,
+    position: 0,
+    isImplicit: false,
+  };
+  const initial = createLocalProjectStateFromBootstrap(
+    makeBootstrap(
+      [
+        makeVersion('version-root', {
+          isCurrent: true,
+          tracks: [
+            makeTrack('track-version-a', {
+              trackId: 'track-a',
+              trackName: 'Track A',
+              segments: [sourceSegment],
+            }),
+          ],
+        }),
+      ],
+      root.id,
+    ),
+  );
+  const splitOperation = makeOperation('SEGMENT_SPLIT', 2, {
+    trackVersionId: 'track-version-a',
+    sourceSegmentId: 'segment-source',
+    leftSegment: {
+      id: 'segment-left',
+      trackVersionId: 'track-version-a',
+      startMs: 0,
+      endMs: 500,
+      timelineStartMs: 0,
+      timelineEndMs: 500,
+      gainDb: 0,
+      fadeInMs: 0,
+      fadeOutMs: 0,
+      isMuted: false,
+      position: 0,
+    },
+    rightSegment: {
+      id: 'segment-right',
+      trackVersionId: 'track-version-a',
+      startMs: 500,
+      endMs: 1000,
+      timelineStartMs: 500,
+      timelineEndMs: 1000,
+      gainDb: 0,
+      fadeInMs: 0,
+      fadeOutMs: 0,
+      isMuted: false,
+      position: 1,
+    },
+  });
+  const engine = new ProjectSyncEngine();
+  const harness = engine as unknown as {
+    projectId: string | null;
+    demoId: string | null;
+    state: ReturnType<ProjectSyncEngine['getState']>;
+    openRealtimeConnection: () => void;
+  };
+  const stubbedCache = dawLocalCache as unknown as {
+    getProject: (projectId: string, demoId: string) => Promise<null>;
+    listAcceptedOperations: (projectId: string, demoId: string, afterSeq: number) => Promise<DawProjectOperationRecord[]>;
+    listPendingOperations: (
+      projectId: string,
+      demoId: string,
+    ) => Promise<
+      Array<{
+        key: string;
+        projectId: string;
+        demoId: string;
+        request: DawOperationCommitRequest;
+        status: 'pending' | 'retrying' | 'failed';
+        attemptCount: number;
+        error: string | null;
+        createdAt: number;
+        updatedAt: number;
+      }>
+    >;
+    findOperationByIdempotencyKey: (projectId: string, demoId: string, idempotencyKey: string) => Promise<DawProjectOperationRecord | null>;
+    putPendingOperation: (...args: unknown[]) => Promise<void>;
+    updatePendingOperation: (...args: unknown[]) => Promise<void>;
+    putAcceptedOperation: (projectId: string, demoId: string, operation: DawProjectOperationRecord) => Promise<void>;
+    deletePendingOperation: (projectId: string, demoId: string, idempotencyKey: string) => Promise<void>;
+    putProject: (...args: unknown[]) => Promise<void>;
+    putPluginDefinitions: (...args: unknown[]) => Promise<void>;
+    putAsset: (...args: unknown[]) => Promise<void>;
+  };
+
+  const originalGetProject = stubbedCache.getProject;
+  const originalListAcceptedOperations = stubbedCache.listAcceptedOperations;
+  const originalListPendingOperations = stubbedCache.listPendingOperations;
+  const originalFindOperationByIdempotencyKey = stubbedCache.findOperationByIdempotencyKey;
+  const originalPutPendingOperation = stubbedCache.putPendingOperation;
+  const originalUpdatePendingOperation = stubbedCache.updatePendingOperation;
+  const originalPutAcceptedOperation = stubbedCache.putAcceptedOperation;
+  const originalDeletePendingOperation = stubbedCache.deletePendingOperation;
+  const originalPutProject = stubbedCache.putProject;
+  const originalPutPluginDefinitions = stubbedCache.putPluginDefinitions;
+  const originalPutAsset = stubbedCache.putAsset;
+  const originalFetch = globalThis.fetch;
+  const originalEventSource = globalThis.EventSource;
+  const originalSetTimeout = globalThis.setTimeout;
+  const originalClearTimeout = globalThis.clearTimeout;
+  const capturedUrls: string[] = [];
+  const eventSources: Array<{
+    listeners: Map<string, Array<(event: MessageEvent<string>) => void>>;
+    emit: (type: string, data?: string) => void;
+  }> = [];
+  const scheduledTimers = new Map<number, () => void>();
+  let nextTimerId = 1;
+  let operationsFetchCount = 0;
+
+  stubbedCache.getProject = async () => null;
+  stubbedCache.listAcceptedOperations = async () => [];
+  stubbedCache.listPendingOperations = async () => [];
+  stubbedCache.findOperationByIdempotencyKey = async () => null;
+  stubbedCache.putPendingOperation = async () => {};
+  stubbedCache.updatePendingOperation = async () => {};
+  stubbedCache.putAcceptedOperation = async () => {};
+  stubbedCache.deletePendingOperation = async () => {};
+  stubbedCache.putProject = async () => {};
+  stubbedCache.putPluginDefinitions = async () => {};
+  stubbedCache.putAsset = async () => {};
+  (globalThis as typeof globalThis & { setTimeout: typeof setTimeout }).setTimeout = ((callback: TimerHandler) => {
+    const timerId = nextTimerId++;
+    scheduledTimers.set(timerId, () => {
+      if (typeof callback === 'function') {
+        return callback();
+      }
+      return undefined;
+    });
+    return timerId as unknown as ReturnType<typeof setTimeout>;
+  }) as typeof setTimeout;
+  (globalThis as typeof globalThis & { clearTimeout: typeof clearTimeout }).clearTimeout = ((timerId: number) => {
+    scheduledTimers.delete(timerId);
+  }) as typeof clearTimeout;
+  (globalThis as typeof globalThis & { EventSource: typeof EventSource }).EventSource = class {
+    listeners = new Map<string, Array<(event: MessageEvent<string>) => void>>();
+
+    constructor() {
+      eventSources.push(this);
+    }
+
+    close() {}
+
+    addEventListener(type: string, listener: (event: MessageEvent<string>) => void) {
+      const listeners = this.listeners.get(type) ?? [];
+      listeners.push(listener);
+      this.listeners.set(type, listeners);
+    }
+
+    emit(type: string, data = '') {
+      for (const listener of this.listeners.get(type) ?? []) {
+        listener({ data } as MessageEvent<string>);
+      }
+    }
+  } as unknown as typeof EventSource;
+  (globalThis as typeof globalThis & { fetch: typeof fetch }).fetch = async (input: RequestInfo | URL) => {
+    const url = typeof input === 'string' ? input : input.toString();
+    capturedUrls.push(url);
+    if (url.includes('/operations') && url.includes('afterSeq=1')) {
+      operationsFetchCount += 1;
+      if (operationsFetchCount === 1) {
+        return jsonResponse({
+          operations: [],
+          latestSnapshotSeq: 1,
+          rebootstrapRequired: false,
+        });
+      }
+
+      return jsonResponse({
+        operations: [splitOperation],
+        latestSnapshotSeq: 2,
+        rebootstrapRequired: false,
+      });
+    }
+
+    if (url.includes('/operations') && url.includes('afterSeq=2')) {
+      return jsonResponse({
+        operations: [],
+        latestSnapshotSeq: 2,
+        rebootstrapRequired: false,
+      });
+    }
+
+    throw new Error(`Unexpected fetch in test: ${url}`);
+  };
+
+  try {
+    harness.projectId = 'project-1';
+    harness.demoId = 'demo-1';
+    harness.state = {
+      ...engine.getState(),
+      projectState: {
+        ...initial,
+        activeVersionId: root.id,
+        isFollowingHead: true,
+      },
+      lastSyncedOperationSeq: 1,
+    };
+
+    harness.openRealtimeConnection();
+    assert.equal(eventSources.length, 1);
+
+    eventSources[0]?.emit('open');
+    await Promise.resolve();
+
+    const projectStateAfterOpen = engine.getState().projectState;
+    assert.ok(projectStateAfterOpen);
+    assert.equal(projectStateAfterOpen?.versions.length, 1);
+    assert.equal(projectStateAfterOpen?.versions[0]?.tracks[0]?.segments.length, 1);
+    assert.equal(projectStateAfterOpen?.lastSeenOperationSeq, 1);
+    assert.deepEqual(capturedUrls, [
+      '/api/daw/projects/project-1/operations?demoId=demo-1&afterSeq=1',
+    ]);
+    const timerCallbacks = Array.from(scheduledTimers.values());
+    assert.equal(timerCallbacks.length, 2);
+
+    await timerCallbacks[1]();
+    await Promise.resolve();
+
+    const projectStateAfterPoll = engine.getState().projectState;
+    assert.ok(projectStateAfterPoll);
+    assert.equal(capturedUrls.at(-1), '/api/daw/projects/project-1/operations?demoId=demo-1&afterSeq=1');
+    assert.equal(projectStateAfterPoll?.versions[0]?.tracks[0]?.segments.length, 2);
+    assert.equal(projectStateAfterPoll?.lastSeenOperationSeq, 2);
+    assert.equal(eventSources.length, 1);
+
+    await timerCallbacks[0]();
+    await Promise.resolve();
+
+    assert.equal(eventSources.length, 2);
+  } finally {
+    stubbedCache.getProject = originalGetProject;
+    stubbedCache.listAcceptedOperations = originalListAcceptedOperations;
+    stubbedCache.listPendingOperations = originalListPendingOperations;
+    stubbedCache.findOperationByIdempotencyKey = originalFindOperationByIdempotencyKey;
+    stubbedCache.putPendingOperation = originalPutPendingOperation;
+    stubbedCache.updatePendingOperation = originalUpdatePendingOperation;
+    stubbedCache.putAcceptedOperation = originalPutAcceptedOperation;
+    stubbedCache.deletePendingOperation = originalDeletePendingOperation;
+    stubbedCache.putProject = originalPutProject;
+    stubbedCache.putPluginDefinitions = originalPutPluginDefinitions;
+    stubbedCache.putAsset = originalPutAsset;
+    (globalThis as typeof globalThis & { fetch: typeof fetch }).fetch = originalFetch;
+    (globalThis as typeof globalThis & { EventSource?: typeof EventSource }).EventSource = originalEventSource;
+    (globalThis as typeof globalThis & { setTimeout: typeof setTimeout }).setTimeout = originalSetTimeout;
+    (globalThis as typeof globalThis & { clearTimeout: typeof clearTimeout }).clearTimeout = originalClearTimeout;
+  }
+});
+
 test('ProjectSyncEngine reboots when a realtime version_created event arrives', async () => {
   const root = makeVersion('version-root', { isCurrent: true });
   const initial = createLocalProjectStateFromBootstrap(makeBootstrap([root], root.id));

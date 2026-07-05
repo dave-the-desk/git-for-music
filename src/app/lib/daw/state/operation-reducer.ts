@@ -1092,6 +1092,7 @@ export function applyAcceptedProjectOperation(
       if (!versionId) {
         return state;
       }
+      const versionParentId = getVersionParentId(payload.version, payload);
       const updatedVersions = payload.version
         ? upsertVersionNode(
             state.versions,
@@ -1108,24 +1109,32 @@ export function applyAcceptedProjectOperation(
       return {
         ...state,
         ...touchVersionTree(state, operation),
-        versions: pruneVersionTracks(
-          payload.track
-            ? upsertVersionTrack(updatedVersions, versionId, payload.track)
-            : payload.operationSummary !== undefined || payload.version
-              ? updatedVersions.map((version) =>
-                  version.id === versionId
-                    ? {
-                        ...version,
-                        operationSummary:
-                          payload.operationSummary ?? version.operationSummary ?? version.description ?? null,
-                        description:
-                          payload.operationSummary ?? version.description ?? version.operationSummary ?? null,
-                      }
-                    : version,
-                )
-              : updatedVersions,
+        versions: setCurrentVersionFlags(
+          pruneVersionTracks(
+            payload.track
+              ? upsertVersionTrack(updatedVersions, versionId, payload.track)
+              : payload.operationSummary !== undefined || payload.version
+                ? updatedVersions.map((version) =>
+                    version.id === versionId
+                      ? {
+                          ...version,
+                          operationSummary:
+                            payload.operationSummary ?? version.operationSummary ?? version.description ?? null,
+                          description:
+                            payload.operationSummary ?? version.description ?? version.operationSummary ?? null,
+                        }
+                      : version,
+                  )
+                : updatedVersions,
+            versionId,
+          ),
           versionId,
+          operation.operationSeq,
         ),
+        currentVersionId: versionId,
+        activeVersionId: shouldAutoAdvanceActiveVersion(state, versionParentId)
+          ? versionId
+          : state.activeVersionId ?? state.currentVersionId,
       };
     }
     case 'VERSION_PARENT_SET': {

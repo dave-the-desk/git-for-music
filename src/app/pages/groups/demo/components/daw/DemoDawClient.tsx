@@ -248,7 +248,7 @@ export function DemoDawClient({
   const router = useRouter();
 
   const [selectedVersionId, setSelectedVersionId] = useState(initialActiveVersionId ?? initialCurrentVersionId);
-  const previousActiveVersionIdRef = useRef(initialActiveVersionId ?? initialCurrentVersionId);
+  const previousBranchHeadVersionIdRef = useRef(initialActiveVersionId ?? initialCurrentVersionId);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTimeMs, setCurrentTimeMs] = useState(0);
   const [durationByTrackVersionId, setDurationByTrackVersionId] = useState<Record<string, number>>({});
@@ -1543,19 +1543,19 @@ export function DemoDawClient({
   }
 
   useEffect(() => {
-    const previousActiveVersionId = previousActiveVersionIdRef.current;
-    const activeVersionChanged = previousActiveVersionId !== liveActiveVersionId;
+    const previousBranchHeadVersionId = previousBranchHeadVersionIdRef.current;
+    const branchHeadChanged = previousBranchHeadVersionId !== liveBranchHeadVersionId;
 
-    if (activeVersionChanged && isFollowingHead && !isHistoryViewActive) {
-      setSelectedVersionId(liveActiveVersionId);
+    if (branchHeadChanged && !isHistoryViewActive) {
+      setSelectedVersionId(liveBranchHeadVersionId);
     }
 
-    if (activeVersionChanged && !isHistoryViewActive) {
+    if (branchHeadChanged && !isHistoryViewActive) {
       stopTransport();
     }
 
-    previousActiveVersionIdRef.current = liveActiveVersionId;
-  }, [isFollowingHead, isHistoryViewActive, liveActiveVersionId, stopTransport]);
+    previousBranchHeadVersionIdRef.current = liveBranchHeadVersionId;
+  }, [isHistoryViewActive, liveBranchHeadVersionId, stopTransport]);
 
   const selectedCheckoutVersionId = liveVersions.find((version) => version.id === selectedVersionId)?.id ?? null;
   const jumpToHistoryOperation = useCallback(
