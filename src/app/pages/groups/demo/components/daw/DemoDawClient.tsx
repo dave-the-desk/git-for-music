@@ -201,6 +201,8 @@ type ProjectPresenceRecord = {
   updatedAt: string;
 };
 
+type BrowserTab = 'upload' | 'plugins' | 'members';
+
 type ResolvedRecordingTarget = {
   trackId: string;
   trackVersionId: string;
@@ -281,6 +283,8 @@ export function DemoDawClient({
   const [selectedAudioInputDeviceId, setSelectedAudioInputDeviceId] = useState<string | null>(null);
   const [audioInputReady, setAudioInputReady] = useState(false);
   const [toolbarTab, setToolbarTab] = useState<DawToolbarTab>('edit');
+  const [browserTab, setBrowserTab] = useState<BrowserTab>('upload');
+  const [browserQuery, setBrowserQuery] = useState('');
   const [isVersionTreeRailExpanded, setIsVersionTreeRailExpanded] = useState(true);
   const [viewportWidth, setViewportWidth] = useState(() =>
     typeof window !== 'undefined' ? window.innerWidth : 1440,
@@ -641,6 +645,12 @@ export function DemoDawClient({
   }, [toolbarTab]);
 
   useEffect(() => {
+    if (toolbarTab === 'upload' || toolbarTab === 'plugins' || toolbarTab === 'members') {
+      setBrowserTab(toolbarTab);
+    }
+  }, [toolbarTab]);
+
+  useEffect(() => {
     let cancelled = false;
 
     async function loadHistoryPoint() {
@@ -717,6 +727,25 @@ export function DemoDawClient({
     if (!tempoAnalysisPrompt) return null;
     return processingJobs[tempoAnalysisPrompt.jobId] ?? null;
   }, [processingJobs, tempoAnalysisPrompt]);
+  const normalizedBrowserQuery = browserQuery.trim().toLowerCase();
+  const filteredPluginDefinitions = useMemo(() => {
+    if (!normalizedBrowserQuery) return pluginDefinitions;
+    return pluginDefinitions.filter((plugin) => {
+      const haystack = [plugin.name, plugin.manufacturer ?? '', plugin.version, plugin.pluginKey]
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(normalizedBrowserQuery);
+    });
+  }, [normalizedBrowserQuery, pluginDefinitions]);
+  const filteredPresenceRecords = useMemo(() => {
+    if (!normalizedBrowserQuery) return presenceRecords;
+    return presenceRecords.filter((presence) => {
+      const haystack = [presence.actorUserId, presence.status, presence.currentTool, presence.recordingState]
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(normalizedBrowserQuery);
+    });
+  }, [normalizedBrowserQuery, presenceRecords]);
   const currentRecordingState = temporaryRecordingTrack?.status ?? 'idle';
   const microphoneStatus = useMemo(() => {
     if (currentRecordingState === 'recording') {
@@ -3338,7 +3367,179 @@ export function DemoDawClient({
           </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-4">
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(280px,0.78fr)_minmax(0,1.72fr)]">
+          <aside
+            className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-slate-700 bg-slate-950/80 shadow-sm shadow-black/20"
+            data-testid="browser-rail"
+          >
+            <div className="border-b border-slate-800 px-4 py-4">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-500">Browser</p>
+              <h2 className="mt-1 text-sm font-semibold text-white">Upload, plugins, members</h2>
+              <p className="mt-1 text-xs text-slate-400">
+                Asset intake and collaborator context now live in the left browser rail.
+              </p>
+            </div>
+            <div className="border-b border-slate-800 px-4 py-3">
+              <label className="block space-y-1">
+                <span className="block text-[10px] uppercase tracking-[0.18em] text-slate-400">Search browser</span>
+                <input
+                  type="search"
+                  value={browserQuery}
+                  onChange={(e) => setBrowserQuery(e.currentTarget.value)}
+                  placeholder="Filter uploads, plugins, members"
+                  className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none ring-indigo-500 focus:ring"
+                />
+              </label>
+            </div>
+            <div className="flex flex-wrap gap-2 border-b border-slate-800 px-4 py-3">
+              {([
+                ['upload', 'Upload'],
+                ['plugins', 'Plugins'],
+                ['members', 'Members'],
+              ] as const).map(([id, label]) => {
+                const isActive = browserTab === id;
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => {
+                      setBrowserTab(id);
+                      setToolbarTab(id);
+                    }}
+                    className={`rounded-full px-3 py-1 text-xs font-semibold transition-colors ${
+                      isActive
+                        ? 'bg-cyan-500/20 text-cyan-100 ring-1 ring-cyan-500/40'
+                        : 'bg-slate-900 text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+                    }`}
+                    aria-pressed={isActive}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="flex-1 min-h-0 overflow-y-auto p-4">
+              {browserTab === 'upload' ? (
+                <form onSubmit={onUploadTrack} className="space-y-4">
+                  <div className="space-y-1">
+                    <p className="text-sm font-semibold text-white">Upload</p>
+                    <p className="text-xs text-slate-400">Uploads and recordings create new assets through the signed ingest flow.</p>
+                  </div>
+
+                  <div className="space-y-3">
+                    <label className="space-y-1">
+                      <span className="block text-[10px] uppercase tracking-[0.18em] text-slate-400">Track name</span>
+                      <input
+                        type="text"
+                        value={uploadName}
+                        onChange={(e) => setUploadName(e.currentTarget.value)}
+                        className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none ring-indigo-500 focus:ring"
+                        placeholder="Lead Vocal"
+                      />
+                    </label>
+                    <label className="space-y-1">
+                      <span className="block text-[10px] uppercase tracking-[0.18em] text-slate-400">Audio file</span>
+                      <input
+                        type="file"
+                        accept="audio/*"
+                        onChange={(e) => handleUploadFilePicked(e.currentTarget.files?.[0] ?? null)}
+                        className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-200 file:mr-3 file:rounded-md file:border-0 file:bg-indigo-600 file:px-3 file:py-1.5 file:text-sm file:font-semibold file:text-white hover:file:bg-indigo-500"
+                      />
+                    </label>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-3">
+                    <button
+                      type="submit"
+                      disabled={isUploading}
+                      className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {isUploading ? 'Uploading…' : 'Upload audio'}
+                    </button>
+                  </div>
+
+                  {processingJobIds.length > 0 ? (
+                    <div className="rounded-md border border-indigo-500/30 bg-indigo-500/10 px-3 py-2 text-xs text-indigo-100">
+                      <p className="font-medium">
+                        Processing {processingJobIds.length} job{processingJobIds.length === 1 ? '' : 's'}…
+                      </p>
+                      {processingMessage ? <p className="mt-1 text-indigo-200">{processingMessage}</p> : null}
+                      {processingElapsedSeconds !== null ? (
+                        <p className="mt-1 text-indigo-200/80">Started {processingElapsedSeconds}s ago</p>
+                      ) : null}
+                      {activeProcessingJobs.length > 0 ? (
+                        <ul className="mt-1 space-y-0.5 text-indigo-200/90">
+                          {activeProcessingJobs.map((job) => (
+                            <li key={job.id}>
+                              {job.type} · {job.status} · {job.progress}%
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null}
+                    </div>
+                  ) : processingMessage ? (
+                    <p className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100">
+                      {processingMessage}
+                    </p>
+                  ) : null}
+                  {uploadError ? <p className="text-sm text-red-400">{uploadError}</p> : null}
+                </form>
+              ) : null}
+
+              {browserTab === 'plugins' ? (
+                <div className="space-y-3">
+                  <div>
+                    <p className="text-sm font-semibold text-white">Plugins</p>
+                    <p className="text-xs text-slate-400">Built-in plugin host support is not wired yet, so this tab stays read-only.</p>
+                  </div>
+                  {filteredPluginDefinitions.length > 0 ? (
+                    <ul className="grid gap-2">
+                      {filteredPluginDefinitions.map((plugin) => (
+                        <li key={plugin.id} className="rounded-md border border-slate-700 bg-slate-950 px-3 py-2">
+                          <p className="text-sm font-medium text-white">{plugin.name}</p>
+                          <p className="text-xs text-slate-400">
+                            {plugin.manufacturer ?? 'Unknown maker'} · {plugin.version}
+                          </p>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <div className="rounded-md border border-slate-700 bg-slate-950 px-4 py-5 text-sm text-slate-400">
+                      No plugins match the current browser search.
+                    </div>
+                  )}
+                </div>
+              ) : null}
+
+              {browserTab === 'members' ? (
+                <div className="space-y-3">
+                  <div>
+                    <p className="text-sm font-semibold text-white">Members and Presence</p>
+                    <p className="text-xs text-slate-400">Live collaborators appear here when presence is available.</p>
+                  </div>
+                  {filteredPresenceRecords.length > 0 ? (
+                    <div className="grid gap-2">
+                      {filteredPresenceRecords.map((presence) => (
+                        <div key={presence.presenceId} className="rounded-md border border-slate-700 bg-slate-950 px-3 py-2">
+                          <p className="text-sm font-medium text-white">{presence.actorUserId}</p>
+                          <p className="text-xs text-slate-400">
+                            {presence.status} · {presence.currentTool} · {presence.recordingState}
+                          </p>
+                          <p className="mt-1 text-xs text-slate-500">
+                            {presence.selectedTrackId ? `Track ${presence.selectedTrackId}` : 'No track selected'}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="rounded-md border border-slate-700 bg-slate-950 px-4 py-5 text-sm text-slate-400">
+                      No collaborators match the current browser search.
+                    </div>
+                  )}
+                </div>
+              ) : null}
+            </div>
+          </aside>
           <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-slate-700 bg-slate-950/80 shadow-sm shadow-black/20">
             <section className="flex-1 border-t-0 border-slate-800 bg-transparent p-4">
               <div className="space-y-4">
@@ -3671,100 +3872,6 @@ export function DemoDawClient({
                   </div>
                 ) : null}
 
-                {toolbarTab === 'upload' ? (
-                  <form onSubmit={onUploadTrack} className="space-y-4">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-semibold text-white">Upload</p>
-                        <p className="text-xs text-slate-400">Uploads and recordings create new assets through the signed ingest flow.</p>
-                      </div>
-                    </div>
-
-                    <div className="grid gap-3 lg:grid-cols-2">
-                      <label className="space-y-1">
-                        <span className="block text-[10px] uppercase tracking-[0.18em] text-slate-400">Track name</span>
-                        <input
-                          type="text"
-                          value={uploadName}
-                          onChange={(e) => setUploadName(e.currentTarget.value)}
-                          className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none ring-indigo-500 focus:ring"
-                          placeholder="Lead Vocal"
-                        />
-                      </label>
-                      <label className="space-y-1">
-                        <span className="block text-[10px] uppercase tracking-[0.18em] text-slate-400">Audio file</span>
-                        <input
-                          type="file"
-                          accept="audio/*"
-                          onChange={(e) => handleUploadFilePicked(e.currentTarget.files?.[0] ?? null)}
-                          className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-200 file:mr-3 file:rounded-md file:border-0 file:bg-indigo-600 file:px-3 file:py-1.5 file:text-sm file:font-semibold file:text-white hover:file:bg-indigo-500"
-                        />
-                      </label>
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-3">
-                      <button
-                        type="submit"
-                        disabled={isUploading}
-                        className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        {isUploading ? 'Uploading…' : 'Upload audio'}
-                      </button>
-                    </div>
-
-                    {processingJobIds.length > 0 ? (
-                      <div className="rounded-md border border-indigo-500/30 bg-indigo-500/10 px-3 py-2 text-xs text-indigo-100">
-                        <p className="font-medium">
-                          Processing {processingJobIds.length} job{processingJobIds.length === 1 ? '' : 's'}…
-                        </p>
-                        {processingMessage ? <p className="mt-1 text-indigo-200">{processingMessage}</p> : null}
-                        {processingElapsedSeconds !== null ? (
-                          <p className="mt-1 text-indigo-200/80">Started {processingElapsedSeconds}s ago</p>
-                        ) : null}
-                        {activeProcessingJobs.length > 0 ? (
-                          <ul className="mt-1 space-y-0.5 text-indigo-200/90">
-                            {activeProcessingJobs.map((job) => (
-                              <li key={job.id}>
-                                {job.type} · {job.status} · {job.progress}%
-                              </li>
-                            ))}
-                          </ul>
-                        ) : null}
-                      </div>
-                    ) : processingMessage ? (
-                      <p className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100">
-                        {processingMessage}
-                      </p>
-                    ) : null}
-                    {uploadError ? <p className="text-sm text-red-400">{uploadError}</p> : null}
-                  </form>
-                ) : null}
-
-                {toolbarTab === 'plugins' ? (
-                  <div className="space-y-3">
-                    <div>
-                      <p className="text-sm font-semibold text-white">Plugins</p>
-                      <p className="text-xs text-slate-400">Built-in plugin host support is not wired yet, so this tab stays read-only.</p>
-                    </div>
-                    {pluginDefinitions.length > 0 ? (
-                      <ul className="grid gap-2 md:grid-cols-2">
-                        {pluginDefinitions.map((plugin) => (
-                          <li key={plugin.id} className="rounded-md border border-slate-700 bg-slate-950 px-3 py-2">
-                            <p className="text-sm font-medium text-white">{plugin.name}</p>
-                            <p className="text-xs text-slate-400">
-                              {plugin.manufacturer ?? 'Unknown maker'} · {plugin.version}
-                            </p>
-                          </li>
-                        ))}
-                      </ul>
-                    ) : (
-                      <div className="rounded-md border border-slate-700 bg-slate-950 px-4 py-5 text-sm text-slate-400">
-                        Plugins not available yet.
-                      </div>
-                    )}
-                  </div>
-                ) : null}
-
                 {toolbarTab === 'tree' ? (
                   <div className="space-y-3 rounded-lg border border-slate-800 bg-slate-950 px-4 py-4 text-sm text-slate-300">
                     <div>
@@ -3787,94 +3894,24 @@ export function DemoDawClient({
                     </button>
                   </div>
                 ) : null}
-
-                {toolbarTab === 'comments' ? (
-                  <div className="space-y-4">
-                    <div className="space-y-2">
-                      <p className="text-sm font-semibold text-white">Comments</p>
-                      {allComments.length > 0 ? (
-                        <div className="space-y-2">
-                          {allComments.map((comment, index) => {
-                            const track = comment.trackId
-                              ? selectedTracks.find((entry) => entry.trackId === comment.trackId) ?? null
-                              : null;
-                            const timestampLabel =
-                              comment.startTimeMs != null
-                                ? selectedTiming?.tempoBpm
-                                  ? formatBarBeatLabel(comment.startTimeMs / 1000, selectedTiming) ??
-                                    formatTimeMs(comment.startTimeMs)
-                                  : formatTimeMs(comment.startTimeMs)
-                                : 'Timestamp not set';
-
-                            return (
-                              <button
-                                key={`${comment.id ?? 'comment'}:${comment.createdAt}:${index}`}
-                                type="button"
-                                onClick={() => {
-                                  if (track) {
-                                    setSelectedTrackVersionId(track.trackVersionId);
-                                  }
-                                  if (comment.startTimeMs != null) {
-                                    handleSeek(comment.startTimeMs);
-                                  }
-                                }}
-                                className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-left transition-colors hover:border-indigo-500/50 hover:bg-slate-900/70"
-                              >
-                                <div className="flex flex-wrap items-center justify-between gap-2">
-                                  <p className="text-xs font-medium text-slate-300">
-                                    {comment.author.name ?? comment.createdBy ?? 'Unknown'}
-                                  </p>
-                                  <p className="text-[10px] text-slate-500">{timestampLabel}</p>
-                                </div>
-                                <p className="mt-1 break-words text-sm text-slate-100">{comment.body}</p>
-                                <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-slate-400">
-                                  <span className="rounded bg-slate-800 px-2 py-0.5">
-                                    {track ? track.trackName : 'Project / all tracks'}
-                                  </span>
-                                  {comment.resolved ? (
-                                    <span className="rounded bg-emerald-500/20 px-2 py-0.5 text-emerald-200">
-                                      Resolved
-                                    </span>
-                                  ) : null}
-                                </div>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      ) : (
-                        <div className="rounded-md border border-slate-700 bg-slate-950 px-4 py-5 text-sm text-slate-400">
-                          No comments yet. Use Add Comment near the timeline to add one.
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ) : null}
-
-                {toolbarTab === 'members' ? (
-                  <div className="space-y-3">
-                    <div>
-                      <p className="text-sm font-semibold text-white">Members and Presence</p>
-                      <p className="text-xs text-slate-400">Live collaborators appear here when presence is available.</p>
-                    </div>
-                    {presenceRecords.length > 0 ? (
-                      <div className="grid gap-2 md:grid-cols-2">
-                        {presenceRecords.map((presence) => (
-                          <div key={presence.presenceId} className="rounded-md border border-slate-700 bg-slate-950 px-3 py-2">
-                            <p className="text-sm font-medium text-white">{presence.actorUserId}</p>
-                            <p className="text-xs text-slate-400">
-                              {presence.status} · {presence.currentTool} · {presence.recordingState}
-                            </p>
-                            <p className="mt-1 text-xs text-slate-500">
-                              {presence.selectedTrackId ? `Track ${presence.selectedTrackId}` : 'No track selected'}
-                            </p>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="rounded-md border border-slate-700 bg-slate-950 px-4 py-5 text-sm text-slate-400">
-                        No collaborators are currently visible.
-                      </div>
-                    )}
+                {toolbarTab === 'upload' || toolbarTab === 'plugins' || toolbarTab === 'members' ? (
+                  <div className="space-y-3 rounded-lg border border-slate-800 bg-slate-950 px-4 py-4 text-sm text-slate-300">
+                    <p className="text-sm font-semibold text-white">Browser rail</p>
+                    <p className="text-xs text-slate-400">
+                      This surface moved to the left browser rail. Use the browser tabs to edit upload, plugin, and member
+                      state without leaving the workspace.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (toolbarTab === 'upload' || toolbarTab === 'plugins' || toolbarTab === 'members') {
+                          setBrowserTab(toolbarTab);
+                        }
+                      }}
+                      className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-3 py-1 text-[11px] font-semibold text-cyan-200 transition-colors hover:bg-cyan-500/20 hover:text-cyan-100"
+                    >
+                      Focus browser rail
+                    </button>
                   </div>
                 ) : null}
               </section>

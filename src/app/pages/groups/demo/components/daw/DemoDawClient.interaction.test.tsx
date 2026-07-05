@@ -642,6 +642,52 @@ describe('DemoDawClient recording regression', () => {
     window.innerWidth = previousWidth;
   });
 
+  it('renders upload, plugin, and member controls in the left browser rail', async () => {
+    const initialVersion = makeVersion('version-1', ['Track 1'], {
+      isCurrent: true,
+      operationSeq: 1,
+      createdAt: '2026-07-05T00:00:00.000Z',
+      tracks: [makeTrack('Track 1', 'version-1-track-1', { trackId: 'track-1', trackPosition: 0 })],
+    });
+
+    const user = userEvent.setup();
+    render(
+      <DemoDawClient
+        groupSlug="demo-group"
+        projectSlug="demo-project"
+        projectId="project-1"
+        demoId="demo-1"
+        currentUserId="user-1"
+        demoName="Demo"
+        demoDescription={null}
+        initialCurrentVersionId={initialVersion.id}
+        initialActiveVersionId={initialVersion.id}
+        initialIsFollowingHead={true}
+        initialVersions={[initialVersion]}
+      />,
+    );
+
+    const browserRail = screen.getByTestId('browser-rail');
+    const browser = within(browserRail);
+
+    expect(browser.getByText('Browser')).toBeTruthy();
+    expect(browser.getByLabelText('Search browser')).toBeTruthy();
+    expect(browser.getByRole('button', { name: 'Upload audio' })).toBeTruthy();
+    expect(browser.getByRole('button', { name: 'Upload' })).toBeTruthy();
+    expect(browser.getByRole('button', { name: 'Plugins' })).toBeTruthy();
+    expect(browser.getByRole('button', { name: 'Members' })).toBeTruthy();
+
+    await user.click(browser.getByRole('button', { name: 'Plugins' }));
+    await waitFor(() => {
+      expect(browser.getByText('No plugins match the current browser search.')).toBeTruthy();
+    });
+
+    await user.click(browser.getByRole('button', { name: 'Members' }));
+    await waitFor(() => {
+      expect(browser.getByText('No collaborators match the current browser search.')).toBeTruthy();
+    });
+  });
+
   it('follows a collaborator-created blank-daw track without requiring refresh', async () => {
     const initialVersion = makeVersion('version-1', [], {
       isCurrent: true,
