@@ -2,6 +2,7 @@ import type { DemoAnnotation, DemoComment } from '@git-for-music/shared';
 import type {
   DawTrack,
   DawVersion,
+  HostedPluginInstanceState,
   LocalProjectState,
   ProjectOperationHistoryEntry,
   TrackTimelineSegment,
@@ -486,6 +487,28 @@ function findTrackByTrackVersionId(state: LocalProjectState, trackVersionId: str
   return null;
 }
 
+function normalizePluginPositions(plugins: HostedPluginInstanceState[]) {
+  return plugins.map((plugin, index) => ({
+    ...plugin,
+    position: index,
+  }));
+}
+
+function updateTrackPlugins(
+  tracks: DawTrack[],
+  trackVersionId: string,
+  updater: (plugins: HostedPluginInstanceState[]) => HostedPluginInstanceState[],
+) {
+  return tracks.map((track) =>
+    track.trackVersionId === trackVersionId
+      ? {
+          ...track,
+          plugins: normalizePluginPositions(updater(track.plugins)),
+        }
+      : track,
+  );
+}
+
 function appendOperationHistory(
   state: LocalProjectState,
   operation: AcceptedDawProjectOperation,
@@ -542,6 +565,60 @@ function buildOperationHistoryEntry(
         ...baseEntry,
         trackId: payload.trackId ?? payload.track?.trackId ?? null,
         summary: track ? `Created track version for ${track.trackName}` : 'Created track version',
+      };
+    }
+    case 'PLUGIN_ADDED': {
+      const payload = operation.payload as { trackVersionId: string; instanceId: string; pluginKey?: string };
+      const track = findTrackByTrackVersionId(state, payload.trackVersionId);
+      return {
+        ...baseEntry,
+        trackId: track?.trackId ?? null,
+        summary: track ? `Added plugin on ${track.trackName}` : 'Added plugin',
+      };
+    }
+    case 'PLUGIN_REMOVED': {
+      const payload = operation.payload as { trackVersionId: string; instanceId: string };
+      const track = findTrackByTrackVersionId(state, payload.trackVersionId);
+      return {
+        ...baseEntry,
+        trackId: track?.trackId ?? null,
+        summary: track ? `Removed plugin on ${track.trackName}` : 'Removed plugin',
+      };
+    }
+    case 'PLUGIN_REORDERED': {
+      const payload = operation.payload as { trackVersionId: string; instanceId: string; position: number };
+      const track = findTrackByTrackVersionId(state, payload.trackVersionId);
+      return {
+        ...baseEntry,
+        trackId: track?.trackId ?? null,
+        summary: track ? `Reordered plugins on ${track.trackName}` : 'Reordered plugins',
+      };
+    }
+    case 'PLUGIN_PARAM_SET': {
+      const payload = operation.payload as { trackVersionId: string; instanceId: string; paramId: string; value: number };
+      const track = findTrackByTrackVersionId(state, payload.trackVersionId);
+      return {
+        ...baseEntry,
+        trackId: track?.trackId ?? null,
+        summary: track ? `Adjusted plugin parameter on ${track.trackName}` : 'Adjusted plugin parameter',
+      };
+    }
+    case 'PLUGIN_BYPASS_SET': {
+      const payload = operation.payload as { trackVersionId: string; instanceId: string; bypassed: boolean };
+      const track = findTrackByTrackVersionId(state, payload.trackVersionId);
+      return {
+        ...baseEntry,
+        trackId: track?.trackId ?? null,
+        summary: track ? `Toggled plugin bypass on ${track.trackName}` : 'Toggled plugin bypass',
+      };
+    }
+    case 'PLUGIN_STATE_SET': {
+      const payload = operation.payload as { trackVersionId: string; instanceId: string };
+      const track = findTrackByTrackVersionId(state, payload.trackVersionId);
+      return {
+        ...baseEntry,
+        trackId: track?.trackId ?? null,
+        summary: track ? `Updated plugin state on ${track.trackName}` : 'Updated plugin state',
       };
     }
     case 'SEGMENT_SPLIT': {
@@ -812,6 +889,163 @@ export function applyAcceptedProjectOperation(
           tracks: applyTrackOffsetUpdate(version.tracks, payload.trackVersionId, payload.startOffsetMs),
         })),
       }, operation);
+    }
+    case 'PLUGIN_ADDED': {
+      const payload = operation.payload as HostedPluginInstanceState & { trackVersionId: string };
+      return appendOperationHistory(
+        {
+          ...state,
+          versions: state.versions.map((version) => ({
+            ...version,
+            tracks: updateTrackPlugins(version.tracks, payload.trackVersionId, (plugins) => {
+              const nextPlugin = {
+                ...payload,
+              };
+              const existingIndex = plugins.findIndex((plugin) => plugin.instanceId === payload.instanceId);
+              const nextPlugins = existingIndex === -1
+                ? [...plugins]
+                : plugins.filter((plugin) => plugin.instanceId !== payload.instanceId);
+              const insertionIndex = Math.max(0, Math.min(payload.position, nextPlugins.length));
+              nextPlugins.splice(insertionIndex, 0, nextPlugin);
+              return nextPlugins;
+            }),
+          })),
+        },
+        operation,
+      );
+    }
+    case 'PLUGIN_REMOVED': {
+      const payload = operation.payload as { trackVersionId: string; instanceId: string };
+      return appendOperationHistory(
+        {
+          ...state,
+          versions: state.versions.map((version) => ({
+            ...version,
+            tracks: updateTrackPlugins(version.tracks, payload.trackVersionId, (plugins) =>
+              plugins.filter((plugin) => plugin.instanceId !== payload.instanceId),
+            ),
+          })),
+        },
+        operation,
+      );
+    }
+    case 'PLUGIN_REORDERED': {
+      const payload = operation.payload as {
+        trackVersionId: string;
+        instanceId: string;
+        position: number;
+      };
+      return appendOperationHistory(
+        {
+          ...state,
+          versions: state.versions.map((version) => ({
+            ...version,
+            tracks: updateTrackPlugins(version.tracks, payload.trackVersionId, (plugins) => {
+              const sourceIndex = plugins.findIndex((plugin) => plugin.instanceId === payload.instanceId);
+              if (sourceIndex === -1) {
+                return plugins;
+              }
+
+              const nextPlugins = plugins.filter((plugin) => plugin.instanceId !== payload.instanceId);
+              const nextPlugin = {
+                ...plugins[sourceIndex],
+                position: payload.position,
+              };
+              const insertionIndex = Math.max(0, Math.min(payload.position, nextPlugins.length));
+              return [
+                ...nextPlugins.slice(0, insertionIndex),
+                nextPlugin,
+                ...nextPlugins.slice(insertionIndex),
+              ];
+            }),
+          })),
+        },
+        operation,
+      );
+    }
+    case 'PLUGIN_PARAM_SET': {
+      const payload = operation.payload as {
+        trackVersionId: string;
+        instanceId: string;
+        paramId: string;
+        value: number;
+      };
+      return appendOperationHistory(
+        {
+          ...state,
+          versions: state.versions.map((version) => ({
+            ...version,
+            tracks: updateTrackPlugins(version.tracks, payload.trackVersionId, (plugins) =>
+              plugins.map((plugin) =>
+                plugin.instanceId === payload.instanceId
+                  ? {
+                      ...plugin,
+                      params: {
+                        ...plugin.params,
+                        [payload.paramId]: payload.value,
+                      },
+                    }
+                  : plugin,
+              ),
+            ),
+          })),
+        },
+        operation,
+      );
+    }
+    case 'PLUGIN_BYPASS_SET': {
+      const payload = operation.payload as {
+        trackVersionId: string;
+        instanceId: string;
+        bypassed: boolean;
+      };
+      return appendOperationHistory(
+        {
+          ...state,
+          versions: state.versions.map((version) => ({
+            ...version,
+            tracks: updateTrackPlugins(version.tracks, payload.trackVersionId, (plugins) =>
+              plugins.map((plugin) =>
+                plugin.instanceId === payload.instanceId
+                  ? {
+                      ...plugin,
+                      bypassed: payload.bypassed,
+                    }
+                  : plugin,
+              ),
+            ),
+          })),
+        },
+        operation,
+      );
+    }
+    case 'PLUGIN_STATE_SET': {
+      const payload = operation.payload as {
+        trackVersionId: string;
+        instanceId: string;
+        state: unknown;
+        stateBlobKey?: string | null;
+      };
+      return appendOperationHistory(
+        {
+          ...state,
+          versions: state.versions.map((version) => ({
+            ...version,
+            tracks: updateTrackPlugins(version.tracks, payload.trackVersionId, (plugins) =>
+              plugins.map((plugin) =>
+                plugin.instanceId === payload.instanceId
+                  ? {
+                      ...plugin,
+                      state: payload.state as HostedPluginInstanceState['state'],
+                      stateBlobKey: payload.stateBlobKey ?? plugin.stateBlobKey ?? null,
+                    }
+                  : plugin,
+              ),
+            ),
+          })),
+        },
+        operation,
+      );
     }
     case 'SEGMENT_MOVED': {
       const payload = operation.payload as {

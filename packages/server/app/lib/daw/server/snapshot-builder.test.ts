@@ -945,6 +945,26 @@ test('shouldCreateAutoVersion fires for semantic boundaries', () => {
     }),
     true,
   );
+  assert.equal(
+    shouldCreateAutoVersion({
+      latestOperationType: 'PLUGIN_ADDED',
+      latestOperationCreatedAt: '2025-01-02T00:00:00.000Z',
+      latestOperationSeq: 8,
+      latestVersionOperationSeq: 5,
+      now: '2025-01-02T00:00:01.000Z',
+    }),
+    true,
+  );
+  assert.equal(
+    shouldCreateAutoVersion({
+      latestOperationType: 'PLUGIN_REMOVED',
+      latestOperationCreatedAt: '2025-01-02T00:00:00.000Z',
+      latestOperationSeq: 8,
+      latestVersionOperationSeq: 5,
+      now: '2025-01-02T00:00:01.000Z',
+    }),
+    true,
+  );
 });
 
 test('shouldCreateAutoVersion fires after the idle debounce window', () => {

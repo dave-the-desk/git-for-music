@@ -200,8 +200,9 @@
       "bases:Create new base": false
     }
   },
-  "active": "1ef58a2afad3a794",
+  "active": "0c277a4707285d99",
   "lastOpenFiles": [
+    "daily-logging/2026-07-06.md",
     "60_BRANCHES/plugins/daw-plugins-implementation-checklist.md",
     "60_BRANCHES/plugins/daw-plugins-in-this-daw.md",
     "60_BRANCHES/plugins/daw-plugins-technical-overview.md",
@@ -236,7 +237,6 @@
     "01_PROTOCOLS/non-negotiable-rules.md",
     "01_PROTOCOLS/architecture-decision-log.md",
     "01_PROTOCOLS/ai-start-here.md",
-    "01_PROTOCOLS/agent-implementation-guide.md",
-    "architecture/codebase-architecture.md"
+    "01_PROTOCOLS/agent-implementation-guide.md"
   ]
 }

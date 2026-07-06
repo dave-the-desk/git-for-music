@@ -1117,6 +1117,98 @@ test('maybeCreateAutoDemoVersionAfterAcceptedOperation creates a semantic checkp
   assert.equal((activeVersionUpsertArgs as { create?: { activeVersionId?: string } } | null)?.create?.activeVersionId, 'version-auto');
 });
 
+test('maybeCreateAutoDemoVersionAfterAcceptedOperation treats plugin adds as semantic checkpoints', async () => {
+  let createdVersionArgs: unknown = null;
+
+  const tx = {
+    demo: {
+      findFirst: async () => ({
+        id: 'demo-1',
+      }),
+    },
+    demoVersion: {
+      findFirst: async (args: { where: { id: string } }) => {
+        if (args.where.id === 'version-head') {
+          return {
+            id: 'version-head',
+            label: 'Head',
+            operationSeq: 5,
+          };
+        }
+
+        if (args.where.id === 'version-auto') {
+          return {
+            id: 'version-auto',
+            label: 'Plugin checkpoint',
+          };
+        }
+
+        return null;
+      },
+      create: async (args: { data: Record<string, unknown> }) => {
+        createdVersionArgs = args.data;
+        return {
+          id: 'version-auto',
+          label: args.data.label,
+          description: args.data.description,
+          kind: args.data.kind ?? 'EXPLICIT',
+          operationSeq: args.data.operationSeq ?? null,
+          tempoBpm: args.data.tempoBpm ?? 120,
+          timeSignatureNum: args.data.timeSignatureNum ?? 4,
+          timeSignatureDen: args.data.timeSignatureDen ?? 4,
+          musicalKey: args.data.musicalKey ?? null,
+          tempoSource: args.data.tempoSource ?? 'MANUAL',
+          keySource: args.data.keySource ?? 'MANUAL',
+          createdAt: new Date('2025-01-02T00:00:03.000Z'),
+          parentId: args.data.parentId,
+          isMerge: false,
+        };
+      },
+    },
+    projectOperationLog: {
+      findMany: async () => [
+        {
+          operationSeq: 7,
+          createdAt: '2025-01-02T00:00:02.000Z',
+          operationType: 'PLUGIN_ADDED',
+        },
+      ],
+    },
+    demoUserActiveVersion: {
+      upsert: async () => ({
+        activeVersionId: 'version-auto',
+        isFollowingHead: true,
+        activeVersion: {
+          label: 'Plugin checkpoint',
+        },
+      }),
+    },
+    trackVersion: {
+      findMany: async () => [],
+    },
+    segment: {
+      create: async () => ({ id: 'segment-auto' }),
+    },
+  } as const;
+
+  const created = await maybeCreateAutoDemoVersionAfterAcceptedOperation(tx as never, {
+    projectId: 'project-1',
+    demoId: 'demo-1',
+    userId: 'user-1',
+    sourceVersionId: 'version-head',
+    operation: {
+      type: 'PLUGIN_ADDED',
+      operationSeq: 7,
+      createdAt: '2025-01-02T00:00:02.000Z',
+    },
+    loadSourceSnapshotState: async () => null,
+  });
+
+  assert.ok(created);
+  assert.equal(created?.kind, 'SEMANTIC');
+  assert.equal((createdVersionArgs as { kind?: string } | null)?.kind, 'SEMANTIC');
+});
+
 test('maybeCreateAutoDemoVersionAfterAcceptedOperation creates exactly one checkpoint after a burst settles', async () => {
   const createdVersions: Array<{
     id: string;

@@ -135,6 +135,12 @@ export type DemoDawOperationType =
   | 'TRACK_RENAMED'
   | 'TRACK_REMOVED'
   | 'TRACK_OFFSET_UPDATED'
+  | 'PLUGIN_ADDED'
+  | 'PLUGIN_REMOVED'
+  | 'PLUGIN_REORDERED'
+  | 'PLUGIN_PARAM_SET'
+  | 'PLUGIN_BYPASS_SET'
+  | 'PLUGIN_STATE_SET'
   | 'SEGMENT_SPLIT'
   | 'SEGMENT_MOVED'
   | 'SEGMENT_DELETED'
@@ -172,6 +178,44 @@ export type DemoDawOperationPayload =
   | {
       trackVersionId: string;
       startOffsetMs: number;
+    }
+  | {
+      trackVersionId: string;
+      instanceId: string;
+      pluginKey: string;
+      version: string;
+      backend: 'wam' | 'remote';
+      position: number;
+      bypassed: boolean;
+      params: Record<string, number>;
+      state?: JsonValue;
+      stateBlobKey?: string | null;
+    }
+  | {
+      trackVersionId: string;
+      instanceId: string;
+    }
+  | {
+      trackVersionId: string;
+      instanceId: string;
+      position: number;
+    }
+  | {
+      trackVersionId: string;
+      instanceId: string;
+      paramId: string;
+      value: number;
+    }
+  | {
+      trackVersionId: string;
+      instanceId: string;
+      bypassed: boolean;
+    }
+  | {
+      trackVersionId: string;
+      instanceId: string;
+      state: JsonValue;
+      stateBlobKey?: string | null;
     }
   | {
       trackVersionId: string;
@@ -490,6 +534,8 @@ const AUTO_VERSION_SEMANTIC_OPERATION_TYPES = new Set<
 >([
   'TRACK_ADDED',
   'TRACK_REMOVED',
+  'PLUGIN_ADDED',
+  'PLUGIN_REMOVED',
   'TRACK_VERSION_CREATED',
   'SEGMENT_SPLIT',
   'SEGMENT_MERGED',

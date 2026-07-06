@@ -74,6 +74,7 @@ import { shouldShowTemporaryRecordingTrack } from '@/app/lib/daw/utils/recording
 import type {
   DawTrack,
   DawVersion,
+  HostedPluginInstanceState,
   LocalProjectState,
   TrackTimelineSegment,
 } from '@/app/lib/daw/state/local-project-state';
@@ -1863,6 +1864,15 @@ export function DemoDawClient({
         return findTrackByVersionId(
           (payload as Extract<DawCommandPayload, { trackVersionId: string }>).trackVersionId,
         )?.trackId ?? null;
+      case 'PLUGIN_ADDED':
+      case 'PLUGIN_REMOVED':
+      case 'PLUGIN_REORDERED':
+      case 'PLUGIN_PARAM_SET':
+      case 'PLUGIN_BYPASS_SET':
+      case 'PLUGIN_STATE_SET':
+        return findTrackByVersionId(
+          (payload as Extract<DawCommandPayload, { trackVersionId: string }>).trackVersionId,
+        )?.trackId ?? null;
       case 'SEGMENT_SPLIT':
         return findTrackByVersionId(
           (payload as Extract<DawCommandPayload, { trackVersionId: string }>).trackVersionId,
@@ -2335,6 +2345,37 @@ export function DemoDawClient({
       ...prev,
       [trackVersionId]: normalizedGain,
     }));
+  }
+
+  async function addPlugin(trackVersionId: string, plugin: HostedPluginInstanceState) {
+    return commitEditingOperation(audioEditingEngine.addPlugin({ trackVersionId, plugin }));
+  }
+
+  async function removePlugin(trackVersionId: string, instanceId: string) {
+    return commitEditingOperation(audioEditingEngine.removePlugin({ trackVersionId, instanceId }));
+  }
+
+  async function reorderPlugin(trackVersionId: string, instanceId: string, position: number) {
+    return commitEditingOperation(audioEditingEngine.reorderPlugin({ trackVersionId, instanceId, position }));
+  }
+
+  async function setPluginParam(trackVersionId: string, instanceId: string, paramId: string, value: number) {
+    return commitEditingOperation(audioEditingEngine.setPluginParam({ trackVersionId, instanceId, paramId, value }));
+  }
+
+  async function setPluginBypass(trackVersionId: string, instanceId: string, bypassed: boolean) {
+    return commitEditingOperation(audioEditingEngine.setPluginBypass({ trackVersionId, instanceId, bypassed }));
+  }
+
+  async function setPluginState(
+    trackVersionId: string,
+    instanceId: string,
+    state: HostedPluginInstanceState['state'],
+    stateBlobKey?: string | null,
+  ) {
+    return commitEditingOperation(
+      audioEditingEngine.setPluginState({ trackVersionId, instanceId, state, stateBlobKey }),
+    );
   }
 
   function beginTrackDrag(track: DawTrack, startX: number) {

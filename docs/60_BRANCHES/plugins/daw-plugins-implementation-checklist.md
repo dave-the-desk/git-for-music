@@ -56,32 +56,25 @@ Goal: represent an ordered insert chain per `trackVersionId` in state.
 
 Goal: plugin actions become first-class, versioned operations.
 
-- [ ] Extend the `DawOperationType` union in
-  [`command-api.ts`](../../../packages/server/app/lib/daw/protocol/command-api.ts)
-  with: `PLUGIN_ADDED`, `PLUGIN_REMOVED`, `PLUGIN_REORDERED`,
-  `PLUGIN_PARAM_SET`, `PLUGIN_BYPASS_SET`, `PLUGIN_STATE_SET`.
-- [ ] Define matching payload interfaces (each carries `trackVersionId` +
-  `instanceId`; param op carries `paramId` + normalized `value`).
-- [ ] Add reducer cases in
-  [`operation-reducer.ts`](../../../src/app/lib/daw/state/operation-reducer.ts)
-  for each op (add/remove/reorder/param/bypass/state), keeping the chain ordered
-  by `position`.
-- [ ] Mirror the same operation types in the server
+- [x] Extend the `DawOperationType` union in [`command-api.ts`](../../../packages/server/app/lib/daw/protocol/command-api.ts) with: `PLUGIN_ADDED`, `PLUGIN_REMOVED`, `PLUGIN_REORDERED`, `PLUGIN_PARAM_SET`, `PLUGIN_BYPASS_SET`, `PLUGIN_STATE_SET`.
+- [x] Define matching payload interfaces (each carries `trackVersionId` + `instanceId`; param op carries `paramId` + normalized `value`).
+- [x] Add reducer cases in [`operation-reducer.ts`](../../../src/app/lib/daw/state/operation-reducer.ts) for each op (add/remove/reorder/param/bypass/state), keeping the chain ordered by `position`.
+- [x] Mirror the same operation types in the server
   [`snapshot-builder.ts`](../../../packages/server/app/lib/daw/server/snapshot-builder.ts)
   `DemoDawOperationType` union and command-API classification sets in
   [`command-api.ts`](../../../packages/server/app/lib/daw/server/command-api.ts):
-  - [ ] Add them where timeline-edit / broadcast / auto-version behavior is
+  - [x] Add them where timeline-edit / broadcast / auto-version behavior is
     decided (decide: do plugin edits advance head, branch, or auto-version?).
     Default: treat like ordinary edits (broadcast, no forced branch), but
     `PLUGIN_ADDED`/`PLUGIN_REMOVED` may qualify for auto-versioning like
     `TRACK_ADDED`/`TRACK_REMOVED`.
-- [ ] Client emit helpers: add methods on the sync/command layer used by
+- [x] Client emit helpers: add methods on the sync/command layer used by
   `DemoDawClient` to emit each op (follow the existing pattern used for
   gain/pan/fade edits).
-- [ ] Tests:
-  - [ ] Reducer unit tests for every new op (add, param, reorder, remove,
+- [x] Tests:
+  - [x] Reducer unit tests for every new op (add, param, reorder, remove,
     bypass, state, replay determinism).
-  - [ ] Server command/classification tests (broadcast + snapshot inclusion +
+  - [x] Server command/classification tests (broadcast + snapshot inclusion +
     auto-version decision).
 
 ---

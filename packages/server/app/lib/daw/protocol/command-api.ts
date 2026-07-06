@@ -4,6 +4,12 @@ export type DawOperationType =
   | 'TRACK_RENAMED'
   | 'TRACK_REMOVED'
   | 'TRACK_OFFSET_UPDATED'
+  | 'PLUGIN_ADDED'
+  | 'PLUGIN_REMOVED'
+  | 'PLUGIN_REORDERED'
+  | 'PLUGIN_PARAM_SET'
+  | 'PLUGIN_BYPASS_SET'
+  | 'PLUGIN_STATE_SET'
   | 'SEGMENT_SPLIT'
   | 'SEGMENT_MOVED'
   | 'SEGMENT_DELETED'
@@ -59,6 +65,44 @@ export interface DawOperationPayloadTrackRemoved {
 export interface DawOperationPayloadTrackOffsetUpdated {
   trackVersionId: string;
   startOffsetMs: number;
+}
+
+export interface DawOperationPayloadPluginAdded extends HostedPluginInstanceState {
+  trackVersionId: string;
+}
+
+export interface DawOperationPayloadPluginRemoved {
+  trackVersionId: string;
+  instanceId: string;
+}
+
+export interface DawOperationPayloadPluginReordered {
+  trackVersionId: string;
+  instanceId: string;
+  position: number;
+  previousPosition?: number;
+}
+
+export interface DawOperationPayloadPluginParamSet {
+  trackVersionId: string;
+  instanceId: string;
+  paramId: string;
+  value: number;
+  previousValue?: number;
+}
+
+export interface DawOperationPayloadPluginBypassSet {
+  trackVersionId: string;
+  instanceId: string;
+  bypassed: boolean;
+  previousBypassed?: boolean;
+}
+
+export interface DawOperationPayloadPluginStateSet {
+  trackVersionId: string;
+  instanceId: string;
+  state: JsonValue;
+  stateBlobKey?: string | null;
 }
 
 export interface DawOperationPayloadSegmentSplit {
@@ -318,6 +362,12 @@ export type DawCommandPayload =
   | DawOperationPayloadTrackRenamed
   | DawOperationPayloadTrackRemoved
   | DawOperationPayloadTrackOffsetUpdated
+  | DawOperationPayloadPluginAdded
+  | DawOperationPayloadPluginRemoved
+  | DawOperationPayloadPluginReordered
+  | DawOperationPayloadPluginParamSet
+  | DawOperationPayloadPluginBypassSet
+  | DawOperationPayloadPluginStateSet
   | DawOperationPayloadSegmentSplit
   | DawOperationPayloadSegmentMoved
   | DawOperationPayloadSegmentDeleted
@@ -347,6 +397,12 @@ export type DawOperationLogPayload =
   | DawOperationPayloadTrackRenamed
   | DawOperationPayloadTrackRemoved
   | DawOperationPayloadTrackOffsetUpdated
+  | DawOperationPayloadPluginAdded
+  | DawOperationPayloadPluginRemoved
+  | DawOperationPayloadPluginReordered
+  | DawOperationPayloadPluginParamSet
+  | DawOperationPayloadPluginBypassSet
+  | DawOperationPayloadPluginStateSet
   | {
       assetId: string;
       projectId: string;
@@ -541,6 +597,36 @@ export type DawOperationCommitRequest =
       demoId: string;
       operationType: 'TRACK_OFFSET_UPDATED';
       payload: DawOperationPayloadTrackOffsetUpdated;
+    })
+  | (DawOperationCommitMetadata & {
+      demoId: string;
+      operationType: 'PLUGIN_ADDED';
+      payload: DawOperationPayloadPluginAdded;
+    })
+  | (DawOperationCommitMetadata & {
+      demoId: string;
+      operationType: 'PLUGIN_REMOVED';
+      payload: DawOperationPayloadPluginRemoved;
+    })
+  | (DawOperationCommitMetadata & {
+      demoId: string;
+      operationType: 'PLUGIN_REORDERED';
+      payload: DawOperationPayloadPluginReordered;
+    })
+  | (DawOperationCommitMetadata & {
+      demoId: string;
+      operationType: 'PLUGIN_PARAM_SET';
+      payload: DawOperationPayloadPluginParamSet;
+    })
+  | (DawOperationCommitMetadata & {
+      demoId: string;
+      operationType: 'PLUGIN_BYPASS_SET';
+      payload: DawOperationPayloadPluginBypassSet;
+    })
+  | (DawOperationCommitMetadata & {
+      demoId: string;
+      operationType: 'PLUGIN_STATE_SET';
+      payload: DawOperationPayloadPluginStateSet;
     })
   | (DawOperationCommitMetadata & {
       demoId: string;

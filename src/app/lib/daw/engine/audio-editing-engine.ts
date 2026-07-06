@@ -1,5 +1,11 @@
 import type {
   DawOperationCommitRequest,
+  DawOperationPayloadPluginAdded,
+  DawOperationPayloadPluginBypassSet,
+  DawOperationPayloadPluginParamSet,
+  DawOperationPayloadPluginRemoved,
+  DawOperationPayloadPluginReordered,
+  DawOperationPayloadPluginStateSet,
   DawOperationPayloadCrossfadeSet,
   DawOperationPayloadSegmentFadeSet,
   DawOperationPayloadSegmentDeleted,
@@ -11,7 +17,7 @@ import type {
   DawOperationPayloadTrackRemoved,
   DawSegmentSnapshot,
 } from '@git-for-music/server/app/lib/daw/protocol';
-import type { TrackTimelineSegment } from '@/app/lib/daw/state/local-project-state';
+import type { HostedPluginInstanceState, TrackTimelineSegment } from '@/app/lib/daw/state/local-project-state';
 import { MIN_SPLIT_DISTANCE_MS, splitSegment } from '@/app/lib/daw/utils/segments';
 
 type SplitSegmentLike = {
@@ -36,6 +42,8 @@ export type SplitSegmentOperation = {
     rightSegment: SplitSegmentLike;
   };
 };
+
+export type PluginOperationState = Pick<HostedPluginInstanceState, 'instanceId' | 'pluginKey' | 'version' | 'backend' | 'position' | 'bypassed' | 'params' | 'state' | 'stateBlobKey'>;
 
 export class AudioEditingEngine {
   constructor(private readonly context: AudioEditingEngineContext) {}
@@ -117,6 +125,81 @@ export class AudioEditingEngine {
       demoId: this.context.demoId,
       operationType: 'CROSSFADE_SET',
       payload: input satisfies DawOperationPayloadCrossfadeSet,
+    };
+  }
+
+  addPlugin(input: {
+    trackVersionId: string;
+    plugin: PluginOperationState;
+  }): DawOperationCommitRequest {
+    return {
+      demoId: this.context.demoId,
+      operationType: 'PLUGIN_ADDED',
+      payload: {
+        trackVersionId: input.trackVersionId,
+        ...input.plugin,
+      } satisfies DawOperationPayloadPluginAdded,
+    };
+  }
+
+  removePlugin(input: {
+    trackVersionId: string;
+    instanceId: string;
+  }): DawOperationCommitRequest {
+    return {
+      demoId: this.context.demoId,
+      operationType: 'PLUGIN_REMOVED',
+      payload: input satisfies DawOperationPayloadPluginRemoved,
+    };
+  }
+
+  reorderPlugin(input: {
+    trackVersionId: string;
+    instanceId: string;
+    position: number;
+  }): DawOperationCommitRequest {
+    return {
+      demoId: this.context.demoId,
+      operationType: 'PLUGIN_REORDERED',
+      payload: input satisfies DawOperationPayloadPluginReordered,
+    };
+  }
+
+  setPluginParam(input: {
+    trackVersionId: string;
+    instanceId: string;
+    paramId: string;
+    value: number;
+  }): DawOperationCommitRequest {
+    return {
+      demoId: this.context.demoId,
+      operationType: 'PLUGIN_PARAM_SET',
+      payload: input satisfies DawOperationPayloadPluginParamSet,
+    };
+  }
+
+  setPluginBypass(input: {
+    trackVersionId: string;
+    instanceId: string;
+    bypassed: boolean;
+  }): DawOperationCommitRequest {
+    return {
+      demoId: this.context.demoId,
+      operationType: 'PLUGIN_BYPASS_SET',
+      payload: input satisfies DawOperationPayloadPluginBypassSet,
+    };
+  }
+
+  setPluginState(input: {
+    trackVersionId: string;
+    instanceId: string;
+    state: HostedPluginInstanceState['state'];
+    stateBlobKey?: string | null;
+  }): DawOperationCommitRequest {
+    return {
+      demoId: this.context.demoId,
+      operationType: 'PLUGIN_STATE_SET',
+      payload: input satisfies DawOperationPayloadPluginStateSet,
     };
   }
 
