@@ -83,25 +83,16 @@ Goal: plugin actions become first-class, versioned operations.
 
 Goal: turn a `HostedPluginInstanceState` into a live `AudioNode` chain.
 
-- [ ] Create a `wam-host` module under
-  [`src/app/lib/daw/engine/`](../../../src/app/lib/daw/engine) (or
-  `src/app/lib/daw/plugins/`) with:
-  - [ ] `loadWamModule(pluginKey, version, descriptorUrl)` — dynamic `import()` of
-    the plugin ES module, cached per key+version (mirror the `bufferCache`
-    pattern in `playback-engine.ts`).
-  - [ ] `createInstance(audioContext, pluginKey, version)` -> `WamNode`.
-  - [ ] `applyParams(node, params)` and `applyState(node, state)`.
-  - [ ] A `WamGroup`/`WamEnv` bootstrap once per `AudioContext`.
-- [ ] Implement a `PlaybackEnginePluginGraphFactory` that, for a `trackVersionId`:
-  - [ ] reads the ordered insert chain from current project state,
-  - [ ] builds `input -> wam1 -> wam2 -> ... -> return`,
+- [x] Implement a `PlaybackEnginePluginGraphFactory` that, for a `trackVersionId`:
+  - [x] reads the ordered insert chain from current project state,
+  - [x] builds `input -> wam1 -> wam2 -> ... -> return`,
   - [ ] returns the tail node (or `input` if the chain is empty or all bypassed),
-  - [ ] respects `bypassed` (route around the node).
-- [ ] Guard rails from the overview Section 2.1 / 3.3:
-  - [ ] Instantiate/configure nodes on the main thread only — never in the render
+  - [x] respects `bypassed` (route around the node).
+- [x] Guard rails from the overview Section 2.1 / 3.3:
+  - [x] Instantiate/configure nodes on the main thread only — never in the render
     callback.
-  - [ ] Pre-resolve module imports before building the graph.
-- [ ] Tests: unit-test the factory's chain-building with a mocked WAM node
+  - [x] Pre-resolve module imports before building the graph.
+- [x] Tests: unit-test the factory's chain-building with a mocked WAM node
   (ordering, bypass, empty chain returns input unchanged).
 
 ---
@@ -110,21 +101,21 @@ Goal: turn a `HostedPluginInstanceState` into a live `AudioNode` chain.
 
 Goal: connect the adapter to the running engine and keep it in sync.
 
-- [ ] Pass the factory when constructing the engine in
+- [x] Pass the factory when constructing the engine in
   [`DemoDawClient.tsx`](../../../src/app/pages/groups/demo/components/daw/DemoDawClient.tsx):
   `new AudioPlaybackEngine({ pluginGraphFactory })`.
-- [ ] Add engine methods to react to chain changes without a full restart where
+- [x] Add engine methods to react to chain changes without a full restart where
   possible:
-  - [ ] `rebuildTrackPluginChain(trackVersionId)` — tear down + rebuild that
+  - [x] `rebuildTrackPluginChain(trackVersionId)` — tear down + rebuild that
     track's bus (chain add/remove/reorder).
-  - [ ] `setPluginParam(trackVersionId, instanceId, paramId, value)` — live knob
+  - [x] `setPluginParam(trackVersionId, instanceId, paramId, value)` — live knob
     update via `WamNode.setParameterValues` (no graph rebuild).
-  - [ ] `setPluginBypass(...)`.
-- [ ] Ensure `setProject` diffs plugin chains and applies the minimal update
+  - [x] `setPluginBypass(...)`.
+- [x] Ensure `setProject` diffs plugin chains and applies the minimal update
   (param-only changes must not glitch playback by rebuilding the graph).
-- [ ] Handle disposal: disconnect/`destroy` WAM nodes in `dispose()` and when a
+- [x] Handle disposal: disconnect/`destroy` WAM nodes in `dispose()` and when a
   track bus is removed.
-- [ ] Tests: engine tests asserting param updates don't rebuild the graph, and
+- [x] Tests: engine tests asserting param updates don't rebuild the graph, and
   chain edits do.
 
 ---

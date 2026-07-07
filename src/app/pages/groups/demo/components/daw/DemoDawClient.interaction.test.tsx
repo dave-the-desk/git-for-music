@@ -84,6 +84,10 @@ const mockIngest = vi.hoisted(() => ({
   lastUploadAudioFileSourceVersionId: null as string | null,
 }));
 
+const mockPlaybackEngine = vi.hoisted(() => ({
+  lastConstructorOptions: null as { pluginGraphFactory?: unknown } | null,
+}));
+
 const mockPendingActiveVersionUpdates = vi.hoisted(() => ({
   pending: [] as Array<{
     activeVersionId: string;
@@ -350,8 +354,14 @@ vi.mock('@/app/lib/daw/engine/audio-editing-engine', () => ({
 vi.mock('@/app/lib/daw/engine/playback-engine', () => ({
   AudioPlaybackEngine: class AudioPlaybackEngineMock {
     private currentTimeMs = 0;
+    constructor(options?: { pluginGraphFactory?: unknown }) {
+      mockPlaybackEngine.lastConstructorOptions = options ?? null;
+    }
     setProject() {}
     preloadTracks() {}
+    rebuildTrackPluginChain() {}
+    setPluginParam() {}
+    setPluginBypass() {}
     play() {
       return Promise.resolve();
     }
@@ -561,6 +571,7 @@ describe('DemoDawClient recording regression', () => {
     mockIngest.objectUrlCount = 0;
     mockIngest.revokeObjectUrl.mockReset();
     mockIngest.lastUploadAudioFileSourceVersionId = null;
+    mockPlaybackEngine.lastConstructorOptions = null;
     mockPendingActiveVersionUpdates.pending = [];
     mockRecordingSave.deferred = createDeferred();
     mockProjectSync.reset();
@@ -614,6 +625,7 @@ describe('DemoDawClient recording regression', () => {
     expect(screen.getByTestId('audio-input-selector')).toBeTruthy();
     expect(screen.getByTestId('version-tree-rail')).toBeTruthy();
     expect(screen.getByTestId('version-history-tree')).toBeTruthy();
+    expect(mockPlaybackEngine.lastConstructorOptions?.pluginGraphFactory).toEqual(expect.any(Function));
 
     await user.click((await screen.findAllByRole('button', { name: 'Enable mock mic' }))[0]);
     await user.click(await screen.findByRole('button', { name: 'Start mock recording' }));

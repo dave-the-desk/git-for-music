@@ -17,6 +17,14 @@ This note covers the DAW editor feature across the browser app and server packag
 - `src/app/lib/daw/utils/` contains pure timing and segment helpers.
 - `src/app/lib/daw/rendering/` contains rendering helpers.
 
+### Plugin Host Status
+
+- `src/app/lib/daw/engine/wam-host.ts` now owns the browser-side WAM host seam: `loadWamModule(...)` caches dynamic ES-module imports by `pluginKey` + `version`, `createInstance(...)` bootstraps one `WamEnv`/`WamGroup` per `AudioContext`, and `applyParams(...)` / `applyState(...)` configure live nodes on the main thread.
+- The host layer now fails fast if it is touched from an `AudioWorklet` render context, and it requires module imports to be pre-resolved before graph construction.
+- `createWamPlaybackPluginGraphFactory(...)` builds ordered insert chains from track plugin state, skips bypassed instances, and returns the input node unchanged when no live plugins are present.
+- Coverage lives in `src/app/lib/daw/engine/wam-host.test.ts` for module caching, per-context bootstrap reuse, guard rails, and chain-building behavior.
+- The remaining wiring step is to pass the factory into `new AudioPlaybackEngine({ pluginGraphFactory })` and feed it the current track plugin chain from live project state.
+
 ## Server Side
 
 - `packages/server/app/lib/daw/protocol/` defines shared command and event contracts.

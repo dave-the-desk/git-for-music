@@ -52,6 +52,9 @@ src/app/lib/daw/engine/audio-editing-engine.ts
 src/app/lib/daw/engine/daw-local-cache.ts
 src/app/lib/daw/engine/ingest-engine.ts
 src/app/lib/daw/engine/playback-engine.ts
+src/app/lib/daw/engine/playback-engine.test.ts
+src/app/lib/daw/engine/wam-host.test.ts
+src/app/lib/daw/engine/wam-host.ts
 src/app/lib/daw/engine/project-sync-engine.test.ts
 src/app/lib/daw/engine/project-sync-engine.ts
 src/app/lib/daw/engine/waveform-cache.ts

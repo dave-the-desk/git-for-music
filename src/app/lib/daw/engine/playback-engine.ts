@@ -1,6 +1,11 @@
 import { EMPTY_TRACK_MIME_TYPE, buildRenderableTrackSegments } from '@/app/lib/daw/utils/segments';
 import { DEFAULT_DEMO_TEMPO_BPM, normalizeTempoBpm } from '@/app/lib/daw/utils/timing';
-import type { DawTrack, TrackTimelineSegment } from '@/app/lib/daw/state/local-project-state';
+import type {
+  DawTrack,
+  HostedPluginInstanceState,
+  TrackTimelineSegment,
+} from '@/app/lib/daw/state/local-project-state';
+import type { PlaybackPluginGraph, WamNode } from '@/app/lib/daw/engine/wam-host';
 
 type TrackMixState = {
   muted: boolean;
@@ -21,6 +26,7 @@ type PlaybackProjectTrack = Pick<
   | 'segments'
   | 'recordedTempoBpm'
   | 'sourceTempoBpm'
+  | 'plugins'
 > & {
   isMuted?: boolean;
 };
@@ -39,13 +45,20 @@ export type PlaybackEnginePluginGraphFactory = (
   trackVersionId: string,
   inputNode: AudioNode,
   audioContext: AudioContext,
-) => AudioNode;
+) => PlaybackPluginGraph;
 
 type TrackBus = {
   input: GainNode;
   gain: GainNode;
   pan: StereoPannerNode;
+  pluginGraph: PlaybackPluginGraph | null;
+  appliedPluginSnapshot: TrackPluginSnapshotEntry[];
 };
+
+type TrackPluginSnapshotEntry = Pick<
+  HostedPluginInstanceState,
+  'instanceId' | 'pluginKey' | 'version' | 'position' | 'bypassed' | 'params' | 'state'
+>;
 
 type ScheduledSource = {
   source: AudioBufferSourceNode;
@@ -126,20 +139,104 @@ export class AudioPlaybackEngine {
 
     const audioContext = this.ensureAudioContext();
     const input = audioContext.createGain();
-    const pluginOutput = this.pluginGraphFactory
+    const pluginGraph = this.pluginGraphFactory
       ? this.pluginGraphFactory(trackVersionId, input, audioContext)
-      : input;
+      : { outputNode: input, nodesByInstanceId: new Map<string, WamNode>(), teardown: () => {} };
     const gain = audioContext.createGain();
     const pan = audioContext.createStereoPanner();
 
-    pluginOutput.connect(gain);
+    pluginGraph.outputNode.connect(gain);
     gain.connect(pan);
     pan.connect(this.getMasterGain());
 
-    const bus: TrackBus = { input, gain, pan };
+    const bus: TrackBus = { input, gain, pan, pluginGraph, appliedPluginSnapshot: [] };
     this.trackBuses.set(trackVersionId, bus);
     this.applyTrackMix(trackVersionId);
     return bus;
+  }
+
+  private getTrackPluginGraph(trackVersionId: string) {
+    const bus = this.trackBuses.get(trackVersionId);
+    return bus?.pluginGraph ?? null;
+  }
+
+  private getTrackPlugins(trackVersionId: string) {
+    const track = this.project?.tracks.find((candidate) => candidate.trackVersionId === trackVersionId);
+    return track?.plugins ?? [];
+  }
+
+  private snapshotTrackPlugins(trackVersionId: string) {
+    return this.getTrackPlugins(trackVersionId)
+      .slice()
+      .sort((left, right) => {
+        const byPosition = left.position - right.position;
+        if (byPosition !== 0) return byPosition;
+        return left.instanceId.localeCompare(right.instanceId);
+      })
+      .map((plugin) => ({
+        instanceId: plugin.instanceId,
+        pluginKey: plugin.pluginKey,
+        version: plugin.version,
+        position: plugin.position,
+        bypassed: plugin.bypassed,
+        params: { ...plugin.params },
+        state:
+          plugin.state && typeof plugin.state === 'object' && !Array.isArray(plugin.state)
+            ? structuredClone(plugin.state)
+            : plugin.state,
+      }));
+  }
+
+  private rebuildTrackPluginChainInternal(trackVersionId: string) {
+    const bus = this.trackBuses.get(trackVersionId);
+    if (!bus) return;
+
+    const track = this.project?.tracks.find((candidate) => candidate.trackVersionId === trackVersionId);
+    if (!track) {
+      this.teardownTrackBus(trackVersionId);
+      return;
+    }
+
+    try {
+      bus.pluginGraph?.teardown();
+    } catch {
+      // Best effort teardown when replacing a live graph.
+    }
+
+    const audioContext = this.ensureAudioContext();
+    const nextPluginGraph = this.pluginGraphFactory
+      ? this.pluginGraphFactory(trackVersionId, bus.input, audioContext)
+      : { outputNode: bus.input, nodesByInstanceId: new Map<string, WamNode>(), teardown: () => {} };
+
+    nextPluginGraph.outputNode.connect(bus.gain);
+    bus.pluginGraph = nextPluginGraph;
+    bus.appliedPluginSnapshot = this.snapshotTrackPlugins(trackVersionId);
+    this.applyTrackMix(trackVersionId);
+  }
+
+  private teardownTrackBus(trackVersionId: string) {
+    const bus = this.trackBuses.get(trackVersionId);
+    if (!bus) return;
+
+    try {
+      bus.pluginGraph?.teardown();
+    } catch {
+      // Best effort teardown when removing a track bus.
+    }
+
+    try {
+      bus.gain.disconnect();
+    } catch {
+      // Ignore disconnect failures on torn-down buses.
+    }
+
+    try {
+      bus.pan.disconnect();
+    } catch {
+      // Ignore disconnect failures on torn-down buses.
+    }
+
+    this.trackBuses.delete(trackVersionId);
   }
 
   private applyTrackMix(trackVersionId: string) {
@@ -220,13 +317,59 @@ export class AudioPlaybackEngine {
         gain: project.gainByTrackVersionId?.[track.trackVersionId] ?? currentMix?.gain ?? DEFAULT_GAIN,
         pan: project.panByTrackVersionId?.[track.trackVersionId] ?? currentMix?.pan ?? DEFAULT_PAN,
       });
-      this.ensureTrackBus(track.trackVersionId);
+      const existingBus = this.trackBuses.get(track.trackVersionId);
+      if (!existingBus) {
+        const bus = this.ensureTrackBus(track.trackVersionId);
+        bus.appliedPluginSnapshot = this.snapshotTrackPlugins(track.trackVersionId);
+        continue;
+      }
+
+      const nextSnapshot = this.snapshotTrackPlugins(track.trackVersionId);
+      const previousSnapshot = existingBus.appliedPluginSnapshot;
+      const nextStructure = JSON.stringify(
+        nextSnapshot.map(({ instanceId, pluginKey, version, position, bypassed }) => ({
+          instanceId,
+          pluginKey,
+          version,
+          position,
+          bypassed,
+        })),
+      );
+      const previousStructure = JSON.stringify(
+        previousSnapshot.map(({ instanceId, pluginKey, version, position, bypassed }) => ({
+          instanceId,
+          pluginKey,
+          version,
+          position,
+          bypassed,
+        })),
+      );
+
+      if (existingBus.pluginGraph === null || nextStructure !== previousStructure) {
+        this.rebuildTrackPluginChainInternal(track.trackVersionId);
+      } else {
+        for (const plugin of nextSnapshot) {
+          const node = existingBus.pluginGraph.nodesByInstanceId.get(plugin.instanceId);
+          if (!node) continue;
+
+          for (const [paramId, value] of Object.entries(plugin.params)) {
+            node.setParameterValues?.({ [paramId]: value });
+          }
+
+          if (plugin.state !== undefined) {
+            node.setState?.(plugin.state);
+            node.applyState?.(plugin.state);
+          }
+        }
+      }
+
+      existingBus.appliedPluginSnapshot = nextSnapshot;
     }
 
     for (const trackVersionId of [...this.trackMixByTrackVersionId.keys()]) {
       if (!project.tracks.some((track) => track.trackVersionId === trackVersionId)) {
         this.trackMixByTrackVersionId.delete(trackVersionId);
-        this.trackBuses.delete(trackVersionId);
+        this.teardownTrackBus(trackVersionId);
       }
     }
 
@@ -277,6 +420,26 @@ export class AudioPlaybackEngine {
     this.applyTrackMix(trackVersionId);
   }
 
+  rebuildTrackPluginChain(trackVersionId: string) {
+    if (!this.project) return;
+    this.rebuildTrackPluginChainInternal(trackVersionId);
+  }
+
+  setPluginParam(trackVersionId: string, instanceId: string, paramId: string, value: number) {
+    const pluginGraph = this.getTrackPluginGraph(trackVersionId);
+    const node = pluginGraph?.nodesByInstanceId.get(instanceId);
+    if (!node) return;
+
+    node.setParameterValues?.({ [paramId]: value });
+  }
+
+  setPluginBypass(trackVersionId: string, instanceId: string, bypassed: boolean) {
+    const track = this.getTrackPlugins(trackVersionId).find((plugin) => plugin.instanceId === instanceId);
+    if (!track || track.bypassed === bypassed) return;
+
+    this.rebuildTrackPluginChainInternal(trackVersionId);
+  }
+
   async play(timeMs?: number) {
     if (!this.project) return;
 
@@ -322,8 +485,10 @@ export class AudioPlaybackEngine {
 
   dispose() {
     this.stopScheduledSources();
+    for (const trackVersionId of [...this.trackBuses.keys()]) {
+      this.teardownTrackBus(trackVersionId);
+    }
     this.project = null;
-    this.trackBuses.clear();
     this.trackMixByTrackVersionId.clear();
     this.bufferCache.clear();
     if (this.audioContext) {

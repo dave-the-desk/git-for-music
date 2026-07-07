@@ -32,6 +32,7 @@ import { AudioEditingEngine } from '@/app/lib/daw/engine/audio-editing-engine';
 import { AudioIngestEngine } from '@/app/lib/daw/engine/ingest-engine';
 import { ProjectSyncEngine } from '@/app/lib/daw/engine/project-sync-engine';
 import { AudioPlaybackEngine } from '@/app/lib/daw/engine/playback-engine';
+import { createWamPlaybackPluginGraphFactory } from '@/app/lib/daw/engine/wam-host';
 import {
   buildDawVisualProjection,
   PX_PER_SECOND,
@@ -324,6 +325,7 @@ export function DemoDawClient({
   const isLiveRecordingRef = useRef(false);
   const recordingSessionRef = useRef<RecordingSession | null>(null);
   const recordingControlsRef = useRef<RecordingControlsHandle | null>(null);
+  const selectedTracksRef = useRef<DawTrack[]>([]);
   const topShellRef = useRef<HTMLDivElement | null>(null);
   const toolsStickySentinelRef = useRef<HTMLDivElement | null>(null);
   const toolsBarRef = useRef<HTMLDivElement | null>(null);
@@ -498,7 +500,15 @@ export function DemoDawClient({
 
   const audioEditingEngine = useMemo(() => new AudioEditingEngine({ demoId }), [demoId]);
   const ingestEngine = useMemo(() => new AudioIngestEngine(), []);
-  const playbackEngine = useMemo(() => new AudioPlaybackEngine(), []);
+  const pluginGraphFactory = useMemo(
+    () =>
+      createWamPlaybackPluginGraphFactory({
+        getTrackPlugins: (trackVersionId) =>
+          selectedTracksRef.current.find((track) => track.trackVersionId === trackVersionId)?.plugins ?? [],
+      }),
+    [],
+  );
+  const playbackEngine = useMemo(() => new AudioPlaybackEngine({ pluginGraphFactory }), [pluginGraphFactory]);
   const projectSyncEngine = useMemo(() => new ProjectSyncEngine(), []);
   const [projectSyncState, setProjectSyncState] = useState(() => projectSyncEngine.getState());
   const liveProjectState = projectSyncState.projectState;
@@ -542,6 +552,9 @@ export function DemoDawClient({
     () => selectedTracks.find((track) => track.trackVersionId === selectedTrackVersionId) ?? selectedTracks[0] ?? null,
     [selectedTrackVersionId, selectedTracks],
   );
+  useEffect(() => {
+    selectedTracksRef.current = selectedTracks;
+  }, [selectedTracks]);
   useEffect(() => {
     if (recordArmedTrackVersionId && selectedTracks.some((track) => track.trackVersionId === recordArmedTrackVersionId)) {
       recordArmInitializedRef.current = true;
@@ -2348,23 +2361,33 @@ export function DemoDawClient({
   }
 
   async function addPlugin(trackVersionId: string, plugin: HostedPluginInstanceState) {
-    return commitEditingOperation(audioEditingEngine.addPlugin({ trackVersionId, plugin }));
+    const result = await commitEditingOperation(audioEditingEngine.addPlugin({ trackVersionId, plugin }));
+    playbackEngine.rebuildTrackPluginChain(trackVersionId);
+    return result;
   }
 
   async function removePlugin(trackVersionId: string, instanceId: string) {
-    return commitEditingOperation(audioEditingEngine.removePlugin({ trackVersionId, instanceId }));
+    const result = await commitEditingOperation(audioEditingEngine.removePlugin({ trackVersionId, instanceId }));
+    playbackEngine.rebuildTrackPluginChain(trackVersionId);
+    return result;
   }
 
   async function reorderPlugin(trackVersionId: string, instanceId: string, position: number) {
-    return commitEditingOperation(audioEditingEngine.reorderPlugin({ trackVersionId, instanceId, position }));
+    const result = await commitEditingOperation(audioEditingEngine.reorderPlugin({ trackVersionId, instanceId, position }));
+    playbackEngine.rebuildTrackPluginChain(trackVersionId);
+    return result;
   }
 
   async function setPluginParam(trackVersionId: string, instanceId: string, paramId: string, value: number) {
-    return commitEditingOperation(audioEditingEngine.setPluginParam({ trackVersionId, instanceId, paramId, value }));
+    const result = await commitEditingOperation(audioEditingEngine.setPluginParam({ trackVersionId, instanceId, paramId, value }));
+    playbackEngine.setPluginParam(trackVersionId, instanceId, paramId, value);
+    return result;
   }
 
   async function setPluginBypass(trackVersionId: string, instanceId: string, bypassed: boolean) {
-    return commitEditingOperation(audioEditingEngine.setPluginBypass({ trackVersionId, instanceId, bypassed }));
+    const result = await commitEditingOperation(audioEditingEngine.setPluginBypass({ trackVersionId, instanceId, bypassed }));
+    playbackEngine.setPluginBypass(trackVersionId, instanceId, bypassed);
+    return result;
   }
 
   async function setPluginState(
