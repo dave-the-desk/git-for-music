@@ -19,6 +19,7 @@ import type {
 } from '@git-for-music/server/app/lib/daw/protocol';
 import type { HostedPluginInstanceState, TrackTimelineSegment } from '@/app/lib/daw/state/local-project-state';
 import { MIN_SPLIT_DISTANCE_MS, splitSegment } from '@/app/lib/daw/utils/segments';
+import { assertJsonValue } from '@/app/lib/daw/utils/json';
 
 type SplitSegmentLike = {
   startMs: number;
@@ -193,9 +194,10 @@ export class AudioEditingEngine {
   setPluginState(input: {
     trackVersionId: string;
     instanceId: string;
-    state: HostedPluginInstanceState['state'];
+    state: unknown;
     stateBlobKey?: string | null;
   }): DawOperationCommitRequest {
+    assertJsonValue(input.state, 'plugin state');
     return {
       demoId: this.context.demoId,
       operationType: 'PLUGIN_STATE_SET',

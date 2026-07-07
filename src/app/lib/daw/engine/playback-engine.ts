@@ -53,6 +53,7 @@ type TrackBus = {
   pan: StereoPannerNode;
   pluginGraph: PlaybackPluginGraph | null;
   appliedPluginSnapshot: TrackPluginSnapshotEntry[];
+  latencyByInstanceId: Map<string, number>;
 };
 
 type TrackPluginSnapshotEntry = Pick<
@@ -141,7 +142,13 @@ export class AudioPlaybackEngine {
     const input = audioContext.createGain();
     const pluginGraph = this.pluginGraphFactory
       ? this.pluginGraphFactory(trackVersionId, input, audioContext)
-      : { outputNode: input, nodesByInstanceId: new Map<string, WamNode>(), teardown: () => {} };
+      : {
+          outputNode: input,
+          nodesByInstanceId: new Map<string, WamNode>(),
+          latencyByInstanceId: new Map<string, number>(),
+          issues: [],
+          teardown: () => {},
+        };
     const gain = audioContext.createGain();
     const pan = audioContext.createStereoPanner();
 
@@ -149,7 +156,14 @@ export class AudioPlaybackEngine {
     gain.connect(pan);
     pan.connect(this.getMasterGain());
 
-    const bus: TrackBus = { input, gain, pan, pluginGraph, appliedPluginSnapshot: [] };
+    const bus: TrackBus = {
+      input,
+      gain,
+      pan,
+      pluginGraph,
+      appliedPluginSnapshot: [],
+      latencyByInstanceId: new Map(),
+    };
     this.trackBuses.set(trackVersionId, bus);
     this.applyTrackMix(trackVersionId);
     return bus;
@@ -206,10 +220,17 @@ export class AudioPlaybackEngine {
     const audioContext = this.ensureAudioContext();
     const nextPluginGraph = this.pluginGraphFactory
       ? this.pluginGraphFactory(trackVersionId, bus.input, audioContext)
-      : { outputNode: bus.input, nodesByInstanceId: new Map<string, WamNode>(), teardown: () => {} };
+      : {
+          outputNode: bus.input,
+          nodesByInstanceId: new Map<string, WamNode>(),
+          latencyByInstanceId: new Map<string, number>(),
+          issues: [],
+          teardown: () => {},
+        };
 
     nextPluginGraph.outputNode.connect(bus.gain);
     bus.pluginGraph = nextPluginGraph;
+    bus.latencyByInstanceId = new Map(nextPluginGraph.latencyByInstanceId ?? []);
     bus.appliedPluginSnapshot = this.snapshotTrackPlugins(trackVersionId);
     this.applyTrackMix(trackVersionId);
   }
@@ -321,6 +342,7 @@ export class AudioPlaybackEngine {
       if (!existingBus) {
         const bus = this.ensureTrackBus(track.trackVersionId);
         bus.appliedPluginSnapshot = this.snapshotTrackPlugins(track.trackVersionId);
+        bus.latencyByInstanceId = new Map(bus.pluginGraph?.latencyByInstanceId ?? []);
         continue;
       }
 
@@ -364,6 +386,7 @@ export class AudioPlaybackEngine {
       }
 
       existingBus.appliedPluginSnapshot = nextSnapshot;
+      existingBus.latencyByInstanceId = new Map(existingBus.pluginGraph?.latencyByInstanceId ?? []);
     }
 
     for (const trackVersionId of [...this.trackMixByTrackVersionId.keys()]) {
@@ -423,6 +446,13 @@ export class AudioPlaybackEngine {
   rebuildTrackPluginChain(trackVersionId: string) {
     if (!this.project) return;
     this.rebuildTrackPluginChainInternal(trackVersionId);
+  }
+
+  /**
+   * Latency is captured for diagnostics only; the playback engine does not yet compensate it.
+   */
+  getPluginLatencyMs(trackVersionId: string, instanceId: string) {
+    return this.trackBuses.get(trackVersionId)?.latencyByInstanceId.get(instanceId) ?? null;
   }
 
   setPluginParam(trackVersionId: string, instanceId: string, paramId: string, value: number) {

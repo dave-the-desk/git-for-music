@@ -253,3 +253,258 @@ test('createWamPlaybackPluginGraphFactory returns input unchanged for an empty c
   assert.equal(graph.outputNode, inputNode);
   assert.equal(graph.nodesByInstanceId.size, 0);
 });
+
+test('createWamPlaybackPluginGraphFactory captures plugin latency and warns on heavy chains', async () => {
+  const trackVersionId = `track-version-${crypto.randomUUID()}`;
+  const key = `com.example.latency-${crypto.randomUUID()}`;
+  await loadWamModule(
+    key,
+    '1.0.0',
+    dataModule(`
+      export function createInstance() {
+        return {
+          id: 'latency-node',
+          latencyMs: 48,
+          connect(target) {
+            return target;
+          },
+          disconnect() {
+            return undefined;
+          },
+        };
+      }
+    `),
+  );
+
+  const graph = createWamPlaybackPluginGraphFactory({
+    getTrackPlugins: () => [
+      {
+        instanceId: 'plugin-1',
+        pluginKey: key,
+        version: '1.0.0',
+        position: 0,
+        bypassed: false,
+        params: {},
+        state: undefined,
+      },
+      {
+        instanceId: 'plugin-2',
+        pluginKey: key,
+        version: '1.0.0',
+        position: 1,
+        bypassed: false,
+        params: {},
+        state: undefined,
+      },
+      {
+        instanceId: 'plugin-3',
+        pluginKey: key,
+        version: '1.0.0',
+        position: 2,
+        bypassed: false,
+        params: {},
+        state: undefined,
+      },
+      {
+        instanceId: 'plugin-4',
+        pluginKey: key,
+        version: '1.0.0',
+        position: 3,
+        bypassed: false,
+        params: {},
+        state: undefined,
+      },
+      {
+        instanceId: 'plugin-5',
+        pluginKey: key,
+        version: '1.0.0',
+        position: 4,
+        bypassed: false,
+        params: {},
+        state: undefined,
+      },
+      {
+        instanceId: 'plugin-6',
+        pluginKey: key,
+        version: '1.0.0',
+        position: 5,
+        bypassed: false,
+        params: {},
+        state: undefined,
+      },
+      {
+        instanceId: 'plugin-7',
+        pluginKey: key,
+        version: '1.0.0',
+        position: 6,
+        bypassed: false,
+        params: {},
+        state: undefined,
+      },
+      {
+        instanceId: 'plugin-8',
+        pluginKey: key,
+        version: '1.0.0',
+        position: 7,
+        bypassed: false,
+        params: {},
+        state: undefined,
+      },
+    ],
+  })(trackVersionId, {
+    id: 'input',
+    connect(target: { id?: string }) {
+      return target;
+    },
+    disconnect() {
+      return undefined;
+    },
+  } as unknown as AudioNode, {} as AudioContext);
+
+  assert.equal(graph.latencyByInstanceId.get('plugin-1'), 48);
+  assert.equal(graph.issues.length >= 1, true);
+  assert.equal(graph.issues[0]?.severity, 'warning');
+});
+
+test('createWamPlaybackPluginGraphFactory skips a plugin that fails to load and keeps playback flowing', async () => {
+  const trackVersionId = `track-version-${crypto.randomUUID()}`;
+  const okKey = `com.example.ok-${crypto.randomUUID()}`;
+  const badKey = `com.example.bad-${crypto.randomUUID()}`;
+  const connectionLog: Array<{ from: string; to: string }> = [];
+
+  await loadWamModule(
+    okKey,
+    '1.0.0',
+    dataModule(`
+      export function createInstance() {
+        return {
+          id: 'ok-node',
+          connect(target) {
+            globalThis.__wamFallbackLog = globalThis.__wamFallbackLog ?? [];
+            globalThis.__wamFallbackLog.push({ from: 'ok-node', to: target.id ?? 'unknown' });
+            return target;
+          },
+          disconnect() {
+            return undefined;
+          },
+        };
+      }
+    `),
+  );
+  await loadWamModule(
+    badKey,
+    '1.0.0',
+    dataModule(`
+      export function createInstance() {
+        throw new Error('module exploded');
+      }
+    `),
+  );
+
+  (globalThis as Record<string, unknown>).__wamFallbackLog = connectionLog;
+
+  const graph = createWamPlaybackPluginGraphFactory({
+    getTrackPlugins: () => [
+      {
+        instanceId: 'plugin-ok',
+        pluginKey: okKey,
+        version: '1.0.0',
+        position: 0,
+        bypassed: false,
+        params: {},
+        state: undefined,
+      },
+      {
+        instanceId: 'plugin-bad',
+        pluginKey: badKey,
+        version: '1.0.0',
+        position: 1,
+        bypassed: false,
+        params: {},
+        state: undefined,
+      },
+      {
+        instanceId: 'plugin-ok-2',
+        pluginKey: okKey,
+        version: '1.0.0',
+        position: 2,
+        bypassed: false,
+        params: {},
+        state: undefined,
+      },
+    ],
+  })(
+    trackVersionId,
+    {
+      id: 'input',
+      connect(target: { id?: string }) {
+        connectionLog.push({ from: 'input', to: target.id ?? 'unknown' });
+        return target;
+      },
+      disconnect() {
+        return undefined;
+      },
+    } as unknown as AudioNode,
+    {} as AudioContext,
+  );
+
+  assert.equal((graph.outputNode as { id?: string }).id, 'ok-node');
+  assert.deepEqual(connectionLog, [
+    { from: 'input', to: 'ok-node' },
+    { from: 'ok-node', to: 'ok-node' },
+  ]);
+  assert.equal(graph.nodesByInstanceId.size, 2);
+  assert.equal(graph.issues.some((issue) => issue.severity === 'error'), true);
+});
+
+test('createWamPlaybackPluginGraphFactory caps oversized chains', async () => {
+  const trackVersionId = `track-version-${crypto.randomUUID()}`;
+  const key = `com.example.cap-${crypto.randomUUID()}`;
+
+  await loadWamModule(
+    key,
+    '1.0.0',
+    dataModule(`
+      export function createInstance() {
+        return {
+          id: 'cap-node',
+          connect(target) {
+            return target;
+          },
+          disconnect() {
+            return undefined;
+          },
+        };
+      }
+    `),
+  );
+
+  const plugins = Array.from({ length: 20 }, (_, index) => ({
+    instanceId: `plugin-${index}`,
+    pluginKey: key,
+    version: '1.0.0',
+    position: index,
+    bypassed: false,
+    params: {},
+    state: undefined,
+  }));
+
+  const graph = createWamPlaybackPluginGraphFactory({
+    getTrackPlugins: () => plugins,
+  })(
+    trackVersionId,
+    {
+      id: 'input',
+      connect(target: { id?: string }) {
+        return target;
+      },
+      disconnect() {
+        return undefined;
+      },
+    } as unknown as AudioNode,
+    {} as AudioContext,
+  );
+
+  assert.equal(graph.nodesByInstanceId.size, 16);
+  assert.equal(graph.issues.some((issue) => issue.message.includes('maximum supported length')), true);
+});

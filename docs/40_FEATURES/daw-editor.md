@@ -23,7 +23,17 @@ This note covers the DAW editor feature across the browser app and server packag
 - The host layer now fails fast if it is touched from an `AudioWorklet` render context, and it requires module imports to be pre-resolved before graph construction.
 - `createWamPlaybackPluginGraphFactory(...)` builds ordered insert chains from track plugin state, skips bypassed instances, and returns the input node unchanged when no live plugins are present.
 - Coverage lives in `src/app/lib/daw/engine/wam-host.test.ts` for module caching, per-context bootstrap reuse, guard rails, and chain-building behavior.
-- The remaining wiring step is to pass the factory into `new AudioPlaybackEngine({ pluginGraphFactory })` and feed it the current track plugin chain from live project state.
+- `AudioPlaybackEngine` now accepts the factory, diffs plugin-chain structure inside `setProject()`, reapplies param/state-only changes without rebuilding the graph, and exposes `rebuildTrackPluginChain(...)`, `setPluginParam(...)`, and `setPluginBypass(...)` for live edits.
+- `dispose()` and track removal now tear down live WAM nodes through the bus cleanup path so plugin graphs are disconnected and destroyed instead of being orphaned when playback shuts down or a track disappears.
+- Coverage lives in `src/app/lib/daw/engine/playback-engine.test.ts` for param-only updates, chain-shape rebuilds, and teardown behavior on removal/disposal.
+
+### Phase 7 Hardening
+
+- `src/app/lib/daw/engine/project-sync-engine.test.ts` now includes a replay-oriented integration test that restores plugin chains and params from the latest snapshot plus operation tail.
+- `src/app/lib/daw/utils/json.ts` enforces JSON-only plugin state at the edit boundary; binary or oversized state should go through `stateBlobKey`.
+- `src/app/lib/daw/engine/wam-host.ts` now captures per-instance latency for diagnostics, keeps the chain alive if a plugin fails to load, and warns when chains get heavy or exceed the configured cap.
+- The engine still does not compensate plugin latency in playback yet; that remains a known gap.
+- `src/app/pages/groups/demo/components/daw/DemoDawClient.tsx` surfaces non-blocking plugin-chain warnings/errors so failed nodes do not silently disappear.
 
 ## Server Side
 

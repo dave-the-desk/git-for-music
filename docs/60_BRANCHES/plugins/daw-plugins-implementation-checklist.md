@@ -124,20 +124,20 @@ Goal: connect the adapter to the running engine and keep it in sync.
 
 Goal: let users add, order, tweak, and bypass plugins.
 
-- [ ] Extend the existing **Plugins** browser tab in `DemoDawClient` so a listed
+- [x] Extend the existing **Plugins** browser tab in `DemoDawClient` so a listed
   plugin can be **added to the selected track** (button or drag), emitting
   `PLUGIN_ADDED`.
-- [ ] Add a per-track **insert-chain panel** (rack) showing ordered instances with:
+- [x] Add a per-track **insert-chain panel** (rack) showing ordered instances with:
   - [ ] reorder (drag) -> `PLUGIN_REORDERED`,
   - [ ] remove -> `PLUGIN_REMOVED`,
   - [ ] bypass toggle -> `PLUGIN_BYPASS_SET`.
-- [ ] Render a **generic parameter editor** driven by `parameterSchema`
+- [x] Render a **generic parameter editor** driven by `parameterSchema`
   (sliders/toggles from id/label/range/unit/default) that emits `PLUGIN_PARAM_SET`
   on change. (Custom per-plugin GUIs are out of scope for v1 — overview Section
   3.3 point 4: UI and DSP are separable, so a generic editor is sufficient first.)
-- [ ] Reflect remote collaborators' plugin edits live (they arrive as broadcast
+- [x] Reflect remote collaborators' plugin edits live (they arrive as broadcast
   operations and flow through the reducer -> engine).
-- [ ] Tests: extend
+- [x] Tests: extend
   [`DemoDawClient.interaction.test.tsx`](../../../src/app/pages/groups/demo/components/daw/DemoDawClient.interaction.test.tsx)
   to add a plugin, change a param, reorder, remove, and assert the emitted ops.
 

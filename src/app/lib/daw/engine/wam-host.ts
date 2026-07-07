@@ -60,8 +60,22 @@ export type WamTrackPluginResolver = (trackVersionId: string) => WamHostedPlugin
 export type PlaybackPluginGraph = {
   outputNode: AudioNode;
   nodesByInstanceId: Map<string, WamNode>;
+  latencyByInstanceId: Map<string, number>;
+  issues: PlaybackPluginGraphIssue[];
   teardown: () => void;
 };
+
+export type PlaybackPluginGraphIssue = {
+  trackVersionId: string;
+  pluginKey: string;
+  version: string;
+  message: string;
+  severity: 'warning' | 'error';
+  instanceId?: string;
+};
+
+const HEAVY_CHAIN_WARNING_THRESHOLD = 8;
+const MAX_CHAIN_INSTANCES = 16;
 
 const wamModuleCache = new Map<string, WamModuleCacheEntry>();
 const wamRuntimeCache = new WeakMap<AudioContext, WamRuntime>();
@@ -187,6 +201,34 @@ async function invokeNodeMethod(node: WamNode, methodNames: string[], value: unk
   }
 }
 
+function resolveNodeLatencyMs(node: WamNode, audioContext: AudioContext) {
+  const candidate = node as AnyRecord;
+  const rawLatency =
+    typeof candidate.latency === 'number'
+      ? candidate.latency
+      : typeof candidate.latencyMs === 'number'
+        ? candidate.latencyMs
+        : typeof candidate.getLatency === 'function'
+          ? candidate.getLatency()
+          : typeof candidate.getLatencyMs === 'function'
+            ? candidate.getLatencyMs()
+            : typeof candidate.latencySamples === 'number'
+              ? candidate.latencySamples
+              : typeof candidate.getLatencySamples === 'function'
+                ? candidate.getLatencySamples()
+                : null;
+
+  if (!Number.isFinite(rawLatency)) {
+    return null;
+  }
+
+  if (rawLatency > 1000 && Number.isFinite(audioContext.sampleRate) && audioContext.sampleRate > 0) {
+    return (rawLatency / audioContext.sampleRate) * 1000;
+  }
+
+  return rawLatency;
+}
+
 /**
  * Load and cache a plugin ES module for a plugin key and version.
  */
@@ -284,7 +326,12 @@ function sortTrackPlugins(plugins: WamHostedPluginInstanceState[]) {
 /**
  * Build a track plugin chain from preloaded modules and serialized plugin state.
  */
-export function createWamPlaybackPluginGraphFactory(options: { getTrackPlugins: WamTrackPluginResolver }): (
+export function createWamPlaybackPluginGraphFactory(options: {
+  getTrackPlugins: WamTrackPluginResolver;
+  onIssue?: (issue: PlaybackPluginGraphIssue) => void;
+  maxInstances?: number;
+  heavyChainWarningThreshold?: number;
+}): (
   trackVersionId: string,
   inputNode: AudioNode,
   audioContext: AudioContext,
@@ -295,27 +342,86 @@ export function createWamPlaybackPluginGraphFactory(options: { getTrackPlugins: 
     let currentNode: AudioNode = inputNode;
     const chainNodes: WamNode[] = [];
     const nodesByInstanceId = new Map<string, WamNode>();
+    const latencyByInstanceId = new Map<string, number>();
+    const issues: PlaybackPluginGraphIssue[] = [];
+    const emitIssue = (issue: PlaybackPluginGraphIssue) => {
+      issues.push(issue);
+      options.onIssue?.(issue);
+    };
+    const maxInstances = options.maxInstances ?? MAX_CHAIN_INSTANCES;
+    const heavyChainWarningThreshold = options.heavyChainWarningThreshold ?? HEAVY_CHAIN_WARNING_THRESHOLD;
+
+    if (trackPlugins.length >= heavyChainWarningThreshold) {
+      emitIssue({
+        trackVersionId,
+        pluginKey: trackPlugins[0]?.pluginKey ?? 'unknown',
+        version: trackPlugins[0]?.version ?? 'unknown',
+        message: `Track ${trackVersionId} has ${trackPlugins.length} active WAM plugins. Playback may be heavy, and latency is captured but not yet compensated.`,
+        severity: 'warning',
+      });
+    }
 
     for (const plugin of trackPlugins) {
       if (plugin.bypassed) {
         continue;
       }
 
-      const node = createInstance(audioContext, plugin.pluginKey, plugin.version);
-      chainNodes.push(node);
-      nodesByInstanceId.set(plugin.instanceId, node);
-      applyParams(node, plugin.params);
-      if (plugin.state !== undefined) {
-        applyState(node, plugin.state);
+      if (chainNodes.length >= maxInstances) {
+        emitIssue({
+          trackVersionId,
+          instanceId: plugin.instanceId,
+          pluginKey: plugin.pluginKey,
+          version: plugin.version,
+          message: `Skipped ${plugin.pluginKey}@${plugin.version} because the WAM chain reached the maximum supported length (${maxInstances}).`,
+          severity: 'warning',
+        });
+        continue;
       }
 
-      currentNode.connect(node);
-      currentNode = node;
+      let node: WamNode | null = null;
+      try {
+        node = createInstance(audioContext, plugin.pluginKey, plugin.version);
+        applyParams(node, plugin.params);
+        if (plugin.state !== undefined) {
+          applyState(node, plugin.state);
+        }
+        currentNode.connect(node);
+        currentNode = node;
+        chainNodes.push(node);
+        nodesByInstanceId.set(plugin.instanceId, node);
+        const latencyMs = resolveNodeLatencyMs(node, audioContext);
+        if (latencyMs !== null) {
+          latencyByInstanceId.set(plugin.instanceId, latencyMs);
+        }
+      } catch (error) {
+        emitIssue({
+          trackVersionId,
+          instanceId: plugin.instanceId,
+          pluginKey: plugin.pluginKey,
+          version: plugin.version,
+          message: error instanceof Error ? error.message : `Could not load ${plugin.pluginKey}@${plugin.version}`,
+          severity: 'error',
+        });
+        try {
+          node?.disconnect();
+        } catch {
+          // Best effort cleanup if the node was partially created.
+        }
+        if (node && typeof node.destroy === 'function') {
+          try {
+            node.destroy();
+          } catch {
+            // Ignore plugin cleanup failures during graph replacement.
+          }
+        }
+      }
     }
 
     return {
       outputNode: currentNode,
       nodesByInstanceId,
+      latencyByInstanceId,
+      issues,
       teardown: () => {
         if (chainNodes.length === 0) {
           return;

@@ -22,6 +22,32 @@ const mockProjectSync = vi.hoisted(() => {
     isSyncing: boolean;
     lastError: string | null;
     versionTreeAttention: null;
+    lastCommitRequest:
+      | {
+          operationType: string;
+          payload: {
+            trackId?: string;
+            trackVersionId?: string;
+            instanceId?: string;
+            paramId?: string;
+            value?: number;
+            position?: number;
+            bypassed?: boolean;
+          };
+        }
+      | null;
+    commitRequests: Array<{
+      operationType: string;
+      payload: {
+        trackId?: string;
+        trackVersionId?: string;
+        instanceId?: string;
+        paramId?: string;
+        value?: number;
+        position?: number;
+        bypassed?: boolean;
+      };
+    }>;
   } = {
     projectState: null,
     queue: {},
@@ -32,6 +58,8 @@ const mockProjectSync = vi.hoisted(() => {
     isSyncing: false,
     lastError: null,
     versionTreeAttention: null,
+    lastCommitRequest: null,
+    commitRequests: [],
   };
 
   return {
@@ -68,6 +96,8 @@ const mockProjectSync = vi.hoisted(() => {
         isSyncing: false,
         lastError: null,
         versionTreeAttention: null,
+        lastCommitRequest: null,
+        commitRequests: [],
       };
     },
     get projectState() {
@@ -75,6 +105,23 @@ const mockProjectSync = vi.hoisted(() => {
     },
   };
 });
+
+function normalizePlugins(
+  plugins: Array<{
+    instanceId: string;
+    position: number;
+    bypassed?: boolean;
+  }>,
+) {
+  return plugins.map((plugin, index) => ({
+    ...plugin,
+    position: index,
+  }));
+}
+
+function getCommitOps() {
+  return mockProjectSync.getState().commitRequests;
+}
 
 const mockIngest = vi.hoisted(() => ({
   recordUploadCount: 0,
@@ -86,6 +133,8 @@ const mockIngest = vi.hoisted(() => ({
 
 const mockPlaybackEngine = vi.hoisted(() => ({
   lastConstructorOptions: null as { pluginGraphFactory?: unknown } | null,
+  setProjectCount: 0,
+  lastSetProject: null as unknown,
 }));
 
 const mockPendingActiveVersionUpdates = vi.hoisted(() => ({
@@ -112,6 +161,27 @@ function createDeferred() {
   return { promise, resolve };
 }
 
+function createDataTransfer() {
+  const data = new Map<string, string>();
+
+  return {
+    dropEffect: 'move',
+    effectAllowed: 'move',
+    files: [] as unknown as FileList,
+    getData: (type: string) => data.get(type) ?? '',
+    setData: (type: string, value: string) => {
+      data.set(type, value);
+    },
+    clearData: (type?: string) => {
+      if (type) {
+        data.delete(type);
+      } else {
+        data.clear();
+      }
+    },
+  } as DataTransfer;
+}
+
 const mockRecordingSave = vi.hoisted(() => ({
   deferred: null as ReturnType<typeof createDeferred> | null,
 }));
@@ -133,6 +203,23 @@ function makeTrack(trackName: string, trackVersionId: string, overrides: Partial
     parentTrackVersionId: overrides.parentTrackVersionId ?? null,
     segments: overrides.segments ?? [],
     plugins: overrides.plugins ?? [],
+  };
+}
+
+function makePlugin(
+  instanceId: string,
+  overrides: Partial<DawTrack['plugins'][number]> = {},
+): DawTrack['plugins'][number] {
+  return {
+    instanceId,
+    pluginKey: overrides.pluginKey ?? `com.example.${instanceId}`,
+    version: overrides.version ?? '1.0.0',
+    backend: overrides.backend ?? 'wam',
+    position: overrides.position ?? 0,
+    bypassed: overrides.bypassed ?? false,
+    params: overrides.params ?? {},
+    state: overrides.state,
+    stateBlobKey: overrides.stateBlobKey ?? null,
   };
 }
 
@@ -336,11 +423,75 @@ vi.mock('@/app/lib/daw/engine/audio-editing-engine', () => ({
     constructor() {}
     moveTrack() {}
     moveSegment() {}
+    addPlugin({ trackVersionId, plugin }: { trackVersionId: string; plugin: unknown }) {
+      return {
+        demoId: 'demo-1',
+        operationType: 'PLUGIN_ADDED',
+        payload: {
+          trackVersionId,
+          ...(plugin as Record<string, unknown>),
+        },
+      };
+    }
     deleteTrack(trackId: string) {
       return {
         demoId: 'demo-1',
         operationType: 'TRACK_REMOVED',
         payload: { trackId },
+      };
+    }
+    removePlugin({ trackVersionId, instanceId }: { trackVersionId: string; instanceId: string }) {
+      return {
+        demoId: 'demo-1',
+        operationType: 'PLUGIN_REMOVED',
+        payload: { trackVersionId, instanceId },
+      };
+    }
+    reorderPlugin({
+      trackVersionId,
+      instanceId,
+      position,
+    }: {
+      trackVersionId: string;
+      instanceId: string;
+      position: number;
+    }) {
+      return {
+        demoId: 'demo-1',
+        operationType: 'PLUGIN_REORDERED',
+        payload: { trackVersionId, instanceId, position },
+      };
+    }
+    setPluginParam({
+      trackVersionId,
+      instanceId,
+      paramId,
+      value,
+    }: {
+      trackVersionId: string;
+      instanceId: string;
+      paramId: string;
+      value: number;
+    }) {
+      return {
+        demoId: 'demo-1',
+        operationType: 'PLUGIN_PARAM_SET',
+        payload: { trackVersionId, instanceId, paramId, value },
+      };
+    }
+    setPluginBypass({
+      trackVersionId,
+      instanceId,
+      bypassed,
+    }: {
+      trackVersionId: string;
+      instanceId: string;
+      bypassed: boolean;
+    }) {
+      return {
+        demoId: 'demo-1',
+        operationType: 'PLUGIN_BYPASS_SET',
+        payload: { trackVersionId, instanceId, bypassed },
       };
     }
     deleteSegment() {}
@@ -357,7 +508,10 @@ vi.mock('@/app/lib/daw/engine/playback-engine', () => ({
     constructor(options?: { pluginGraphFactory?: unknown }) {
       mockPlaybackEngine.lastConstructorOptions = options ?? null;
     }
-    setProject() {}
+    setProject(project: unknown) {
+      mockPlaybackEngine.setProjectCount += 1;
+      mockPlaybackEngine.lastSetProject = project;
+    }
     preloadTracks() {}
     rebuildTrackPluginChain() {}
     setPluginParam() {}
@@ -514,12 +668,34 @@ vi.mock('@/app/lib/daw/engine/project-sync-engine', () => ({
       });
     }
     async setTrackTempoMetadata() {}
-    async commitOperation(request: { operationType: string; payload: { trackId?: string } }) {
+    async commitOperation(request: {
+      operationType: string;
+      payload: {
+        trackId?: string;
+        trackVersionId?: string;
+        instanceId?: string;
+        pluginKey?: string;
+        version?: string;
+        backend?: 'wam' | 'remote';
+        position?: number;
+        bypassed?: boolean;
+        paramId?: string;
+        value?: number;
+        params?: Record<string, number>;
+        stateBlobKey?: string | null;
+      };
+    }) {
       const currentState = mockProjectSync.getState();
       const projectState = currentState.projectState;
       if (!projectState) {
         throw new Error('Project state missing');
       }
+
+      mockProjectSync.setState({
+        ...currentState,
+        lastCommitRequest: request,
+        commitRequests: [...currentState.commitRequests, request],
+      });
 
       if (request.operationType === 'TRACK_REMOVED' && request.payload.trackId) {
         const nextProjectState: LocalProjectState = {
@@ -527,6 +703,140 @@ vi.mock('@/app/lib/daw/engine/project-sync-engine', () => ({
           versions: projectState.versions.map((version) => ({
             ...version,
             tracks: version.tracks.filter((track) => track.trackId !== request.payload.trackId),
+          })),
+        };
+        mockProjectSync.updateProjectState(nextProjectState);
+      } else if (request.operationType === 'PLUGIN_ADDED' && request.payload.trackVersionId) {
+        const payload = request.payload as {
+          trackVersionId: string;
+          instanceId: string;
+          pluginKey: string;
+          version: string;
+          backend: 'wam' | 'remote';
+          position: number;
+          bypassed: boolean;
+          params: Record<string, number>;
+          stateBlobKey?: string | null;
+        };
+        const nextProjectState: LocalProjectState = {
+          ...projectState,
+          versions: projectState.versions.map((version) => ({
+            ...version,
+            tracks: version.tracks.map((track) =>
+              track.trackVersionId === payload.trackVersionId
+                ? {
+                    ...track,
+                    plugins: normalizePlugins([
+                      ...track.plugins.filter((plugin) => plugin.instanceId !== payload.instanceId),
+                      payload,
+                    ]),
+                  }
+                : track,
+            ),
+          })),
+        };
+        mockProjectSync.updateProjectState(nextProjectState);
+      } else if (request.operationType === 'PLUGIN_REORDERED' && request.payload.trackVersionId) {
+        const payload = request.payload as {
+          trackVersionId: string;
+          instanceId: string;
+          position: number;
+        };
+        const nextProjectState: LocalProjectState = {
+          ...projectState,
+          versions: projectState.versions.map((version) => ({
+            ...version,
+            tracks: version.tracks.map((track) => {
+              if (track.trackVersionId !== payload.trackVersionId) return track;
+              const sourceIndex = track.plugins.findIndex((plugin) => plugin.instanceId === payload.instanceId);
+              if (sourceIndex === -1) return track;
+              const nextPlugins = track.plugins.filter((plugin) => plugin.instanceId !== payload.instanceId);
+              const sourcePlugin = track.plugins[sourceIndex];
+              nextPlugins.splice(Math.max(0, Math.min(payload.position, nextPlugins.length)), 0, sourcePlugin);
+              return {
+                ...track,
+                plugins: normalizePlugins(nextPlugins),
+              };
+            }),
+          })),
+        };
+        mockProjectSync.updateProjectState(nextProjectState);
+      } else if (request.operationType === 'PLUGIN_REMOVED' && request.payload.trackVersionId) {
+        const payload = request.payload as {
+          trackVersionId: string;
+          instanceId: string;
+        };
+        const nextProjectState: LocalProjectState = {
+          ...projectState,
+          versions: projectState.versions.map((version) => ({
+            ...version,
+            tracks: version.tracks.map((track) =>
+              track.trackVersionId === payload.trackVersionId
+                ? {
+                    ...track,
+                    plugins: normalizePlugins(
+                      track.plugins.filter((plugin) => plugin.instanceId !== payload.instanceId),
+                    ),
+                  }
+                : track,
+            ),
+          })),
+        };
+        mockProjectSync.updateProjectState(nextProjectState);
+      } else if (request.operationType === 'PLUGIN_BYPASS_SET' && request.payload.trackVersionId) {
+        const payload = request.payload as {
+          trackVersionId: string;
+          instanceId: string;
+          bypassed: boolean;
+        };
+        const nextProjectState: LocalProjectState = {
+          ...projectState,
+          versions: projectState.versions.map((version) => ({
+            ...version,
+            tracks: version.tracks.map((track) =>
+              track.trackVersionId === payload.trackVersionId
+                ? {
+                    ...track,
+                    plugins: track.plugins.map((plugin) =>
+                      plugin.instanceId === payload.instanceId
+                        ? { ...plugin, bypassed: payload.bypassed }
+                        : plugin,
+                    ),
+                  }
+                : track,
+            ),
+          })),
+        };
+        mockProjectSync.updateProjectState(nextProjectState);
+      } else if (request.operationType === 'PLUGIN_PARAM_SET' && request.payload.trackVersionId) {
+        const payload = request.payload as {
+          trackVersionId: string;
+          instanceId: string;
+          paramId: string;
+          value: number;
+        };
+        const nextProjectState: LocalProjectState = {
+          ...projectState,
+          versions: projectState.versions.map((version) => ({
+            ...version,
+            tracks: version.tracks.map((track) =>
+              track.trackVersionId === payload.trackVersionId
+                ? {
+                    ...track,
+                    plugins: track.plugins.map((plugin) =>
+                      plugin.instanceId === payload.instanceId
+                        ? {
+                            ...plugin,
+                            params: {
+                              ...plugin.params,
+                              [payload.paramId]: payload.value,
+                            },
+                          }
+                        : plugin,
+                    ),
+                  }
+                : track,
+            ),
           })),
         };
         mockProjectSync.updateProjectState(nextProjectState);
@@ -572,6 +882,8 @@ describe('DemoDawClient recording regression', () => {
     mockIngest.revokeObjectUrl.mockReset();
     mockIngest.lastUploadAudioFileSourceVersionId = null;
     mockPlaybackEngine.lastConstructorOptions = null;
+    mockPlaybackEngine.setProjectCount = 0;
+    mockPlaybackEngine.lastSetProject = null;
     mockPendingActiveVersionUpdates.pending = [];
     mockRecordingSave.deferred = createDeferred();
     mockProjectSync.reset();
@@ -743,6 +1055,382 @@ describe('DemoDawClient recording regression', () => {
     await waitFor(() => {
       expect(browser.getByRole('button', { name: 'Members' }).getAttribute('aria-pressed')).toBe('true');
     });
+  });
+
+  it('adds a browser plugin to the selected track through the PLUGIN_ADDED commit path', async () => {
+    const initialVersion = makeVersion('version-1', ['Track 1'], {
+      isCurrent: true,
+      operationSeq: 1,
+      createdAt: '2026-07-05T00:00:00.000Z',
+      tracks: [makeTrack('Track 1', 'version-1-track-1', { trackId: 'track-1', trackPosition: 0 })],
+    });
+
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/bootstrap?demoId=')) {
+        return new Response(
+          JSON.stringify({
+            pluginDefinitions: [
+              {
+                id: 'plugin-def-1',
+                pluginKey: 'com.example.delay',
+                name: 'Delay',
+                version: '1.0.0',
+                manufacturer: 'Example Audio',
+                parameterSchema: {},
+                createdAt: '2026-07-05T00:00:00.000Z',
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.includes('/presence')) {
+        return new Response('', { status: 200 });
+      }
+      if (url.includes('/active-version')) {
+        return new Response(JSON.stringify({ activeVersionId: 'mock', isFollowingHead: true }), { status: 200 });
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    }) as typeof fetch;
+
+    const user = userEvent.setup();
+    const { container } = render(
+      <DemoDawClient
+        groupSlug="demo-group"
+        projectSlug="demo-project"
+        projectId="project-1"
+        demoId="demo-1"
+        currentUserId="user-1"
+        demoName="Demo"
+        demoDescription={null}
+        initialCurrentVersionId={initialVersion.id}
+        initialActiveVersionId={initialVersion.id}
+        initialIsFollowingHead={true}
+        initialVersions={[initialVersion]}
+      />,
+    );
+
+    const browserRail = screen.getByTestId('browser-rail');
+    const browser = within(browserRail);
+
+    await user.click(browser.getByRole('button', { name: 'Plugins' }));
+
+    const addButton = await screen.findByRole('button', { name: 'Add Delay to selected track' });
+    expect(addButton).toBeTruthy();
+    expect((addButton as HTMLButtonElement).disabled).toBe(false);
+
+    await user.click(addButton);
+
+    await waitFor(() => {
+      expect(mockProjectSync.getState().lastCommitRequest?.operationType).toBe('PLUGIN_ADDED');
+    });
+
+    await waitFor(() => {
+      const plugins = mockProjectSync.projectState?.versions[0]?.tracks[0]?.plugins ?? [];
+      expect(plugins).toHaveLength(1);
+      expect(plugins[0]?.pluginKey).toBe('com.example.delay');
+      expect(plugins[0]?.version).toBe('1.0.0');
+      expect(plugins[0]?.position).toBe(0);
+    });
+
+    expect(container.querySelectorAll('[data-track-version-id]').length).toBe(1);
+  });
+
+  it('adds a plugin, changes a param, reorders it, removes another plugin, and emits the expected ops', async () => {
+    const initialVersion = makeVersion('version-1', ['Track 1'], {
+      isCurrent: true,
+      operationSeq: 1,
+      createdAt: '2026-07-05T00:00:00.000Z',
+      tracks: [
+        makeTrack('Track 1', 'version-1-track-1', {
+          trackId: 'track-1',
+          trackPosition: 0,
+          plugins: [
+            makePlugin('plugin-b', { pluginKey: 'com.example.chorus', position: 0 }),
+            makePlugin('plugin-c', { pluginKey: 'com.example.reverb', position: 1 }),
+          ],
+        }),
+      ],
+    });
+
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/bootstrap?demoId=')) {
+        return new Response(
+          JSON.stringify({
+            pluginDefinitions: [
+              {
+                id: 'plugin-def-a',
+                pluginKey: 'com.example.delay',
+                name: 'Delay',
+                version: '1.0.0',
+                manufacturer: 'Example Audio',
+                parameterSchema: {
+                  parameters: [
+                    {
+                      id: 'mix',
+                      label: 'Delay Mix',
+                      min: 0,
+                      max: 1,
+                      step: 0.01,
+                      unit: '%',
+                      default: 0.25,
+                    },
+                    {
+                      id: 'enabled',
+                      label: 'Delay On',
+                      type: 'boolean',
+                      default: true,
+                    },
+                  ],
+                },
+                createdAt: '2026-07-05T00:00:00.000Z',
+              },
+              {
+                id: 'plugin-def-b',
+                pluginKey: 'com.example.chorus',
+                name: 'Chorus',
+                version: '1.0.0',
+                manufacturer: 'Example Audio',
+                parameterSchema: {},
+                createdAt: '2026-07-05T00:00:00.000Z',
+              },
+              {
+                id: 'plugin-def-c',
+                pluginKey: 'com.example.reverb',
+                name: 'Reverb',
+                version: '1.0.0',
+                manufacturer: 'Example Audio',
+                parameterSchema: {},
+                createdAt: '2026-07-05T00:00:00.000Z',
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.includes('/presence')) {
+        return new Response('', { status: 200 });
+      }
+      if (url.includes('/active-version')) {
+        return new Response(JSON.stringify({ activeVersionId: 'mock', isFollowingHead: true }), { status: 200 });
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    }) as typeof fetch;
+
+    const user = userEvent.setup();
+    render(
+      <DemoDawClient
+        groupSlug="demo-group"
+        projectSlug="demo-project"
+        projectId="project-1"
+        demoId="demo-1"
+        currentUserId="user-1"
+        demoName="Demo"
+        demoDescription={null}
+        initialCurrentVersionId={initialVersion.id}
+        initialActiveVersionId={initialVersion.id}
+        initialIsFollowingHead={true}
+        initialVersions={[initialVersion]}
+      />,
+    );
+
+    const browserRail = screen.getByTestId('browser-rail');
+    const browser = within(browserRail);
+    await user.click(browser.getByRole('button', { name: 'Plugins' }));
+
+    const addButton = await screen.findByRole('button', { name: 'Add Delay to selected track' });
+    await user.click(addButton);
+
+    await waitFor(() => {
+      expect(getCommitOps().map((entry) => entry.operationType)).toEqual(['PLUGIN_ADDED']);
+    });
+
+    const addedPlugin = mockProjectSync.projectState?.versions[0]?.tracks[0]?.plugins.find(
+      (plugin) => plugin.pluginKey === 'com.example.delay',
+    );
+    expect(addedPlugin).toBeTruthy();
+    const delayInstanceId = addedPlugin?.instanceId ?? '';
+
+    const mixSlider = await screen.findByRole('slider', { name: 'Delay Mix' });
+    fireEvent.change(mixSlider, { target: { value: '0.75' } });
+
+    await waitFor(() => {
+      expect(getCommitOps().map((entry) => entry.operationType)).toEqual([
+        'PLUGIN_ADDED',
+        'PLUGIN_PARAM_SET',
+      ]);
+    });
+    expect(
+      mockProjectSync.projectState?.versions[0]?.tracks[0]?.plugins.find((plugin) => plugin.instanceId === delayInstanceId)
+        ?.params.mix,
+    ).toBe(0.75);
+
+    const dragHandle = screen.getByRole('button', { name: 'Drag Delay' });
+    const chorusBypass = screen.getByRole('button', { name: 'Toggle bypass for Chorus' });
+    const dragTransfer = createDataTransfer();
+
+    fireEvent.dragStart(dragHandle, { dataTransfer: dragTransfer });
+    fireEvent.dragOver(chorusBypass, { dataTransfer: dragTransfer });
+    fireEvent.drop(chorusBypass, { dataTransfer: dragTransfer });
+
+    await waitFor(() => {
+      expect(getCommitOps().map((entry) => entry.operationType)).toEqual([
+        'PLUGIN_ADDED',
+        'PLUGIN_PARAM_SET',
+        'PLUGIN_REORDERED',
+      ]);
+    });
+    expect(
+      mockProjectSync.projectState?.versions[0]?.tracks[0]?.plugins.map((plugin) => plugin.instanceId),
+    ).toEqual([delayInstanceId, 'plugin-b', 'plugin-c']);
+
+    await user.click(screen.getByRole('button', { name: 'Remove Chorus from Track 1' }));
+
+    await waitFor(() => {
+      expect(getCommitOps().map((entry) => entry.operationType)).toEqual([
+        'PLUGIN_ADDED',
+        'PLUGIN_PARAM_SET',
+        'PLUGIN_REORDERED',
+        'PLUGIN_REMOVED',
+      ]);
+    });
+    expect(
+      mockProjectSync.projectState?.versions[0]?.tracks[0]?.plugins.map((plugin) => plugin.instanceId),
+    ).toEqual([delayInstanceId, 'plugin-c']);
+  });
+
+  it('reflects collaborator plugin edits through the reducer and playback engine', async () => {
+    const initialVersion = makeVersion('version-1', ['Track 1'], {
+      isCurrent: true,
+      operationSeq: 1,
+      createdAt: '2026-07-05T00:00:00.000Z',
+      tracks: [
+        makeTrack('Track 1', 'version-1-track-1', {
+          trackId: 'track-1',
+          trackPosition: 0,
+          plugins: [
+            makePlugin('plugin-a', {
+              pluginKey: 'com.example.delay',
+              position: 0,
+              params: { mix: 0.25, enabled: 1 },
+            }),
+          ],
+        }),
+      ],
+    });
+
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/bootstrap?demoId=')) {
+        return new Response(
+          JSON.stringify({
+            pluginDefinitions: [
+              {
+                id: 'plugin-def-a',
+                pluginKey: 'com.example.delay',
+                name: 'Delay',
+                version: '1.0.0',
+                manufacturer: 'Example Audio',
+                parameterSchema: {
+                  parameters: [
+                    {
+                      id: 'mix',
+                      label: 'Delay Mix',
+                      min: 0,
+                      max: 1,
+                      step: 0.01,
+                      unit: '%',
+                      default: 0.25,
+                    },
+                    {
+                      id: 'enabled',
+                      label: 'Delay On',
+                      type: 'boolean',
+                      default: true,
+                    },
+                  ],
+                },
+                createdAt: '2026-07-05T00:00:00.000Z',
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.includes('/presence')) {
+        return new Response('', { status: 200 });
+      }
+      if (url.includes('/active-version')) {
+        return new Response(JSON.stringify({ activeVersionId: 'mock', isFollowingHead: true }), { status: 200 });
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    }) as typeof fetch;
+
+    render(
+      <DemoDawClient
+        groupSlug="demo-group"
+        projectSlug="demo-project"
+        projectId="project-1"
+        demoId="demo-1"
+        currentUserId="user-1"
+        demoName="Demo"
+        demoDescription={null}
+        initialCurrentVersionId={initialVersion.id}
+        initialActiveVersionId={initialVersion.id}
+        initialIsFollowingHead={true}
+        initialVersions={[initialVersion]}
+      />,
+    );
+
+    await screen.findByRole('slider', { name: 'Delay Mix' });
+    await waitFor(() => {
+      expect(mockPlaybackEngine.setProjectCount).toBeGreaterThan(0);
+    });
+    const initialSetProjectCount = mockPlaybackEngine.setProjectCount;
+
+    const remoteUpdatedVersion = makeVersion('version-1', ['Track 1'], {
+      isCurrent: true,
+      operationSeq: 2,
+      createdAt: '2026-07-05T00:00:01.000Z',
+      tracks: [
+        makeTrack('Track 1', 'version-1-track-1', {
+          trackId: 'track-1',
+          trackPosition: 0,
+          plugins: normalizePlugins([
+            makePlugin('plugin-a', {
+              pluginKey: 'com.example.delay',
+              position: 0,
+              bypassed: true,
+              params: { mix: 0.8, enabled: 0 },
+            }),
+          ]),
+        }),
+      ],
+    });
+
+    await act(async () => {
+      mockProjectSync.updateProjectState({
+        ...makeProjectState([remoteUpdatedVersion]),
+        currentVersionId: remoteUpdatedVersion.id,
+        activeVersionId: remoteUpdatedVersion.id,
+        isFollowingHead: true,
+        lastVersionOperationSeq: 2,
+        lastSeenOperationSeq: 2,
+      });
+    });
+
+    await waitFor(() => {
+      expect(mockPlaybackEngine.setProjectCount).toBeGreaterThan(initialSetProjectCount);
+    });
+    expect((screen.getByRole('slider', { name: 'Delay Mix' }) as HTMLInputElement).value).toBe('0.8');
+    expect((screen.getByRole('checkbox', { name: 'Delay On toggle' }) as HTMLInputElement).checked).toBe(false);
+    expect(
+      (screen.getByRole('button', { name: 'Toggle bypass for Delay' }) as HTMLButtonElement).getAttribute(
+        'aria-pressed',
+      ),
+    ).toBe('true');
   });
 
   it('collapses and restores the timing and recording row', async () => {
