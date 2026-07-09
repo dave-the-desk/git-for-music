@@ -84,6 +84,52 @@ function getModuleCacheKey(pluginKey: string, version: string) {
   return `${pluginKey}::${version}`;
 }
 
+async function nativeImportModule(descriptorUrl: string) {
+  if (descriptorUrl.startsWith('data:')) {
+    return import(/* webpackIgnore: true, @vite-ignore */ descriptorUrl);
+  }
+
+  const response = await fetch(descriptorUrl);
+  const source = await response.text();
+  const importUrl =
+    typeof URL.createObjectURL === 'function'
+      ? URL.createObjectURL(new Blob([source], { type: 'text/javascript;charset=utf-8' }))
+      : `data:text/javascript;charset=utf-8,${encodeURIComponent(source)}`;
+  const importUrlKind = importUrl.startsWith('blob:') ? 'blob' : 'data';
+
+  console.log('[wam-host] nativeImportModule fetch', JSON.stringify({
+    descriptorUrl,
+    importUrlKind,
+    ok: response.ok,
+    status: response.status,
+    statusText: response.statusText,
+    responseUrl: response.url,
+    contentType: response.headers.get('content-type'),
+    sourceLength: source.length,
+    sourcePreview: source.slice(0, 200),
+  }));
+
+  try {
+    return await import(/* webpackIgnore: true, @vite-ignore */ importUrl);
+  } catch (error) {
+    console.log('[wam-host] nativeImportModule import failed', JSON.stringify({
+      descriptorUrl,
+      importUrlKind,
+      status: response.status,
+      statusText: response.statusText,
+      responseUrl: response.url,
+      contentType: response.headers.get('content-type'),
+      sourcePreview: source.slice(0, 200),
+      error: error instanceof Error ? { name: error.name, message: error.message } : error,
+    }));
+    throw error;
+  } finally {
+    if (importUrlKind === 'blob' && typeof URL.revokeObjectURL === 'function') {
+      URL.revokeObjectURL(importUrl);
+    }
+  }
+}
+
 function assertMainThreadWamHost() {
   if (typeof AudioWorkletProcessor !== 'undefined') {
     throw new Error('WAM host operations must run on the main thread, not inside an AudioWorklet render context.');
@@ -237,11 +283,19 @@ export async function loadWamModule(pluginKey: string, version: string, descript
   const cacheKey = getModuleCacheKey(pluginKey, version);
   const cached = wamModuleCache.get(cacheKey);
   if (cached) {
+    console.log('[wam-host] loadWamModule cache hit', JSON.stringify({ pluginKey, version, descriptorUrl }));
     return cached;
   }
 
   const loadPromise = (async () => {
-    const moduleExports = normalizeModuleExports(await import(/* webpackIgnore: true, @vite-ignore */ descriptorUrl));
+    console.log('[wam-host] loadWamModule start', JSON.stringify({ pluginKey, version, descriptorUrl }));
+    const moduleExports = normalizeModuleExports(await nativeImportModule(descriptorUrl));
+    console.log('[wam-host] loadWamModule success', JSON.stringify({
+      pluginKey,
+      version,
+      descriptorUrl,
+      exportKeys: Object.keys(moduleExports),
+    }));
     return {
       pluginKey,
       version,
@@ -257,6 +311,12 @@ export async function loadWamModule(pluginKey: string, version: string, descript
     wamModuleCache.set(cacheKey, loaded);
     return loaded;
   } catch (error) {
+    console.log('[wam-host] loadWamModule error', JSON.stringify({
+      pluginKey,
+      version,
+      descriptorUrl,
+      error: error instanceof Error ? { name: error.name, message: error.message } : error,
+    }));
     wamModuleCache.delete(cacheKey);
     throw error;
   }

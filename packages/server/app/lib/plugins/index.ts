@@ -192,6 +192,15 @@ function serializePluginDefinition(row: PluginDefinitionRow): SerializedPluginDe
   };
 }
 
+function buildPluginDescriptorUrl(pluginId: string, cacheBust?: Date | null) {
+  const url = `/api/plugins/${pluginId}/module`;
+  if (!cacheBust) {
+    return url;
+  }
+
+  return `${url}?v=${cacheBust.getTime()}`;
+}
+
 export async function listUserPlugins(db: PluginDb, userId: string) {
   const plugins = await db.pluginMetadata.findMany({
     where: {
@@ -221,7 +230,10 @@ export async function listUserPlugins(db: PluginDb, userId: string) {
     },
   });
 
-  return plugins.map(serializePluginDefinition);
+  return plugins.map((plugin) => ({
+    ...serializePluginDefinition(plugin),
+    descriptorUrl: buildPluginDescriptorUrl(plugin.id, plugin.updatedAt),
+  }));
 }
 
 export async function listPluginsForDemo(db: PluginDb, input: { demoId: string; userId: string }) {
@@ -261,15 +273,27 @@ export async function listPluginsForDemo(db: PluginDb, input: { demoId: string; 
       checksum: true,
       createdAt: true,
       updatedAt: true,
+      grants: {
+        where: {
+          demoId: input.demoId,
+        },
+        orderBy: {
+          createdAt: 'desc',
+        },
+        take: 1,
+        select: {
+          createdAt: true,
+        },
+      },
     },
   });
 
-  return pluginDefinitions.map((plugin) => ({
+  return pluginDefinitions.map(({ grants, ...plugin }) => ({
     ...plugin,
-    descriptorUrl: `/api/plugins/${plugin.id}/module`,
     sizeBytes: plugin.sizeBytes?.toString() ?? null,
     createdAt: plugin.createdAt.toISOString(),
     updatedAt: plugin.updatedAt.toISOString(),
+    descriptorUrl: buildPluginDescriptorUrl(plugin.id, grants[0]?.createdAt ?? plugin.updatedAt),
   }));
 }
 

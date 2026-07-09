@@ -129,6 +129,7 @@ const mockIngest = vi.hoisted(() => ({
   objectUrlCount: 0,
   revokeObjectUrl: vi.fn(),
   lastUploadAudioFileSourceVersionId: null as string | null,
+  lastUploadRecordedBlobSourceVersionId: null as string | null,
 }));
 
 const mockPlaybackEngine = vi.hoisted(() => ({
@@ -560,10 +561,16 @@ vi.mock('@/app/lib/daw/engine/ingest-engine', () => ({
         throw new Error('Source version missing');
       }
 
+      mockIngest.lastUploadRecordedBlobSourceVersionId = sourceVersion.id;
+
       await mockRecordingSave.deferred?.promise;
 
       const nextVersionId = `recorded-version-${mockIngest.recordUploadCount}`;
-      const nextVersion = cloneVersionWithTracks(sourceVersion, nextVersionId, ['Track 1']);
+      const nextVersion = cloneVersionWithTracks(
+        sourceVersion,
+        nextVersionId,
+        sourceVersion.tracks.map((track) => track.trackName),
+      );
       const nextProjectState: LocalProjectState = {
         ...currentState,
         versions: [...currentState.versions, nextVersion],
@@ -881,6 +888,7 @@ describe('DemoDawClient recording regression', () => {
     mockIngest.objectUrlCount = 0;
     mockIngest.revokeObjectUrl.mockReset();
     mockIngest.lastUploadAudioFileSourceVersionId = null;
+    mockIngest.lastUploadRecordedBlobSourceVersionId = null;
     mockPlaybackEngine.lastConstructorOptions = null;
     mockPlaybackEngine.setProjectCount = 0;
     mockPlaybackEngine.lastSetProject = null;
@@ -964,6 +972,23 @@ describe('DemoDawClient recording regression', () => {
 
     expect(container.querySelectorAll('[data-track-version-id]').length).toBe(2);
     expect(mockIngest.lastUploadAudioFileSourceVersionId).toBe('recorded-version-1');
+
+    mockRecordingSave.deferred = createDeferred();
+    const trackRows = container.querySelectorAll('[data-track-version-id]');
+    expect(trackRows.length).toBe(2);
+    await user.click(within(trackRows[1] as HTMLElement).getByTitle('Arm track for recording'));
+    await user.click(await screen.findByRole('button', { name: 'Start mock recording' }));
+    await user.click(screen.getByRole('button', { name: 'Stop mock recording' }));
+
+    await act(async () => {
+      mockRecordingSave.deferred?.resolve();
+    });
+
+    await waitFor(() => {
+      expect(container.querySelectorAll('[data-track-version-id]').length).toBe(2);
+    });
+
+    expect(mockIngest.lastUploadRecordedBlobSourceVersionId).toBe('uploaded-version-1');
 
     await act(async () => {
       await mockPendingActiveVersionUpdates.flush();
@@ -1141,6 +1166,110 @@ describe('DemoDawClient recording regression', () => {
     });
 
     expect(container.querySelectorAll('[data-track-version-id]').length).toBe(1);
+  });
+
+  it('logs detailed plugin module load failures when a plugin import fails', async () => {
+    const initialVersion = makeVersion('version-1', ['Track 1'], {
+      isCurrent: true,
+      operationSeq: 1,
+      createdAt: '2026-07-05T00:00:00.000Z',
+      tracks: [makeTrack('Track 1', 'version-1-track-1', { trackId: 'track-1', trackPosition: 0 })],
+    });
+
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/bootstrap?demoId=')) {
+        return new Response(
+          JSON.stringify({
+            pluginDefinitions: [
+              {
+                id: 'plugin-def-1',
+                pluginKey: 'com.example.broken',
+                name: 'Broken',
+                displayName: 'Broken',
+                description: null,
+                version: '1.0.0',
+                manufacturer: 'Example Audio',
+                parameterSchema: {},
+                ownerId: 'user-1',
+                visibility: 'PRIVATE',
+                descriptorUrl: 'data:text/javascript,throw%20new%20Error(%22boom%22)',
+                createdAt: '2026-07-05T00:00:00.000Z',
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.includes('/presence')) {
+        return new Response('', { status: 200 });
+      }
+      if (url.includes('/active-version')) {
+        return new Response(JSON.stringify({ activeVersionId: 'mock', isFollowingHead: true }), { status: 200 });
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    }) as typeof fetch;
+
+    const user = userEvent.setup();
+    render(
+      <DemoDawClient
+        groupSlug="demo-group"
+        projectSlug="demo-project"
+        projectId="project-1"
+        demoId="demo-1"
+        currentUserId="user-1"
+        demoName="Demo"
+        demoDescription={null}
+        initialCurrentVersionId={initialVersion.id}
+        initialActiveVersionId={initialVersion.id}
+        initialIsFollowingHead={true}
+        initialVersions={[initialVersion]}
+      />,
+    );
+
+    const browserRail = screen.getByTestId('browser-rail');
+    const browser = within(browserRail);
+    await user.click(browser.getByRole('button', { name: 'Plugins' }));
+
+    const addButton = await screen.findByRole('button', { name: 'Add Broken to selected track' });
+    await user.click(addButton);
+
+    await waitFor(() => {
+      expect(screen.getByText('Plugin chain error')).toBeTruthy();
+    });
+
+    await waitFor(() => {
+      const failureCall = consoleErrorSpy.mock.calls.find((call) => call[0] === '[daw][wam] plugin module load failed');
+      expect(failureCall).toBeTruthy();
+      const payload = JSON.parse(String(failureCall?.[1] ?? '{}')) as {
+        source?: string;
+        projectId?: string;
+        demoId?: string;
+        trackVersionId?: string | null;
+        trackId?: string | null;
+        trackName?: string | null;
+        pluginKey?: string;
+        version?: string;
+        descriptorUrl?: string | null;
+      };
+      expect(payload).toEqual(
+        expect.objectContaining({
+          source: 'manual-add',
+          projectId: 'project-1',
+          demoId: 'demo-1',
+          trackVersionId: 'version-1-track-1',
+          trackId: 'track-1',
+          trackName: 'Track 1',
+          pluginKey: 'com.example.broken',
+          version: '1.0.0',
+          descriptorUrl: 'data:text/javascript,throw%20new%20Error(%22boom%22)',
+        }),
+      );
+    });
+
+    consoleErrorSpy.mockRestore();
   });
 
   it('adds a plugin, changes a param, reorders it, removes another plugin, and emits the expected ops from the Plugins tab', async () => {
@@ -1328,6 +1457,45 @@ describe('DemoDawClient recording regression', () => {
     ).toEqual([delayInstanceId, 'plugin-c']);
   });
 
+  it('keeps track insert chains collapsed by default and reveals them on demand', async () => {
+    const initialVersion = makeVersion('version-1', ['Track 1'], {
+      isCurrent: true,
+      operationSeq: 1,
+      createdAt: '2026-07-05T00:00:00.000Z',
+      tracks: [
+        makeTrack('Track 1', 'version-1-track-1', {
+          trackId: 'track-1',
+          trackPosition: 0,
+          plugins: [makePlugin('plugin-a')],
+        }),
+      ],
+    });
+
+    render(
+      <DemoDawClient
+        groupSlug="demo-group"
+        projectSlug="demo-project"
+        projectId="project-1"
+        demoId="demo-1"
+        currentUserId="user-1"
+        demoName="Demo"
+        demoDescription={null}
+        initialCurrentVersionId={initialVersion.id}
+        initialActiveVersionId={initialVersion.id}
+        initialIsFollowingHead={true}
+        initialVersions={[initialVersion]}
+      />,
+    );
+
+    expect(screen.queryByTestId('track-plugin-chain-version-1-track-1')).toBeNull();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Show plugins on Track 1' }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('track-plugin-chain-version-1-track-1')).toBeTruthy();
+    });
+  });
+
   it('reflects collaborator plugin edits through the reducer and playback engine', async () => {
     const initialVersion = makeVersion('version-1', ['Track 1'], {
       isCurrent: true,
@@ -1417,7 +1585,12 @@ describe('DemoDawClient recording regression', () => {
       />,
     );
 
-    await screen.findByRole('slider', { name: 'Delay Mix' });
+    await userEvent.click(screen.getByRole('button', { name: 'Show plugins on Track 1' }));
+
+    const trackPluginChain = await screen.findByTestId('track-plugin-chain-version-1-track-1');
+    const trackPluginChainView = within(trackPluginChain);
+
+    await trackPluginChainView.findByRole('slider', { name: 'Delay Mix' });
     await waitFor(() => {
       expect(mockPlaybackEngine.setProjectCount).toBeGreaterThan(0);
     });
@@ -1457,9 +1630,9 @@ describe('DemoDawClient recording regression', () => {
     await waitFor(() => {
       expect(mockPlaybackEngine.setProjectCount).toBeGreaterThan(initialSetProjectCount);
     });
-    expect((screen.getByRole('slider', { name: 'Delay Mix' }) as HTMLInputElement).value).toBe('0.8');
-    expect((screen.getByRole('checkbox', { name: 'Delay On toggle' }) as HTMLInputElement).checked).toBe(false);
-    expect(screen.getByText('Bypassed')).toBeTruthy();
+    expect((trackPluginChainView.getByRole('slider', { name: 'Delay Mix' }) as HTMLInputElement).value).toBe('0.8');
+    expect((trackPluginChainView.getByRole('checkbox', { name: 'Delay On toggle' }) as HTMLInputElement).checked).toBe(false);
+    expect(trackPluginChainView.getByText('Bypassed')).toBeTruthy();
   });
 
   it('collapses and restores the timing and recording row', async () => {

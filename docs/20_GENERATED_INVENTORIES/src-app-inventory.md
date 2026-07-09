@@ -111,6 +111,10 @@ src/app/pages/api/jobs/index.ts
 src/app/pages/api/notifications/[notificationId]/group-invite/index.ts
 src/app/pages/api/notifications/index.ts
 src/app/pages/api/notifications/read-all/index.ts
+src/app/pages/api/plugins/[pluginId]/module/[...path]/index.ts
+src/app/pages/api/plugins/[pluginId]/module/index.ts
+src/app/pages/api/plugins/[pluginId]/module/response-headers.test.ts
+src/app/pages/api/plugins/[pluginId]/module/response-headers.ts
 src/app/pages/api/tracks/[trackId]/index.ts
 src/app/pages/api/tracks/upload/index.ts
 src/app/pages/api/tracks/versions/[trackVersionId]/offset/index.ts

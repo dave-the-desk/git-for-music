@@ -134,6 +134,8 @@ test('completePluginUpload stores the plugin and auto-grants the demo when reque
 
     assert.equal(result.autoGrantedDemoId, 'demo-1');
     assert.equal(result.plugin.id, target.pluginId);
+    assert.equal(result.plugin.moduleObjectKey, target.objectKey);
+    assert.equal(result.plugin.bundlePrefix, target.bundlePrefix);
     assert.ok(upsertArgs);
     assert.ok(grantArgs);
   } finally {
@@ -164,13 +166,14 @@ test('listPluginsForDemo includes a descriptor URL for each available plugin', a
           checksum: null,
           createdAt: new Date('2026-07-08T00:00:00.000Z'),
           updatedAt: new Date('2026-07-08T00:00:00.000Z'),
+          grants: [],
         },
       ],
     },
   } as never;
 
   const plugins = await listPluginsForDemo(db, { demoId: 'demo-1', userId: 'user-1' });
-  assert.equal(plugins[0]?.descriptorUrl, '/api/plugins/plugin-1/module');
+  assert.equal(plugins[0]?.descriptorUrl, '/api/plugins/plugin-1/module?v=1783468800000');
 });
 
 test('listPluginsForDemo includes the owner\'s private uploads', async () => {
@@ -195,6 +198,7 @@ test('listPluginsForDemo includes the owner\'s private uploads', async () => {
           checksum: null,
           createdAt: new Date('2026-07-08T00:00:00.000Z'),
           updatedAt: new Date('2026-07-08T00:00:00.000Z'),
+          grants: [],
         },
       ],
     },
@@ -203,6 +207,42 @@ test('listPluginsForDemo includes the owner\'s private uploads', async () => {
   const plugins = await listPluginsForDemo(db, { demoId: 'demo-1', userId: 'user-1' });
   assert.equal(plugins.length, 1);
   assert.equal(plugins[0]?.pluginKey, 'user:user-1:plugin-1');
+});
+
+test('listPluginsForDemo cache-busts module URLs when a demo grant exists', async () => {
+  const db = {
+    pluginMetadata: {
+      findMany: async () => [
+        {
+          id: 'plugin-1',
+          pluginKey: 'user:user-1:plugin-1',
+          name: 'Delay',
+          displayName: 'Delay',
+          description: null,
+          version: 'plugin-1',
+          manufacturer: null,
+          parameterSchema: {},
+          ownerId: 'user-1',
+          visibility: 'PRIVATE',
+          moduleObjectKey: 'plugins/user-1/plugin-1/plugin-1/delay.js',
+          bundlePrefix: 'plugins/user-1/plugin-1/plugin-1',
+          bundleKind: 'SINGLE_MODULE',
+          sizeBytes: BigInt(1024),
+          checksum: null,
+          createdAt: new Date('2026-07-08T00:00:00.000Z'),
+          updatedAt: new Date('2026-07-08T00:00:00.000Z'),
+          grants: [
+            {
+              createdAt: new Date('2026-07-09T00:00:00.000Z'),
+            },
+          ],
+        },
+      ],
+    },
+  } as never;
+
+  const plugins = await listPluginsForDemo(db, { demoId: 'demo-1', userId: 'user-1' });
+  assert.equal(plugins[0]?.descriptorUrl, '/api/plugins/plugin-1/module?v=1783555200000');
 });
 
 test('grant and revoke plugin access validate ownership and membership', async () => {

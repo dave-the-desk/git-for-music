@@ -196,13 +196,29 @@ export const RecordingControls = forwardRef<RecordingControlsHandle, Props>(func
   }
 
   return (
-    <div className="grid gap-2 lg:grid-cols-[auto_minmax(0,1fr)] lg:items-start">
-      {microphoneSelector ? (
-        <div className="inline-flex w-fit items-center rounded-lg border border-slate-700 bg-slate-950/60 p-2">
-          {microphoneSelector}
+    <div className="grid min-w-0 gap-3 rounded-2xl border border-slate-800/80 bg-slate-950/70 px-3 py-3 shadow-[0_18px_60px_-36px_rgba(0,0,0,0.85)]">
+      <div className="flex min-w-0 items-start gap-3">
+        {microphoneSelector ? (
+          <div className="flex shrink-0 items-start rounded-xl border border-slate-700 bg-slate-950/70 p-2">
+            {microphoneSelector}
+          </div>
+        ) : null}
+        <div className="min-w-0 flex-1 space-y-1.5">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-200">Microphone</p>
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <span className="rounded-full border border-slate-700 bg-slate-900/80 px-2.5 py-1 text-[11px] font-medium text-slate-200">
+              {selectedAudioInputDeviceId && isAudioInputReady ? 'Ready' : 'Not ready'}
+            </span>
+            <p className="min-w-0 text-xs leading-tight text-slate-300">
+              {selectedAudioInputDeviceId
+                ? 'Selected input will be used for the next take.'
+                : 'Choose an input before you arm recording.'}
+            </p>
+          </div>
         </div>
-      ) : null}
-      <div className="flex min-w-0 flex-wrap items-center gap-2 rounded-lg border border-slate-700 bg-slate-950/40 px-3 py-2">
+      </div>
+
+      <div className="flex min-w-0 flex-wrap items-center gap-2 rounded-xl border border-slate-700 bg-slate-950/40 px-3 py-2">
         {(recState === 'idle' || recState === 'error') && (
           <>
             <button

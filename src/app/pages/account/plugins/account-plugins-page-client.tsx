@@ -42,6 +42,7 @@ export default function AccountPluginsPageClient({ initialPlugins }: AccountPlug
   const [plugins, setPlugins] = useState(initialPlugins);
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [deletingPluginId, setDeletingPluginId] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -123,6 +124,40 @@ export default function AccountPluginsPageClient({ initialPlugins }: AccountPlug
     } finally {
       setIsUploading(false);
       setIsDragging(false);
+    }
+  }
+
+  async function deletePlugin(plugin: PluginItem) {
+    const pluginLabel = plugin.displayName ?? plugin.name;
+    const confirmed = window.confirm(`Delete ${pluginLabel}? This will remove it from your library and any demo grants.`);
+    if (!confirmed) {
+      return;
+    }
+
+    setError(null);
+    setStatusMessage(`Deleting ${pluginLabel}...`);
+    setDeletingPluginId(plugin.id);
+
+    try {
+      const response = await fetch(`/api/plugins/${plugin.id}`, {
+        method: 'DELETE',
+      });
+
+      const data = (await response.json()) as { error?: string };
+      if (!response.ok) {
+        setError(data.error ?? 'Could not delete the plugin.');
+        setStatusMessage(null);
+        return;
+      }
+
+      setPlugins((current) => current.filter((currentPlugin) => currentPlugin.id !== plugin.id));
+      setStatusMessage(`Deleted ${pluginLabel}.`);
+      router.refresh();
+    } catch {
+      setError('Something went wrong. Please try again.');
+      setStatusMessage(null);
+    } finally {
+      setDeletingPluginId((current) => (current === plugin.id ? null : current));
     }
   }
 
@@ -208,24 +243,39 @@ export default function AccountPluginsPageClient({ initialPlugins }: AccountPlug
 
         {plugins.length > 0 ? (
           <ul className="mt-4 grid gap-3">
-            {plugins.map((plugin) => (
-              <li key={plugin.id} className="rounded-xl border border-gray-800 bg-gray-950/70 p-4">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium text-white">
-                      {plugin.displayName ?? plugin.name}
-                    </p>
-                    <p className="mt-1 text-xs text-gray-400">
-                      {plugin.name} · {plugin.version} · {plugin.visibility}
-                    </p>
+            {plugins.map((plugin) => {
+              const pluginLabel = plugin.displayName ?? plugin.name;
+
+              return (
+                <li key={plugin.id} className="rounded-xl border border-gray-800 bg-gray-950/70 p-4">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium text-white">{pluginLabel}</p>
+                      <p className="mt-1 text-xs text-gray-400">
+                        {plugin.name} · {plugin.version} · {plugin.visibility}
+                      </p>
+                    </div>
+                    <span className="rounded-full border border-gray-700 px-2 py-1 text-[11px] uppercase tracking-[0.16em] text-gray-300">
+                      {plugin.bundleKind ?? 'Bundle'}
+                    </span>
                   </div>
-                  <span className="rounded-full border border-gray-700 px-2 py-1 text-[11px] uppercase tracking-[0.16em] text-gray-300">
-                    {plugin.bundleKind ?? 'Bundle'}
-                  </span>
-                </div>
-                {plugin.description ? <p className="mt-3 text-sm text-gray-300">{plugin.description}</p> : null}
-              </li>
-            ))}
+                  {plugin.description ? <p className="mt-3 text-sm text-gray-300">{plugin.description}</p> : null}
+                  <div className="mt-4 flex items-center justify-between gap-3">
+                    <p className="min-w-0 text-xs text-gray-500">Plugin ID {plugin.id}</p>
+                    <button
+                      type="button"
+                      onClick={() => void deletePlugin(plugin)}
+                      disabled={deletingPluginId === plugin.id}
+                      aria-label={`Delete ${pluginLabel}`}
+                      title={`Delete ${pluginLabel}`}
+                      className="rounded-md border border-rose-500/40 bg-rose-500/10 px-3 py-1.5 text-sm font-medium text-rose-100 hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {deletingPluginId === plugin.id ? 'Deleting...' : 'Delete'}
+                    </button>
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         ) : (
           <p className="mt-4 rounded-xl border border-dashed border-gray-800 px-4 py-6 text-sm text-gray-400">

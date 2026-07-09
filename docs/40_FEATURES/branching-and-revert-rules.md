@@ -18,6 +18,7 @@ The version model is a graph, not a linear undo stack.
 - Branches should be visible in version history and comparison views.
 - Ordinary accepted edits should checkpoint the current head after commit
   instead of forking a new realtime edit branch for every mutation.
+- Upload and recording commits should branch from the freshest committed version the client knows about, not from an in-flight active-version update.
 - Safe concurrent timeline edits should rebase and converge on the same branch
   head; branch/409 fallback is reserved for overlap the transform layer cannot
   preserve.

@@ -23,6 +23,7 @@ These are the first reads for product and implementation sessions:
 | Database context | [[10_REPOS/db]] |
 | Shared contracts | [[10_REPOS/shared]] |
 | UI routing | [[30_UI/ui-routing]] |
+| DAW UI layout | [[30_UI/daw-ui-layout-guide]] |
 | DAW editor context | [[40_FEATURES/daw-editor]] |
 | Realtime shell refresh | [[40_FEATURES/workspace-refresh]] |
 | Processing jobs | [[40_FEATURES/processing-jobs]] |

@@ -40,6 +40,8 @@ Each user may have an active version, similar to a Git checkout.
 
 Users can follow the head of a branch, but they should not be forced onto another user's branch unexpectedly.
 
+For commit-producing audio actions, the client should resolve the branch source from the freshest committed version it knows about, not from a stale active-version snapshot that may still be waiting on an async round trip.
+
 Automatic version saving should advance the active head by checkpointing the
 accepted state, while preserving the version graph as a durable history of
 meaningful checkpoints.

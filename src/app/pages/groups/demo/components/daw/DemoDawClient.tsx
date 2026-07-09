@@ -349,6 +349,8 @@ export function DemoDawClient({
   const [gainByTrackVersionId, setGainByTrackVersionId] = useState<Record<string, number>>({});
   const [soloTrackVersionIds, setSoloTrackVersionIds] = useState<Set<string>>(() => new Set());
   const [recordArmedTrackVersionId, setRecordArmedTrackVersionId] = useState<string | null>(null);
+  const [expandedPluginTrackVersionIds, setExpandedPluginTrackVersionIds] = useState<Set<string>>(() => new Set());
+  const [pluginModuleReloadTick, setPluginModuleReloadTick] = useState(0);
   const [pluginRackDropTarget, setPluginRackDropTarget] = useState<{ trackVersionId: string; position: number } | null>(
     null,
   );
@@ -610,6 +612,48 @@ export function DemoDawClient({
       pluginDefinitionsByIdentity.get(`${plugin.pluginKey}@${plugin.version}`) ?? null,
     [pluginDefinitionsByIdentity],
   );
+  function logPluginModuleLoadFailure(input: {
+    trackVersionId?: string;
+    trackId?: string;
+    trackName?: string;
+    pluginKey: string;
+    version: string;
+    descriptorUrl?: string | null;
+    source: 'preload' | 'manual-add';
+    error: unknown;
+  }) {
+    const error =
+      input.error instanceof Error
+        ? {
+            name: input.error.name,
+            message: input.error.message,
+            stack: input.error.stack,
+            cause: (input.error as Error & { cause?: unknown }).cause ?? null,
+          }
+        : {
+            name: typeof input.error,
+            message: String(input.error),
+            stack: null,
+            cause: null,
+          };
+
+    console.error(
+      '[daw][wam] plugin module load failed',
+      JSON.stringify({
+        source: input.source,
+        projectId,
+        demoId,
+        selectedTrackVersionId,
+        trackVersionId: input.trackVersionId ?? null,
+        trackId: input.trackId ?? null,
+        trackName: input.trackName ?? null,
+        pluginKey: input.pluginKey,
+        version: input.version,
+        descriptorUrl: input.descriptorUrl ?? null,
+        error,
+      }),
+    );
+  }
   const preloadPluginDefinition = useCallback(
     async (pluginDefinition: PluginDefinition) => {
       if (!pluginDefinition.descriptorUrl) {
@@ -1243,6 +1287,7 @@ export function DemoDawClient({
     let cancelled = false;
 
     async function preloadPluginModules() {
+      setPluginGraphIssue(null);
       const pendingLoads = new Map<string, Promise<void>>();
 
       for (const track of selectedTracks) {
@@ -1262,6 +1307,28 @@ export function DemoDawClient({
             preloadPluginDefinition(definition)
               .then(() => undefined)
               .catch((error) => {
+                console.log(
+                  '[DemoDawClient] preloadPluginModules failure',
+                  JSON.stringify({
+                    pluginKey: definition.pluginKey,
+                    version: definition.version,
+                    descriptorUrl: definition.descriptorUrl,
+                    trackVersionId: track.trackVersionId,
+                    trackId: track.trackId,
+                    trackName: track.trackName,
+                    error: error instanceof Error ? { name: error.name, message: error.message } : error,
+                  }),
+                );
+                logPluginModuleLoadFailure({
+                  source: 'preload',
+                  trackVersionId: track.trackVersionId,
+                  trackId: track.trackId,
+                  trackName: track.trackName,
+                  pluginKey: definition.pluginKey,
+                  version: definition.version,
+                  descriptorUrl: definition.descriptorUrl,
+                  error,
+                });
                 setPluginGraphIssue({
                   trackVersionId: track.trackVersionId,
                   pluginKey: definition.pluginKey,
@@ -1299,6 +1366,7 @@ export function DemoDawClient({
       cancelled = true;
     };
   }, [
+    pluginModuleReloadTick,
     playbackEngine,
     playbackEngineProjection,
     resolvedLocalTempoBpm,
@@ -1307,6 +1375,18 @@ export function DemoDawClient({
     sharedDemoTempoBpm,
     selectedTracks,
   ]);
+
+  useEffect(() => {
+    if (!pluginGraphIssue) {
+      return;
+    }
+
+    const retryTimer = window.setTimeout(() => {
+      setPluginModuleReloadTick((currentTick) => currentTick + 1);
+    }, 1500);
+
+    return () => window.clearTimeout(retryTimer);
+  }, [pluginGraphIssue]);
 
   useEffect(() => {
     if (!isPlaying) {
@@ -2292,9 +2372,37 @@ export function DemoDawClient({
   async function commitEditingOperation(
     request: DawOperationCommitRequest,
   ) {
-    return projectSyncEngine.commitOperation(
-      buildCommitRequest(request.operationType, request.payload, request),
-    );
+    console.log('[DemoDawClient] commitEditingOperation request', {
+      operationType: request.operationType,
+      payload: request.payload,
+      baseSnapshotId: request.baseSnapshotId ?? null,
+      baseOperationSeq: request.baseOperationSeq ?? null,
+      targetTrackId: request.targetTrackId ?? null,
+      targetSegmentId: request.targetSegmentId ?? null,
+      affectedTimeRange: request.affectedTimeRange ?? null,
+      idempotencyKey: request.idempotencyKey ?? null,
+      clientOperationId: request.clientOperationId ?? null,
+    });
+
+    try {
+      const result = await projectSyncEngine.commitOperation(
+        buildCommitRequest(request.operationType, request.payload, request),
+      );
+      console.log('[DemoDawClient] commitEditingOperation response', {
+        operationType: result.type,
+        operationSeq: result.operationSeq,
+        trackId: result.trackId ?? null,
+        segmentId: result.segmentId ?? null,
+      });
+      return result;
+    } catch (error) {
+      console.log('[DemoDawClient] commitEditingOperation error', {
+        operationType: request.operationType,
+        payload: request.payload,
+        error: error instanceof Error ? { name: error.name, message: error.message } : error,
+      });
+      throw error;
+    }
   }
 
   function getTimelineTimeFromPointer(element: HTMLElement, clientX: number, timelineBaseMs = 0) {
@@ -2623,8 +2731,26 @@ export function DemoDawClient({
     if (!selectedTrack) return;
 
     try {
+      console.log('[DemoDawClient] addPluginToSelectedTrack', {
+        trackVersionId: selectedTrack.trackVersionId,
+        trackId: selectedTrack.trackId,
+        trackName: selectedTrack.trackName,
+        pluginKey: pluginDefinition.pluginKey,
+        version: pluginDefinition.version,
+        descriptorUrl: pluginDefinition.descriptorUrl,
+      });
       await preloadPluginDefinition(pluginDefinition);
     } catch (error) {
+      logPluginModuleLoadFailure({
+        source: 'manual-add',
+        trackVersionId: selectedTrack.trackVersionId,
+        trackId: selectedTrack.trackId,
+        trackName: selectedTrack.trackName,
+        pluginKey: pluginDefinition.pluginKey,
+        version: pluginDefinition.version,
+        descriptorUrl: pluginDefinition.descriptorUrl,
+        error,
+      });
       setPluginGraphIssue({
         trackVersionId: selectedTrack.trackVersionId,
         pluginKey: pluginDefinition.pluginKey,
@@ -2659,6 +2785,22 @@ export function DemoDawClient({
 
   function getOrderedTrackPlugins(track: DawTrack) {
     return [...track.plugins].sort((left, right) => left.position - right.position);
+  }
+
+  function isTrackPluginRackExpanded(trackVersionId: string) {
+    return expandedPluginTrackVersionIds.has(trackVersionId);
+  }
+
+  function toggleTrackPluginRack(trackVersionId: string) {
+    setExpandedPluginTrackVersionIds((previous) => {
+      const next = new Set(previous);
+      if (next.has(trackVersionId)) {
+        next.delete(trackVersionId);
+      } else {
+        next.add(trackVersionId);
+      }
+      return next;
+    });
   }
 
   function renderPluginChain(track: DawTrack, options?: { variant?: 'rack' | 'browser' }) {
@@ -3465,6 +3607,13 @@ export function DemoDawClient({
   }
 
   async function deleteTrack(track: DawTrack) {
+    console.log('[DemoDawClient] deleteTrack', {
+      trackId: track.trackId,
+      trackVersionId: track.trackVersionId,
+      trackName: track.trackName,
+      selectedTrackVersionId,
+      selectedSegmentId,
+    });
     try {
       await commitEditingOperation(audioEditingEngine.deleteTrack(track.trackId));
       if (selectedTrackVersionId === track.trackVersionId) {
@@ -3823,12 +3972,31 @@ export function DemoDawClient({
     try {
       const armedTrack = selectedTracks.find((candidate) => candidate.trackVersionId === track.targetTrackVersionId);
       const shouldReuseArmedTrack = Boolean(armedTrack && isBlankTrack(armedTrack));
+      const recordingSourceVersionId = resolveUploadSourceVersionId({
+        selectedVersionId,
+        liveActiveVersionId,
+        freshestCommittedVersionId: freshestCommittedVersionIdRef.current,
+        isHistoryViewActive,
+      });
+
+      console.log('[DemoDawClient] handleSaveRecording source selection', {
+        projectId,
+        demoId,
+        selectedVersionId,
+        liveActiveVersionId,
+        freshestCommittedVersionId: freshestCommittedVersionIdRef.current,
+        isHistoryViewActive,
+        targetTrackId: track.targetTrackId,
+        targetTrackVersionId: track.targetTrackVersionId,
+        shouldReuseArmedTrack,
+        resolvedSourceVersionId: recordingSourceVersionId,
+      });
 
       const data = await ingestEngine.uploadRecordedBlob({
         demoId,
         projectId,
         name: track.name,
-        sourceVersionId: liveActiveVersionId,
+        sourceVersionId: recordingSourceVersionId,
         trackId: shouldReuseArmedTrack ? track.targetTrackId : undefined,
         startOffsetMs: effectiveBounds.startOffsetMs,
         recordedTempoBpm: track.recordedTempoBpm,
@@ -4950,7 +5118,64 @@ export function DemoDawClient({
                             </label>
                           </div>
 
-                          {renderPluginChain(track)}
+                          {track.plugins.length > 0 ? (
+                            <div className="space-y-1.5">
+                              <button
+                                type="button"
+                                onClick={() => toggleTrackPluginRack(track.trackVersionId)}
+                                aria-expanded={isTrackPluginRackExpanded(track.trackVersionId)}
+                                aria-controls={`track-plugin-chain-${track.trackVersionId}`}
+                                aria-label={
+                                  isTrackPluginRackExpanded(track.trackVersionId)
+                                    ? `Hide plugins on ${track.trackName}`
+                                    : `Show plugins on ${track.trackName}`
+                                }
+                                className="flex w-full items-center justify-between gap-2 rounded-md border border-slate-800/80 bg-slate-950/70 px-2.5 py-1.5 text-left transition-colors hover:border-slate-700 hover:bg-slate-900/80"
+                              >
+                                <span className="min-w-0">
+                                  <span className="block text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-300">
+                                    Plugins
+                                  </span>
+                                  <span className="mt-0.5 block text-[10px] text-slate-500">
+                                    {isTrackPluginRackExpanded(track.trackVersionId)
+                                      ? 'Hide insert chain'
+                                      : 'Hidden by default'}
+                                  </span>
+                                </span>
+                                <span className="flex shrink-0 items-center gap-2">
+                                  <span className="rounded-full border border-slate-700 bg-slate-900/80 px-2 py-0.5 text-[10px] font-medium text-slate-300">
+                                    {track.plugins.length}
+                                  </span>
+                                  <svg
+                                    width="10"
+                                    height="10"
+                                    viewBox="0 0 10 10"
+                                    fill="none"
+                                    aria-hidden="true"
+                                    className={`text-slate-400 transition-transform ${
+                                      isTrackPluginRackExpanded(track.trackVersionId) ? 'rotate-180' : ''
+                                    }`}
+                                  >
+                                    <path
+                                      d="M2 3.5L5 6.5L8 3.5"
+                                      stroke="currentColor"
+                                      strokeWidth="1.4"
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                    />
+                                  </svg>
+                                </span>
+                              </button>
+                              {isTrackPluginRackExpanded(track.trackVersionId) ? (
+                                <div
+                                  id={`track-plugin-chain-${track.trackVersionId}`}
+                                  data-testid={`track-plugin-chain-${track.trackVersionId}`}
+                                >
+                                  {renderPluginChain(track)}
+                                </div>
+                              ) : null}
+                            </div>
+                          ) : null}
                         </>
                       )}
                     </div>

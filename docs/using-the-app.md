@@ -34,7 +34,7 @@ This is the shortest path through the app as it exists today.
 
 ## 6. Try the fake test plugin
 
-1. Upload [`docs/fake-wam-plugin.mjs`](./fake-wam-plugin.mjs) from this repo.
+1. Upload [`docs/fake-wam-plugin.js`](./fake-wam-plugin.js) from this repo.
 1. Grant it to a demo after it appears in your library.
 1. The module is a small delay effect, so it is easy to hear in the DAW.
 
