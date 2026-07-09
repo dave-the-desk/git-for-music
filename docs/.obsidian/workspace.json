@@ -27,14 +27,10 @@
             "id": "0c277a4707285d99",
             "type": "leaf",
             "state": {
-              "type": "markdown",
-              "state": {
-                "file": "30_UI/daw-ui-ideal-alignment-plan.md",
-                "mode": "source",
-                "source": false
-              },
+              "type": "empty",
+              "state": {},
               "icon": "lucide-file",
-              "title": "daw-ui-ideal-alignment-plan"
+              "title": "New tab"
             }
           }
         ]
@@ -200,24 +196,34 @@
       "bases:Create new base": false
     }
   },
-  "active": "890ad97988d33610",
+  "active": "0c277a4707285d99",
   "lastOpenFiles": [
+    "60_BRANCHES/plugins/user-plugin-library-implementation-checklist.md",
+    "fake-wam-plugin.mjs",
+    "using-the-app.md",
+    "60_BRANCHES/plugins/daw-plugins-implementation-checklist.md",
+    "daily-logging/2026-07-08.md",
+    "60_BRANCHES/plugins/user-plugin-library-and-sharing-plan.md",
+    "40_FEATURES/core-metaphor.md",
+    "daily-logging/2026-07-06.md",
+    "60_BRANCHES/plugins/daw-plugins-in-this-daw.md",
+    "60_BRANCHES/plugins/daw-plugins-technical-overview.md",
+    "60_BRANCHES/plugins/README.md",
+    "30_UI/daw-ui-ideal-alignment-plan.md",
     "30_UI/current-daw-ui-explanation.md",
+    "60_BRANCHES/plugins",
+    "papers/daw-plugins/43.dafx2013_submission_52.pdf",
+    "papers/daw-plugins/2503.02977v1.pdf",
+    "papers/daw-plugins/3487553.3524225.pdf",
+    "papers/daw-plugins",
     "30_UI/current-daw-ui-style-guide.md",
     "00_HOME.md",
-    "30_UI/daw-ui-ideal-alignment-plan.md",
     "30_UI/ideal-daw-ui-ux-design.md",
     "30_UI/ui-routing.md",
     "papers/realtime-collab/289444.289469.pdf",
     "papers/realtime-collab/215585.215706.pdf",
     "papers/realtime-collab/1708.04754v4.pdf",
     "papers/git-docs/2312.13644v2.pdf",
-    "papers/git-docs/2009.03115v2.pdf",
-    "papers/daw-UI/thesis_access.pdf",
-    "papers/daw-UI/Metaphors_for_Electronic_Music_Productio.pdf",
-    "papers/daw-UI/Mark-Marrington-Paradigms-of-Music-Software-Interface-Design-and-Musical-Creativity-2016.pdf",
-    "papers/general-ui-design-practices/systemusabilityscale%28sus%29_comp%5B1%5D.pdf",
-    "papers/general-ui-design-practices/1180639.1180831.pdf",
     "papers/README.md",
     "daily-logging/2026-07-05.md",
     "60_BRANCHES/daw-realtime-collab/session-problems-and-solutions.md",
@@ -226,17 +232,6 @@
     "60_BRANCHES/daw-realtime-collab/implementation-checklist.md",
     "60_BRANCHES/daw-realtime-collab/README.md",
     "40_FEATURES/daw-add-track-duplicate-after-recording.md",
-    "papers-on-sync/realtime-collaboration-plan.md",
-    "papers-on-sync/README.md",
-    "01_PROTOCOLS/operating-protocol.md",
-    "01_PROTOCOLS/non-negotiable-rules.md",
-    "01_PROTOCOLS/architecture-decision-log.md",
-    "01_PROTOCOLS/ai-start-here.md",
-    "01_PROTOCOLS/agent-implementation-guide.md",
-    "architecture/codebase-architecture.md",
-    "architecture/daw-realtime-sync.md",
-    "daily-logging/2026-07-04.md",
-    "60_BRANCHES/README.md",
-    "processing-jobs.md"
+    "papers-on-sync/realtime-collaboration-plan.md"
   ]
 }
