@@ -39,6 +39,7 @@ import {
 } from '@/app/lib/daw/server/realtime-gateway';
 import { createDemoVersionWithCopiedTracks } from '@/app/lib/daw/server/versions';
 import { createAutoDemoVersion, serializeCreatedDemoVersionTreeNode } from '@/app/lib/daw/server/versioning';
+import { listPluginsForDemo } from '@/app/lib/plugins';
 import { rebaseTimelineEditRequest } from '@/app/lib/daw/state/timeline-edit-rebase';
 import type { LocalProjectState } from '@/app/lib/daw/state/local-project-state';
 import type {
@@ -376,19 +377,29 @@ function serializePluginDefinition(row: {
   id: string;
   pluginKey: string;
   name: string;
+  displayName: string | null;
+  description: string | null;
   version: string;
   manufacturer: string | null;
   parameterSchema: Prisma.JsonValue;
-  createdAt: Date;
+  ownerId: string | null;
+  visibility: 'PRIVATE' | 'PUBLIC';
+  descriptorUrl: string;
+  createdAt: string;
 }): DawProjectBootstrapPluginDefinition {
   return {
     id: row.id,
     pluginKey: row.pluginKey,
     name: row.name,
+    displayName: row.displayName,
+    description: row.description,
     version: row.version,
     manufacturer: row.manufacturer,
     parameterSchema: row.parameterSchema as DawProjectBootstrapPluginDefinition['parameterSchema'],
-    createdAt: row.createdAt.toISOString(),
+    ownerId: row.ownerId,
+    visibility: row.visibility,
+    descriptorUrl: row.descriptorUrl,
+    createdAt: row.createdAt,
   };
 }
 
@@ -2387,19 +2398,9 @@ export async function loadDawProjectBootstrap(
         createdAt: true,
       },
     }),
-    client.pluginMetadata.findMany({
-      orderBy: {
-        createdAt: 'desc',
-      },
-      select: {
-        id: true,
-        pluginKey: true,
-        name: true,
-        version: true,
-        manufacturer: true,
-        parameterSchema: true,
-        createdAt: true,
-      },
+    listPluginsForDemo(client, {
+      demoId: workspace.demo.id,
+      userId: input.userId,
     }),
   ]);
 

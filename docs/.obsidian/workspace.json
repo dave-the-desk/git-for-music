@@ -29,12 +29,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "60_BRANCHES/plugins/daw-plugins-implementation-checklist.md",
+                "file": "60_BRANCHES/plugins/user-plugin-library-implementation-checklist.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "daw-plugins-implementation-checklist"
+              "title": "user-plugin-library-implementation-checklist"
             }
           }
         ]
@@ -200,9 +200,14 @@
       "bases:Create new base": false
     }
   },
-  "active": "1ef58a2afad3a794",
+  "active": "0c277a4707285d99",
   "lastOpenFiles": [
+    "fake-wam-plugin.mjs",
+    "using-the-app.md",
     "60_BRANCHES/plugins/daw-plugins-implementation-checklist.md",
+    "daily-logging/2026-07-08.md",
+    "60_BRANCHES/plugins/user-plugin-library-implementation-checklist.md",
+    "60_BRANCHES/plugins/user-plugin-library-and-sharing-plan.md",
     "40_FEATURES/core-metaphor.md",
     "daily-logging/2026-07-06.md",
     "60_BRANCHES/plugins/daw-plugins-in-this-daw.md",
@@ -232,11 +237,6 @@
     "60_BRANCHES/daw-realtime-collab/implementation-checklist.md",
     "60_BRANCHES/daw-realtime-collab/README.md",
     "40_FEATURES/daw-add-track-duplicate-after-recording.md",
-    "papers-on-sync/realtime-collaboration-plan.md",
-    "papers-on-sync/README.md",
-    "01_PROTOCOLS/operating-protocol.md",
-    "01_PROTOCOLS/non-negotiable-rules.md",
-    "01_PROTOCOLS/architecture-decision-log.md",
-    "01_PROTOCOLS/ai-start-here.md"
+    "papers-on-sync/realtime-collaboration-plan.md"
   ]
 }

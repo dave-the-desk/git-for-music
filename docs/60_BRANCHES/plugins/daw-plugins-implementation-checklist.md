@@ -164,15 +164,15 @@ separately from Phases 1–5.
 
 ## Phase 7 — State durability, latency, and hardening
 
-- [ ] Verify a full **reload** reconstructs plugin chains + params from the
+- [x] Verify a full **reload** reconstructs plugin chains + params from the
   operation tail + latest snapshot (add an integration/replay test).
-- [ ] Enforce **JSON-only** plugin state in the op log; route large binary state
+- [x] Enforce **JSON-only** plugin state in the op log; route large binary state
   through an asset/blob key (`stateBlobKey`) instead of inlining bytes.
-- [ ] Latency: capture WAM-reported latency per instance; document that the engine
+- [x] Latency: capture WAM-reported latency per instance; document that the engine
   does **not** yet do plugin-latency compensation and track it as a known gap.
-- [ ] Failure handling: a plugin that fails to load must not break playback —
+- [x] Failure handling: a plugin that fails to load must not break playback —
   fall back to `input` passthrough and surface a non-blocking error.
-- [ ] Performance: cap concurrent WAM instances / warn on heavy chains.
+- [x] Performance: cap concurrent WAM instances / warn on heavy chains.
 
 ---
 

@@ -16,6 +16,15 @@ type StorageKeyInput = AudioStorageContext & {
   jobId?: string;
 };
 
+function sanitizeStorageSegment(value: string) {
+  return value.replace(/[^a-zA-Z0-9._-]/g, '-').replace(/-+/g, '-').replace(/^[-.]+|[-.]+$/g, '');
+}
+
+function sanitizePluginSegment(value: string) {
+  const normalized = sanitizeStorageSegment(value);
+  return normalized || 'plugin';
+}
+
 export function buildTrackVersionStoragePrefix({
   groupId,
   projectId,
@@ -72,4 +81,30 @@ export function buildTrackVersionStemObjectKey(input: StorageKeyInput) {
 
 export function buildDemoAnalysisObjectKey(input: Pick<StorageKeyInput, 'projectId' | 'demoId'>, jobId: string) {
   return buildAnalysisObjectKey(input, jobId);
+}
+
+export function buildPluginStoragePrefix(input: {
+  ownerId: string;
+  pluginId: string;
+  version: string;
+}) {
+  return `plugins/${sanitizePluginSegment(input.ownerId)}/${sanitizePluginSegment(input.pluginId)}/${sanitizePluginSegment(input.version)}`;
+}
+
+export function buildPluginModuleObjectKey(input: {
+  ownerId: string;
+  pluginId: string;
+  version: string;
+  fileName: string;
+}) {
+  const fileName = sanitizePluginSegment(input.fileName);
+  return `${buildPluginStoragePrefix(input)}/${fileName}`;
+}
+
+export function buildPluginBundlePrefix(input: {
+  ownerId: string;
+  pluginId: string;
+  version: string;
+}) {
+  return buildPluginStoragePrefix(input);
 }

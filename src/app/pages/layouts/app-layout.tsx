@@ -10,7 +10,7 @@ export default function AppLayout({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
-  const isAppRoute = pathname.startsWith('/groups');
+  const isAppRoute = pathname.startsWith('/groups') || pathname.startsWith('/account');
   const isDemoDawPage = /^\/groups\/[^/]+\/projects\/[^/]+\/demos\/[^/]+$/.test(pathname);
 
   if (!isAppRoute) {
@@ -28,8 +28,14 @@ export default function AppLayout({
           <Link href="/groups" className="text-lg font-semibold tracking-tight text-white">
             git-for-music
           </Link>
-          <div className="ml-auto">
+          <div className="ml-auto flex items-center gap-3">
             <NotificationBell />
+            <Link
+              href="/account"
+              className="rounded-md border border-gray-700 px-3 py-2 text-sm font-medium text-gray-200 transition-colors hover:bg-gray-800 hover:text-white"
+            >
+              Account
+            </Link>
           </div>
         </div>
       </nav>

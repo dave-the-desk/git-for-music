@@ -32,7 +32,11 @@ import { AudioEditingEngine } from '@/app/lib/daw/engine/audio-editing-engine';
 import { AudioIngestEngine } from '@/app/lib/daw/engine/ingest-engine';
 import { ProjectSyncEngine } from '@/app/lib/daw/engine/project-sync-engine';
 import { AudioPlaybackEngine } from '@/app/lib/daw/engine/playback-engine';
-import { createWamPlaybackPluginGraphFactory, type PlaybackPluginGraphIssue } from '@/app/lib/daw/engine/wam-host';
+import {
+  createWamPlaybackPluginGraphFactory,
+  loadWamModule,
+  type PlaybackPluginGraphIssue,
+} from '@/app/lib/daw/engine/wam-host';
 import {
   buildDawVisualProjection,
   PX_PER_SECOND,
@@ -233,9 +237,14 @@ type PluginDefinition = {
   id: string;
   pluginKey: string;
   name: string;
+  displayName: string | null;
+  description: string | null;
   version: string;
   manufacturer: string | null;
   parameterSchema: unknown;
+  ownerId: string | null;
+  visibility: 'PRIVATE' | 'PUBLIC';
+  descriptorUrl: string;
   createdAt: string;
 };
 
@@ -586,9 +595,24 @@ export function DemoDawClient({
     () => selectedTracks.find((track) => track.trackVersionId === selectedTrackVersionId) ?? selectedTracks[0] ?? null,
     [selectedTrackVersionId, selectedTracks],
   );
-  const pluginDefinitionsByKey = useMemo(
-    () => new Map(pluginDefinitions.map((plugin) => [plugin.pluginKey, plugin] as const)),
+  const pluginDefinitionsByIdentity = useMemo(
+    () => new Map(pluginDefinitions.map((plugin) => [`${plugin.pluginKey}@${plugin.version}`, plugin] as const)),
     [pluginDefinitions],
+  );
+  const resolvePluginDefinition = useCallback(
+    (plugin: Pick<DawTrack['plugins'][number], 'pluginKey' | 'version'>) =>
+      pluginDefinitionsByIdentity.get(`${plugin.pluginKey}@${plugin.version}`) ?? null,
+    [pluginDefinitionsByIdentity],
+  );
+  const preloadPluginDefinition = useCallback(
+    async (pluginDefinition: PluginDefinition) => {
+      if (!pluginDefinition.descriptorUrl) {
+        return;
+      }
+
+      await loadWamModule(pluginDefinition.pluginKey, pluginDefinition.version, pluginDefinition.descriptorUrl);
+    },
+    [],
   );
   useEffect(() => {
     selectedTracksRef.current = selectedTracks;
@@ -656,9 +680,14 @@ export function DemoDawClient({
             id: string;
             pluginKey: string;
             name: string;
+            displayName: string | null;
+            description: string | null;
             version: string;
             manufacturer: string | null;
             parameterSchema: unknown;
+            ownerId: string | null;
+            visibility: 'PRIVATE' | 'PUBLIC';
+            descriptorUrl: string;
             createdAt: string;
           }>;
         };
@@ -997,6 +1026,7 @@ export function DemoDawClient({
       recordedTempoBpm: track.recordedTempoBpm,
       sourceTempoBpm: track.sourceTempoBpm,
       isMuted: track.isMuted,
+      plugins: track.plugins,
     }));
     const projectedMutedTrackVersionIds = new Set(mutedTrackVersionIds);
     const projectedSoloTrackVersionIds = new Set(soloTrackVersionIds);
@@ -1169,19 +1199,72 @@ export function DemoDawClient({
   }, [selectedTracks, selectedVersionId]);
 
   useEffect(() => {
-    playbackEngine.setProject({
-      tracks: playbackEngineProjection.tracks,
-      mutedTrackVersionIds: playbackEngineProjection.mutedTrackVersionIds,
-      soloTrackVersionIds: playbackEngineProjection.soloTrackVersionIds,
-      gainByTrackVersionId: playbackEngineProjection.gainByTrackVersionId,
-      localTempoBpm: resolvedLocalTempoBpm,
-      sharedDemoTempoBpm,
-    });
+    let cancelled = false;
+
+    async function preloadPluginModules() {
+      const pendingLoads = new Map<string, Promise<void>>();
+
+      for (const track of selectedTracks) {
+        for (const plugin of track.plugins) {
+          const definition = resolvePluginDefinition(plugin);
+          if (!definition?.descriptorUrl) {
+            continue;
+          }
+
+          const cacheKey = `${definition.pluginKey}@${definition.version}`;
+          if (pendingLoads.has(cacheKey)) {
+            continue;
+          }
+
+          pendingLoads.set(
+            cacheKey,
+            preloadPluginDefinition(definition)
+              .then(() => undefined)
+              .catch((error) => {
+                setPluginGraphIssue({
+                  trackVersionId: track.trackVersionId,
+                  pluginKey: definition.pluginKey,
+                  version: definition.version,
+                  message:
+                    error instanceof Error
+                      ? error.message
+                      : `Could not load ${definition.pluginKey}@${definition.version}`,
+                  severity: 'error',
+                });
+              }),
+          );
+        }
+      }
+
+      await Promise.all(pendingLoads.values());
+
+      if (cancelled) {
+        return;
+      }
+
+      playbackEngine.setProject({
+        tracks: playbackEngineProjection.tracks,
+        mutedTrackVersionIds: playbackEngineProjection.mutedTrackVersionIds,
+        soloTrackVersionIds: playbackEngineProjection.soloTrackVersionIds,
+        gainByTrackVersionId: playbackEngineProjection.gainByTrackVersionId,
+        localTempoBpm: resolvedLocalTempoBpm,
+        sharedDemoTempoBpm,
+      });
+    }
+
+    void preloadPluginModules();
+
+    return () => {
+      cancelled = true;
+    };
   }, [
     playbackEngine,
     playbackEngineProjection,
     resolvedLocalTempoBpm,
+    preloadPluginDefinition,
+    resolvePluginDefinition,
     sharedDemoTempoBpm,
+    selectedTracks,
   ]);
 
   useEffect(() => {
@@ -2442,6 +2525,22 @@ export function DemoDawClient({
   async function addPluginToSelectedTrack(pluginDefinition: (typeof pluginDefinitions)[number]) {
     if (!selectedTrack) return;
 
+    try {
+      await preloadPluginDefinition(pluginDefinition);
+    } catch (error) {
+      setPluginGraphIssue({
+        trackVersionId: selectedTrack.trackVersionId,
+        pluginKey: pluginDefinition.pluginKey,
+        version: pluginDefinition.version,
+        message:
+          error instanceof Error
+            ? error.message
+            : `Could not load ${pluginDefinition.pluginKey}@${pluginDefinition.version}`,
+        severity: 'error',
+      });
+      return;
+    }
+
     const pluginInstance: HostedPluginInstanceState = {
       instanceId: crypto.randomUUID(),
       pluginKey: pluginDefinition.pluginKey,
@@ -2457,11 +2556,133 @@ export function DemoDawClient({
   }
 
   function getPluginRackLabel(plugin: DawTrack['plugins'][number]) {
-    return pluginDefinitionsByKey.get(plugin.pluginKey)?.name ?? `${plugin.pluginKey} ${plugin.version}`;
+    const definition = resolvePluginDefinition(plugin);
+    return definition?.displayName ?? definition?.name ?? `${plugin.pluginKey} ${plugin.version}`;
   }
 
   function getOrderedTrackPlugins(track: DawTrack) {
     return [...track.plugins].sort((left, right) => left.position - right.position);
+  }
+
+  function renderPluginChain(track: DawTrack, options?: { variant?: 'rack' | 'browser' }) {
+    const orderedTrackPlugins = getOrderedTrackPlugins(track);
+    const isBrowserVariant = options?.variant === 'browser';
+    const isRackVariant = !isBrowserVariant;
+
+    return (
+      <div
+        className={
+          isBrowserVariant
+            ? 'space-y-4'
+            : 'mt-2 overflow-hidden rounded-xl border border-slate-800/90 bg-slate-950/80 p-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]'
+        }
+      >
+        {isBrowserVariant ? (
+          <div className="space-y-1">
+            <p className="text-sm font-semibold text-white">{track.trackName}</p>
+            <p className="text-xs text-slate-400">Edit the selected track's insert chain from the Plugins tab.</p>
+          </div>
+        ) : (
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <div className="min-w-0">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-300">Insert chain</p>
+              <p className="mt-0.5 text-[10px] text-slate-500">Plugins on this track</p>
+            </div>
+            <span className="shrink-0 rounded-full border border-slate-700 bg-slate-900/80 px-2 py-0.5 text-[10px] font-medium text-slate-300">
+              {orderedTrackPlugins.length} slot{orderedTrackPlugins.length === 1 ? '' : 's'}
+            </span>
+          </div>
+        )}
+        <div className="space-y-2" data-testid={isBrowserVariant ? `browser-plugin-chain-${track.trackVersionId}` : undefined}>
+          {orderedTrackPlugins.length > 0 ? (
+            orderedTrackPlugins.map((plugin, index) => {
+              const pluginDefinition = resolvePluginDefinition(plugin);
+              const pluginLabel = pluginDefinition?.displayName ?? pluginDefinition?.name ?? 'WAM plugin';
+              const isDropTarget =
+                pluginRackDropTarget?.trackVersionId === track.trackVersionId && pluginRackDropTarget.position === index;
+              const parameterEditor = renderPluginParameterEditor(track, plugin);
+
+              return (
+                <div
+                  key={plugin.instanceId}
+                  className={`rounded-xl border px-3 py-2.5 transition-colors ${
+                    plugin.bypassed
+                      ? 'border-slate-800 bg-slate-900/70 opacity-70'
+                      : 'border-slate-700 bg-slate-900/95'
+                  } ${isDropTarget ? 'ring-1 ring-cyan-400/70' : ''} ${
+                    isRackVariant ? 'shadow-[0_8px_20px_-16px_rgba(0,0,0,0.9)]' : ''
+                  }`}
+                  onDragOver={(event) => handlePluginDragOver(event, track.trackVersionId, index)}
+                  onDrop={(event) => void handlePluginDrop(event, track, index)}
+                >
+                  <div className="flex items-start gap-2">
+                    <button
+                      type="button"
+                      draggable
+                      onDragStart={(event) => handlePluginDragStart(event, track.trackVersionId, plugin.instanceId)}
+                      onDragEnd={handlePluginDragEnd}
+                      aria-label={`Drag ${pluginLabel}`}
+                      className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-slate-700 bg-slate-950 text-sm font-semibold text-slate-300 transition-colors hover:border-slate-500 hover:text-white active:cursor-grabbing"
+                    >
+                      <span aria-hidden>::</span>
+                    </button>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex min-w-0 items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-base font-semibold leading-5 text-white">{pluginLabel}</p>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-1">
+                          {!plugin.bypassed ? (
+                            <button
+                              type="button"
+                              onClick={() => void setPluginBypass(track.trackVersionId, plugin.instanceId, true)}
+                              aria-label={`Bypass ${pluginLabel}`}
+                              className="rounded-full border border-slate-700 bg-slate-950/70 px-2 py-1 text-[10px] font-semibold text-slate-300 transition-colors hover:border-slate-500 hover:text-white"
+                            >
+                              Bypass
+                            </button>
+                          ) : (
+                            <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-[10px] font-semibold text-amber-200">
+                              Bypassed
+                            </span>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => void removePlugin(track.trackVersionId, plugin.instanceId)}
+                            aria-label={`Remove ${pluginLabel} from ${track.trackName}`}
+                            className="rounded-full border border-slate-700 bg-slate-950/70 px-2 py-1 text-[10px] font-semibold text-rose-200 transition-colors hover:border-rose-500/40 hover:bg-rose-500/10 hover:text-rose-100"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  {parameterEditor ? (
+                    <div className="mt-3 rounded-lg border border-slate-800/80 bg-slate-950/60 p-2">{parameterEditor}</div>
+                  ) : null}
+                </div>
+              );
+            })
+          ) : (
+            <p className="rounded-lg border border-dashed border-slate-800 px-3 py-3 text-[10px] text-slate-500">
+              No inserts on this track yet.
+            </p>
+          )}
+          <div
+            className={`h-2 rounded ${
+              pluginRackDropTarget?.trackVersionId === track.trackVersionId &&
+              pluginRackDropTarget.position === orderedTrackPlugins.length
+                ? 'bg-cyan-400/40'
+                : 'bg-transparent'
+            }`}
+            onDragOver={(event) => handlePluginDragOver(event, track.trackVersionId, orderedTrackPlugins.length)}
+            onDrop={(event) => void handlePluginDrop(event, track, orderedTrackPlugins.length)}
+            aria-hidden
+          />
+        </div>
+      </div>
+    );
   }
 
   function isRecord(value: unknown): value is Record<string, unknown> {
@@ -2600,7 +2821,7 @@ export function DemoDawClient({
   }
 
   function renderPluginParameterEditor(track: DawTrack, plugin: DawTrack['plugins'][number]) {
-    const pluginDefinition = pluginDefinitionsByKey.get(plugin.pluginKey);
+    const pluginDefinition = resolvePluginDefinition(plugin);
     const parameters = normalizePluginParameters(pluginDefinition?.parameterSchema);
     if (parameters.length === 0) return null;
 
@@ -3939,13 +4160,22 @@ export function DemoDawClient({
               ) : null}
 
               {browserTab === 'plugins' ? (
-                <div className="space-y-3">
+                <div className="space-y-4">
                   <div>
                     <p className="text-sm font-semibold text-white">Plugins</p>
                     <p className="mt-1 text-xs text-slate-400">
                       Add a plugin to the selected track to emit a `PLUGIN_ADDED` commit.
                     </p>
                   </div>
+                  {selectedTrack ? (
+                    <section className="rounded-xl border border-slate-800 bg-slate-950/80 p-3">
+                      {renderPluginChain(selectedTrack, { variant: 'browser' })}
+                    </section>
+                  ) : (
+                    <p className="rounded-xl border border-dashed border-slate-800 px-3 py-3 text-xs text-slate-500">
+                      Select a track to edit its insert chain here.
+                    </p>
+                  )}
                   {filteredPluginDefinitions.length > 0 ? (
                     <ul className="grid gap-2">
                       {filteredPluginDefinitions.map((plugin) => (
@@ -4447,7 +4677,6 @@ export function DemoDawClient({
 
               {selectedTracks.map((track) => {
                 const isMuted = mutedTrackVersionIds.has(track.trackVersionId);
-                const orderedTrackPlugins = getOrderedTrackPlugins(track);
                 const trackLane = visualProjection.trackLanesByTrackVersionId[track.trackVersionId];
                 const trackRecording = trackLane?.recording ?? null;
                 const trackSegments = trackLane?.segments ?? [];
@@ -4624,110 +4853,7 @@ export function DemoDawClient({
                             </label>
                           </div>
 
-                          <div
-                            className="mt-2 rounded-md border border-slate-800/90 bg-slate-950/80 p-2"
-                            data-testid={`insert-chain-rack-${track.trackVersionId}`}
-                            onDragOver={(event) =>
-                              handlePluginDragOver(event, track.trackVersionId, orderedTrackPlugins.length)
-                            }
-                            onDrop={(event) => void handlePluginDrop(event, track, orderedTrackPlugins.length)}
-                          >
-                            <div className="flex items-center justify-between gap-2">
-                              <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
-                                Insert chain
-                              </p>
-                              <span className="text-[10px] text-slate-500">
-                                {orderedTrackPlugins.length} slot{orderedTrackPlugins.length === 1 ? '' : 's'}
-                              </span>
-                            </div>
-                            <div className="mt-2 space-y-1">
-                              {orderedTrackPlugins.length > 0 ? (
-                                orderedTrackPlugins.map((plugin, index) => {
-                                  const pluginLabel = getPluginRackLabel(plugin);
-                                  const isDropTarget =
-                                    pluginRackDropTarget?.trackVersionId === track.trackVersionId &&
-                                    pluginRackDropTarget.position === index;
-
-                                  return (
-                                    <div
-                                      key={plugin.instanceId}
-                                      className={`rounded border px-2 py-1 transition-colors ${
-                                        plugin.bypassed
-                                          ? 'border-slate-800 bg-slate-900/80 opacity-50'
-                                          : 'border-slate-700 bg-slate-900/90'
-                                      } ${isDropTarget ? 'ring-1 ring-cyan-400/70' : ''}`}
-                                      onDragOver={(event) =>
-                                        handlePluginDragOver(event, track.trackVersionId, index)
-                                      }
-                                      onDrop={(event) => void handlePluginDrop(event, track, index)}
-                                    >
-                                      <div className="flex items-center gap-2">
-                                        <button
-                                          type="button"
-                                          draggable
-                                          onDragStart={(event) =>
-                                            handlePluginDragStart(event, track.trackVersionId, plugin.instanceId)
-                                          }
-                                          onDragEnd={handlePluginDragEnd}
-                                          aria-label={`Drag ${pluginLabel}`}
-                                          className="cursor-grab rounded border border-slate-700 bg-slate-950 px-1.5 py-0.5 text-[10px] font-semibold text-slate-300 active:cursor-grabbing"
-                                        >
-                                          ::
-                                        </button>
-                                        <div className="min-w-0 flex-1">
-                                          <p className="truncate text-[11px] font-medium text-white">{pluginLabel}</p>
-                                          <p className="text-[10px] text-slate-500">
-                                            {plugin.version} · {plugin.backend}
-                                          </p>
-                                        </div>
-                                        <button
-                                          type="button"
-                                          onClick={() =>
-                                            void setPluginBypass(track.trackVersionId, plugin.instanceId, !plugin.bypassed)
-                                          }
-                                          aria-pressed={plugin.bypassed}
-                                          aria-label={`Toggle bypass for ${pluginLabel}`}
-                                          className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold transition-colors ${
-                                            plugin.bypassed
-                                              ? 'bg-amber-500/20 text-amber-200 ring-1 ring-amber-500/40'
-                                              : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
-                                          }`}
-                                        >
-                                          Bypass
-                                        </button>
-                                        <button
-                                          type="button"
-                                          onClick={() => void removePlugin(track.trackVersionId, plugin.instanceId)}
-                                          aria-label={`Remove ${pluginLabel} from ${track.trackName}`}
-                                          className="rounded px-1.5 py-0.5 text-[10px] font-semibold text-rose-300 transition-colors hover:bg-rose-500/10 hover:text-rose-200"
-                                        >
-                                          Remove
-                                        </button>
-                                      </div>
-                                      {renderPluginParameterEditor(track, plugin)}
-                                    </div>
-                                  );
-                                })
-                              ) : (
-                                <p className="rounded border border-dashed border-slate-800 px-2 py-2 text-[10px] text-slate-500">
-                                  No inserts on this track yet.
-                                </p>
-                              )}
-                              <div
-                                className={`h-2 rounded ${
-                                  pluginRackDropTarget?.trackVersionId === track.trackVersionId &&
-                                  pluginRackDropTarget.position === orderedTrackPlugins.length
-                                    ? 'bg-cyan-400/40'
-                                    : 'bg-transparent'
-                                }`}
-                                onDragOver={(event) =>
-                                  handlePluginDragOver(event, track.trackVersionId, orderedTrackPlugins.length)
-                                }
-                                onDrop={(event) => void handlePluginDrop(event, track, orderedTrackPlugins.length)}
-                                aria-hidden
-                              />
-                            </div>
-                          </div>
+                          {renderPluginChain(track)}
                         </>
                       )}
                     </div>

@@ -38,6 +38,8 @@ export type UploadTimingChoice =
   | 'uploadUnchanged';
 
 export type AudioAssetKind = 'ORIGINAL' | 'DERIVED' | 'PEAKS' | 'ANALYSIS';
+export type PluginVisibility = 'PRIVATE' | 'PUBLIC';
+export type PluginBundleKind = 'SINGLE_MODULE' | 'ZIP_BUNDLE';
 
 export interface TempoAnalysisJobPayload {
   demoId: string;

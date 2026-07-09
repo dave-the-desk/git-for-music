@@ -26,6 +26,8 @@ model User {
   projectOperationLogs ProjectOperationLog[]
   projectSnapshots     ProjectSnapshot[]
   demoActiveVersions   DemoUserActiveVersion[]
+  ownedPlugins         PluginMetadata[] @relation("PluginOwner")
+  pluginGrants         PluginGrant[]    @relation("PluginGrantRecipient")
 }
 
 // ─── Group ───────────────────────────────────────────────────────────────────
@@ -104,6 +106,7 @@ model Demo {
   snapshots     ProjectSnapshot[]
   audioAssets   AudioAssetMetadata[]
   userActiveVersions DemoUserActiveVersion[]
+  pluginGrants   PluginGrant[]
 }
 
 // DemoVersion is the git-like snapshot/branch node.
@@ -507,11 +510,49 @@ model PluginMetadata {
   id String @id @default(cuid())
   pluginKey String
   name String
+  displayName String?
+  description String?
   version String
   manufacturer String?
   parameterSchema Json
+  ownerId String?
+  owner User? @relation("PluginOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  visibility PluginVisibility @default(PRIVATE)
+  moduleObjectKey String?
+  bundlePrefix String?
+  bundleKind PluginBundleKind?
+  sizeBytes BigInt?
+  checksum String?
+  grants PluginGrant[]
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([pluginKey, version])
   @@index([pluginKey])
+  @@index([ownerId])
+}
+
+model PluginGrant {
+  id String @id @default(cuid())
+  plugin PluginMetadata @relation(fields: [pluginId], references: [id], onDelete: Cascade)
+  pluginId String
+  demo Demo @relation(fields: [demoId], references: [id], onDelete: Cascade)
+  demoId String
+  grantedBy User @relation("PluginGrantRecipient", fields: [grantedById], references: [id])
+  grantedById String
+  createdAt DateTime @default(now())
+
+  @@unique([pluginId, demoId])
+  @@index([demoId])
+  @@index([pluginId])
+}
+
+enum PluginVisibility {
+  PRIVATE
+  PUBLIC
+}
+
+enum PluginBundleKind {
+  SINGLE_MODULE
+  ZIP_BUNDLE
 }

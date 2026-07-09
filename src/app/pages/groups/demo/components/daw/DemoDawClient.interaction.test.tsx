@@ -1075,9 +1075,15 @@ describe('DemoDawClient recording regression', () => {
                 id: 'plugin-def-1',
                 pluginKey: 'com.example.delay',
                 name: 'Delay',
+                displayName: 'Delay',
+                description: null,
                 version: '1.0.0',
                 manufacturer: 'Example Audio',
                 parameterSchema: {},
+                ownerId: 'user-1',
+                visibility: 'PRIVATE',
+                descriptorUrl:
+                  'data:text/javascript,export function createInstance(){return {connect(){return undefined;},disconnect(){return undefined;},setParameterValues(){return undefined;},setState(){return undefined;}};}',
                 createdAt: '2026-07-05T00:00:00.000Z',
               },
             ],
@@ -1137,7 +1143,7 @@ describe('DemoDawClient recording regression', () => {
     expect(container.querySelectorAll('[data-track-version-id]').length).toBe(1);
   });
 
-  it('adds a plugin, changes a param, reorders it, removes another plugin, and emits the expected ops', async () => {
+  it('adds a plugin, changes a param, reorders it, removes another plugin, and emits the expected ops from the Plugins tab', async () => {
     const initialVersion = makeVersion('version-1', ['Track 1'], {
       isCurrent: true,
       operationSeq: 1,
@@ -1164,6 +1170,8 @@ describe('DemoDawClient recording regression', () => {
                 id: 'plugin-def-a',
                 pluginKey: 'com.example.delay',
                 name: 'Delay',
+                displayName: 'Delay',
+                description: null,
                 version: '1.0.0',
                 manufacturer: 'Example Audio',
                 parameterSchema: {
@@ -1185,24 +1193,40 @@ describe('DemoDawClient recording regression', () => {
                     },
                   ],
                 },
+                ownerId: null,
+                visibility: 'PUBLIC',
+                descriptorUrl:
+                  'data:text/javascript,export function createInstance(){return {connect(){return undefined;},disconnect(){return undefined;},setParameterValues(){return undefined;},setState(){return undefined;}};}',
                 createdAt: '2026-07-05T00:00:00.000Z',
               },
               {
                 id: 'plugin-def-b',
                 pluginKey: 'com.example.chorus',
                 name: 'Chorus',
+                displayName: 'Chorus',
+                description: null,
                 version: '1.0.0',
                 manufacturer: 'Example Audio',
                 parameterSchema: {},
+                ownerId: null,
+                visibility: 'PUBLIC',
+                descriptorUrl:
+                  'data:text/javascript,export function createInstance(){return {connect(){return undefined;},disconnect(){return undefined;},setParameterValues(){return undefined;},setState(){return undefined;}};}',
                 createdAt: '2026-07-05T00:00:00.000Z',
               },
               {
                 id: 'plugin-def-c',
                 pluginKey: 'com.example.reverb',
                 name: 'Reverb',
+                displayName: 'Reverb',
+                description: null,
                 version: '1.0.0',
                 manufacturer: 'Example Audio',
                 parameterSchema: {},
+                ownerId: null,
+                visibility: 'PUBLIC',
+                descriptorUrl:
+                  'data:text/javascript,export function createInstance(){return {connect(){return undefined;},disconnect(){return undefined;},setParameterValues(){return undefined;},setState(){return undefined;}};}',
                 createdAt: '2026-07-05T00:00:00.000Z',
               },
             ],
@@ -1253,7 +1277,10 @@ describe('DemoDawClient recording regression', () => {
     expect(addedPlugin).toBeTruthy();
     const delayInstanceId = addedPlugin?.instanceId ?? '';
 
-    const mixSlider = await screen.findByRole('slider', { name: 'Delay Mix' });
+    const browserPluginChain = await screen.findByTestId('browser-plugin-chain-version-1-track-1');
+    const browserPluginChainView = within(browserPluginChain);
+
+    const mixSlider = await browserPluginChainView.findByRole('slider', { name: 'Delay Mix' });
     fireEvent.change(mixSlider, { target: { value: '0.75' } });
 
     await waitFor(() => {
@@ -1267,8 +1294,8 @@ describe('DemoDawClient recording regression', () => {
         ?.params.mix,
     ).toBe(0.75);
 
-    const dragHandle = screen.getByRole('button', { name: 'Drag Delay' });
-    const chorusBypass = screen.getByRole('button', { name: 'Toggle bypass for Chorus' });
+    const dragHandle = browserPluginChainView.getByRole('button', { name: 'Drag Delay' });
+    const chorusBypass = browserPluginChainView.getByRole('button', { name: 'Bypass Chorus' });
     const dragTransfer = createDataTransfer();
 
     fireEvent.dragStart(dragHandle, { dataTransfer: dragTransfer });
@@ -1286,7 +1313,7 @@ describe('DemoDawClient recording regression', () => {
       mockProjectSync.projectState?.versions[0]?.tracks[0]?.plugins.map((plugin) => plugin.instanceId),
     ).toEqual([delayInstanceId, 'plugin-b', 'plugin-c']);
 
-    await user.click(screen.getByRole('button', { name: 'Remove Chorus from Track 1' }));
+    await user.click(browserPluginChainView.getByRole('button', { name: 'Remove Chorus from Track 1' }));
 
     await waitFor(() => {
       expect(getCommitOps().map((entry) => entry.operationType)).toEqual([
@@ -1331,6 +1358,8 @@ describe('DemoDawClient recording regression', () => {
                 id: 'plugin-def-a',
                 pluginKey: 'com.example.delay',
                 name: 'Delay',
+                displayName: 'Delay',
+                description: null,
                 version: '1.0.0',
                 manufacturer: 'Example Audio',
                 parameterSchema: {
@@ -1352,6 +1381,10 @@ describe('DemoDawClient recording regression', () => {
                     },
                   ],
                 },
+                ownerId: null,
+                visibility: 'PUBLIC',
+                descriptorUrl:
+                  'data:text/javascript,export function createInstance(){return {connect(){return undefined;},disconnect(){return undefined;},setParameterValues(){return undefined;},setState(){return undefined;}};}',
                 createdAt: '2026-07-05T00:00:00.000Z',
               },
             ],
@@ -1426,11 +1459,7 @@ describe('DemoDawClient recording regression', () => {
     });
     expect((screen.getByRole('slider', { name: 'Delay Mix' }) as HTMLInputElement).value).toBe('0.8');
     expect((screen.getByRole('checkbox', { name: 'Delay On toggle' }) as HTMLInputElement).checked).toBe(false);
-    expect(
-      (screen.getByRole('button', { name: 'Toggle bypass for Delay' }) as HTMLButtonElement).getAttribute(
-        'aria-pressed',
-      ),
-    ).toBe('true');
+    expect(screen.getByText('Bypassed')).toBeTruthy();
   });
 
   it('collapses and restores the timing and recording row', async () => {

@@ -538,9 +538,14 @@ export interface DawProjectBootstrapPluginDefinition {
   id: string;
   pluginKey: string;
   name: string;
+  displayName: string | null;
+  description: string | null;
   version: string;
   manufacturer: string | null;
   parameterSchema: JsonValue;
+  ownerId: string | null;
+  visibility: 'PRIVATE' | 'PUBLIC';
+  descriptorUrl: string;
   createdAt: string;
 }
 
