@@ -1692,4 +1692,32 @@ describe('DemoDawClient recording regression', () => {
       expect(clientB.querySelectorAll('[data-track-version-id]').length).toBe(1);
     });
   });
+
+  it('shows project and per-track MP3 export actions at the bottom of the DAW', async () => {
+    const initialVersion = makeVersion('version-1', ['Track 1'], {
+      isCurrent: true,
+      operationSeq: 1,
+      createdAt: '2026-07-05T00:00:00.000Z',
+      tracks: [makeTrack('Track 1', 'version-1-track-1', { trackId: 'track-1', trackPosition: 0 })],
+    });
+
+    render(
+      <DemoDawClient
+        groupSlug="demo-group"
+        projectSlug="demo-project"
+        projectId="project-1"
+        demoId="demo-1"
+        currentUserId="user-1"
+        demoName="Demo"
+        demoDescription={null}
+        initialCurrentVersionId={initialVersion.id}
+        initialActiveVersionId={initialVersion.id}
+        initialIsFollowingHead={true}
+        initialVersions={[initialVersion]}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Download project MP3' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Download each track MP3' })).toBeTruthy();
+  });
 });

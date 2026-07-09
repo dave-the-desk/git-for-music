@@ -29,6 +29,10 @@ import { TrackSegmentClip } from './TrackSegmentClip';
 import { VersionHistoryTree } from './VersionHistoryTree';
 import { AudioInputSelector } from './AudioInputSelector';
 import { AudioEditingEngine } from '@/app/lib/daw/engine/audio-editing-engine';
+import {
+  renderDawProjectAsMp3Blob,
+  renderDawTrackStemsAsMp3Blobs,
+} from '@/app/lib/daw/engine/export-engine';
 import { AudioIngestEngine } from '@/app/lib/daw/engine/ingest-engine';
 import { ProjectSyncEngine } from '@/app/lib/daw/engine/project-sync-engine';
 import { AudioPlaybackEngine } from '@/app/lib/daw/engine/playback-engine';
@@ -388,6 +392,8 @@ export function DemoDawClient({
   const [mergeError, setMergeError] = useState<string | null>(null);
   const [mergeSubmitting, setMergeSubmitting] = useState(false);
   const [fadeError, setFadeError] = useState<string | null>(null);
+  const [exportStatus, setExportStatus] = useState<'project' | 'tracks' | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
   const pluginRackDragRef = useRef<{ trackVersionId: string; instanceId: string } | null>(null);
 
   useEffect(() => {
@@ -634,6 +640,41 @@ export function DemoDawClient({
   const activeRecordingTarget = useMemo(
     () => resolveArmedRecordingTarget(recordArmedTrackVersionId, selectedTracks),
     [recordArmedTrackVersionId, selectedTracks],
+  );
+
+  const exportTracks = useMemo(
+    () =>
+      selectedTracks.map((track) => ({
+        trackId: track.trackId,
+        trackName: track.trackName,
+        trackVersionId: track.trackVersionId,
+        storageKey: track.storageKey,
+        mimeType: getEffectiveTrackMimeType(track, segmentLayoutOverrides),
+        startOffsetMs: selectTrackStartOffsetMs(track, offsetOverrides),
+        durationMs: durationByTrackVersionId[track.trackVersionId] ?? track.durationMs,
+        segments: selectDisplayedTrackSegments(track, segmentLayoutOverrides),
+        recordedTempoBpm:
+          recordedTempoByTrackVersionId[track.trackVersionId]?.recordedTempoBpm ??
+          track.recordedTempoBpm ??
+          sharedDemoTempoBpm,
+        sourceTempoBpm:
+          recordedTempoByTrackVersionId[track.trackVersionId]?.sourceTempoBpm ??
+          track.sourceTempoBpm ??
+          sharedDemoTempoBpm,
+        isMuted: mutedTrackVersionIds.has(track.trackVersionId),
+        gain: gainByTrackVersionId[track.trackVersionId] ?? 1,
+        plugins: track.plugins,
+      })),
+    [
+      durationByTrackVersionId,
+      gainByTrackVersionId,
+      mutedTrackVersionIds,
+      offsetOverrides,
+      recordedTempoByTrackVersionId,
+      selectedTracks,
+      segmentLayoutOverrides,
+      sharedDemoTempoBpm,
+    ],
   );
 
   useEffect(() => {
@@ -1851,6 +1892,62 @@ export function DemoDawClient({
 
     stopTransport();
   }
+
+  const downloadBlob = useCallback((blob: Blob, fileName: string) => {
+    const objectUrl = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = objectUrl;
+    anchor.download = fileName;
+    anchor.rel = 'noreferrer';
+    anchor.style.display = 'none';
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 500);
+  }, []);
+
+  const handleProjectExport = useCallback(async () => {
+    if (exportStatus) return;
+    setExportStatus('project');
+    setExportError(null);
+
+    try {
+      const blob = await renderDawProjectAsMp3Blob({
+        tracks: exportTracks,
+        localTempoBpm: resolvedLocalTempoBpm,
+        sharedDemoTempoBpm,
+      });
+      downloadBlob(blob, `${demoName}.mp3`);
+    } catch (error) {
+      console.error('[daw] Failed to export project MP3', error);
+      setExportError(error instanceof Error ? error.message : 'Unable to export project MP3.');
+    } finally {
+      setExportStatus(null);
+    }
+  }, [downloadBlob, exportStatus, exportTracks, demoName, resolvedLocalTempoBpm, sharedDemoTempoBpm]);
+
+  const handleTrackExport = useCallback(async () => {
+    if (exportStatus) return;
+    setExportStatus('tracks');
+    setExportError(null);
+
+    try {
+      const files = await renderDawTrackStemsAsMp3Blobs({
+        tracks: exportTracks,
+        localTempoBpm: resolvedLocalTempoBpm,
+        sharedDemoTempoBpm,
+      });
+
+      for (const file of files) {
+        downloadBlob(file.blob, `${demoName} - ${file.fileName}`);
+      }
+    } catch (error) {
+      console.error('[daw] Failed to export track MP3 stems', error);
+      setExportError(error instanceof Error ? error.message : 'Unable to export individual track MP3 files.');
+    } finally {
+      setExportStatus(null);
+    }
+  }, [demoName, downloadBlob, exportStatus, exportTracks, resolvedLocalTempoBpm, sharedDemoTempoBpm]);
 
   useEffect(() => {
     const previousBranchHeadVersionId = previousBranchHeadVersionIdRef.current;
@@ -5101,6 +5198,34 @@ export function DemoDawClient({
             </div>
           )}
         </section>
+
+        <div className="rounded-2xl border border-slate-800/80 bg-slate-950/80 px-4 py-4 shadow-[0_18px_60px_-36px_rgba(0,0,0,0.85)] backdrop-blur">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Export</p>
+              <p className="mt-1 text-sm text-slate-300">Download the current mix as MP3 or export each track as its own MP3 file.</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => void handleProjectExport()}
+                disabled={exportStatus !== null}
+                className="rounded-full bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm shadow-indigo-950/40 hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-slate-700"
+              >
+                {exportStatus === 'project' ? 'Exporting project...' : 'Download project MP3'}
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleTrackExport()}
+                disabled={exportStatus !== null}
+                className="rounded-full border border-slate-700 bg-slate-900/80 px-4 py-2 text-sm font-semibold text-slate-100 hover:bg-slate-800 disabled:cursor-not-allowed disabled:border-slate-800 disabled:bg-slate-900 disabled:text-slate-500"
+              >
+                {exportStatus === 'tracks' ? 'Exporting tracks...' : 'Download each track MP3'}
+              </button>
+            </div>
+          </div>
+          {exportError ? <p className="mt-3 text-sm text-rose-200">{exportError}</p> : null}
+        </div>
 
         <div className="fixed bottom-4 right-4 z-[60] pointer-events-none">
           {isLocalOnlySync ? (
