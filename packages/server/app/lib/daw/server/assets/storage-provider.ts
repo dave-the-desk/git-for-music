@@ -179,7 +179,7 @@ function buildObjectUrl(endpoint: URL, bucketName: string, objectKey: string) {
   return url;
 }
 
-function signPresignedUrl(
+export function signPresignedUrl(
   config: ObjectStorageConfig,
   endpoint: URL,
   method: 'PUT' | 'GET' | 'HEAD',
@@ -338,6 +338,26 @@ export async function createAssetUploadTarget(input: AssetUploadIntent) {
     objectKey,
     uploadToken,
     uploadUrl: signPresignedUrl(config, config.publicUrl, 'PUT', objectKey, 900),
+    method: 'PUT' as const,
+    headers: {
+      'content-type': input.contentType,
+    },
+    expiresAt,
+    localFallback: false,
+  };
+}
+
+export async function createObjectUploadTarget(input: {
+  objectKey: string;
+  contentType: string;
+  expiresAt?: string;
+}) {
+  const config = assertObjectStorageConfig();
+  const expiresAt = input.expiresAt ?? new Date(Date.now() + 15 * 60 * 1000).toISOString();
+
+  return {
+    objectKey: input.objectKey,
+    uploadUrl: signPresignedUrl(config, config.publicUrl, 'PUT', input.objectKey, 900),
     method: 'PUT' as const,
     headers: {
       'content-type': input.contentType,

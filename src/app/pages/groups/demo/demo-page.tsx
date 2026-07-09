@@ -65,6 +65,14 @@ export default async function DemoPage({
             isDerived: trackVersion.isDerived,
             operationType: trackVersion.operationType,
             parentTrackVersionId: trackVersion.parentTrackVersionId,
+            plugins: trackVersion.plugins.map((plugin) => ({
+              ...plugin,
+              params: { ...plugin.params },
+              state:
+                plugin.state && typeof plugin.state === 'object' && !Array.isArray(plugin.state)
+                  ? { ...plugin.state }
+                  : plugin.state,
+            })),
             segments: trackVersion.segments.map((segment) => ({
               id: segment.id,
               trackVersionId: trackVersion.trackVersionId,

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Prisma, PrismaClient, prisma } from '@git-for-music/db';
 import { buildTrackVersionAudioUrl } from '@git-for-music/shared';
 import { loadOrCreateDemoUserActiveVersionState } from '@/app/lib/daw/server/demo-user-active-version';
+import type { HostedPluginInstanceState } from '@/app/lib/daw/protocol';
 
 export type DemoDawTimingSource = 'MANUAL' | 'ANALYZED' | 'IMPORTED';
 
@@ -36,6 +37,7 @@ export interface DemoDawSnapshotTrack {
   operationType: 'ORIGINAL' | 'TIME_STRETCH';
   parentTrackVersionId: string | null;
   segments: DemoDawSnapshotSegment[];
+  plugins: HostedPluginInstanceState[];
 }
 
 export interface DemoDawSnapshotVersion {
@@ -133,6 +135,12 @@ export type DemoDawOperationType =
   | 'TRACK_RENAMED'
   | 'TRACK_REMOVED'
   | 'TRACK_OFFSET_UPDATED'
+  | 'PLUGIN_ADDED'
+  | 'PLUGIN_REMOVED'
+  | 'PLUGIN_REORDERED'
+  | 'PLUGIN_PARAM_SET'
+  | 'PLUGIN_BYPASS_SET'
+  | 'PLUGIN_STATE_SET'
   | 'SEGMENT_SPLIT'
   | 'SEGMENT_MOVED'
   | 'SEGMENT_DELETED'
@@ -170,6 +178,44 @@ export type DemoDawOperationPayload =
   | {
       trackVersionId: string;
       startOffsetMs: number;
+    }
+  | {
+      trackVersionId: string;
+      instanceId: string;
+      pluginKey: string;
+      version: string;
+      backend: 'wam' | 'remote';
+      position: number;
+      bypassed: boolean;
+      params: Record<string, number>;
+      state?: JsonValue;
+      stateBlobKey?: string | null;
+    }
+  | {
+      trackVersionId: string;
+      instanceId: string;
+    }
+  | {
+      trackVersionId: string;
+      instanceId: string;
+      position: number;
+    }
+  | {
+      trackVersionId: string;
+      instanceId: string;
+      paramId: string;
+      value: number;
+    }
+  | {
+      trackVersionId: string;
+      instanceId: string;
+      bypassed: boolean;
+    }
+  | {
+      trackVersionId: string;
+      instanceId: string;
+      state: JsonValue;
+      stateBlobKey?: string | null;
     }
   | {
       trackVersionId: string;
@@ -488,6 +534,8 @@ const AUTO_VERSION_SEMANTIC_OPERATION_TYPES = new Set<
 >([
   'TRACK_ADDED',
   'TRACK_REMOVED',
+  'PLUGIN_ADDED',
+  'PLUGIN_REMOVED',
   'TRACK_VERSION_CREATED',
   'SEGMENT_SPLIT',
   'SEGMENT_MERGED',
@@ -517,6 +565,7 @@ function serializeTrackVersion(trackVersion: DemoSourceVersionRow['trackVersions
     operationType: trackVersion.operationType,
     parentTrackVersionId: trackVersion.parentTrackVersionId,
     segments: trackVersion.segments.map((segment) => serializeSegment(trackVersion.id, segment)),
+    plugins: [],
   };
 }
 

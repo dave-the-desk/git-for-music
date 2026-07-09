@@ -14,8 +14,10 @@ export {
   assetObjectExists,
   createAssetDownloadUrl,
   createAssetUploadTarget,
+  createObjectUploadTarget,
   isRemoteAssetStorageConfigured,
   signAssetUploadToken,
+  signPresignedUrl,
   storeTrackUploadAsset,
   verifyAssetUploadToken,
 } from './storage-provider';

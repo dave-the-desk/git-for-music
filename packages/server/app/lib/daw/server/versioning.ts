@@ -1,6 +1,7 @@
 import type { Prisma } from '@git-for-music/db';
 import { buildTrackVersionAudioUrl } from '@git-for-music/shared';
 import type {
+  HostedPluginInstanceState,
   DawVersionTreeNodeSnapshot,
   DawVersionTreeTrackSnapshot,
 } from '@/app/lib/daw/protocol';
@@ -135,6 +136,36 @@ function hydrateClonedTrackCrossfades(
   });
 }
 
+function hydrateClonedTrackPlugins(
+  clonedTracks: DawVersionTreeTrackSnapshot[],
+  sourceSnapshot: DemoDawSnapshotData | null,
+  sourceVersionId: string,
+) {
+  if (!sourceSnapshot) {
+    return clonedTracks;
+  }
+
+  const sourceVersion = sourceSnapshot.versions.find((version) => version.id === sourceVersionId);
+  if (!sourceVersion) {
+    return clonedTracks;
+  }
+
+  const sourceTrackByTrackId = new Map(sourceVersion.tracks.map((track) => [track.trackId, track]));
+
+  return clonedTracks.map((track) => {
+    const sourceTrack = sourceTrackByTrackId.get(track.trackId);
+    if (!sourceTrack) {
+      return track;
+    }
+
+    const plugins = [...(sourceTrack.plugins ?? [])].sort((left, right) => left.position - right.position);
+    return {
+      ...track,
+      plugins,
+    };
+  });
+}
+
 export async function cloneTrackVersionsToDemoVersion(
   tx: Prisma.TransactionClient,
   sourceVersionId: string,
@@ -243,6 +274,11 @@ export async function cloneTrackVersionsToDemoVersion(
           isMuted: segment.isMuted,
           position: segment.position,
         })),
+        plugins:
+          sourceSnapshotState?.versions
+            .find((version) => version.id === sourceVersionId)
+            ?.tracks.find((track) => track.trackId === sourceTrackVersion.trackId)
+            ?.plugins?.map((plugin) => ({ ...plugin })) ?? [],
       }),
     );
   }
@@ -250,7 +286,11 @@ export async function cloneTrackVersionsToDemoVersion(
   return {
     trackVersionIdMap,
     segmentIdMap,
-    tracks: hydrateClonedTrackCrossfades(tracks, sourceSnapshotState, sourceVersionId),
+    tracks: hydrateClonedTrackPlugins(
+      hydrateClonedTrackCrossfades(tracks, sourceSnapshotState, sourceVersionId),
+      sourceSnapshotState,
+      sourceVersionId,
+    ),
   };
 }
 
@@ -328,8 +368,8 @@ export async function createDemoVersionWithCopiedTracks(
   if (sourceVersionId && copyTracks) {
     const cloneMap = await cloneTrackVersionsToDemoVersion(tx, sourceVersionId, version.id);
     const sourceSnapshotState = await loadSourceSnapshotState(tx, demoId);
-    const hydratedTracks = hydrateClonedTrackCrossfades(
-      cloneMap.tracks,
+    const hydratedTracks = hydrateClonedTrackPlugins(
+      hydrateClonedTrackCrossfades(cloneMap.tracks, sourceSnapshotState, sourceVersionId),
       sourceSnapshotState,
       sourceVersionId,
     );
@@ -433,6 +473,7 @@ export function serializeCreatedDemoTrackVersionTreeTrack(input: {
   operationType?: 'ORIGINAL' | 'TIME_STRETCH';
   parentTrackVersionId?: string | null;
   segments?: DawVersionTreeTrackSnapshot['segments'];
+  plugins?: HostedPluginInstanceState[];
 }): DawVersionTreeTrackSnapshot {
   return {
     trackId: input.trackId,
@@ -451,5 +492,6 @@ export function serializeCreatedDemoTrackVersionTreeTrack(input: {
     operationType: input.operationType ?? 'ORIGINAL',
     parentTrackVersionId: input.parentTrackVersionId ?? null,
     segments: input.segments ?? [],
+    plugins: input.plugins ?? [],
   };
 }

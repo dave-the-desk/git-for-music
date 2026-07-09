@@ -155,6 +155,7 @@ test('createDemoVersionWithCopiedTracks preserves moved segment placement when c
   assert.equal(result.tracks[0]?.segments[0]?.startMs, 100);
   assert.equal(result.tracks[0]?.segments[0]?.endMs, 900);
   assert.equal(result.tracks[0]?.segments[0]?.position, 0);
+  assert.deepEqual(result.tracks[0]?.plugins, []);
   assert.equal(createdSegments[0]?.timelineStartMs, 3500);
   assert.equal(createdSegments[0]?.position, 0);
 });
@@ -284,6 +285,33 @@ test('createDemoVersionWithCopiedTracks preserves crossfade metadata from the so
                   crossfadeCurve: 'linear',
                 },
               ],
+              plugins: [
+                {
+                  instanceId: 'plugin-1',
+                  pluginKey: 'com.example.delay',
+                  version: '1.0.0',
+                  backend: 'wam',
+                  position: 0,
+                  bypassed: false,
+                  params: {
+                    mix: 0.5,
+                  },
+                  state: {
+                    preset: 'wide',
+                  },
+                  stateBlobKey: null,
+                },
+                {
+                  instanceId: 'plugin-2',
+                  pluginKey: 'com.example.eq',
+                  version: '2.0.0',
+                  backend: 'remote',
+                  position: 1,
+                  bypassed: true,
+                  params: {},
+                  stateBlobKey: '/plugin-state/plugin-2.json',
+                },
+              ],
             },
           ],
         },
@@ -410,12 +438,244 @@ test('createDemoVersionWithCopiedTracks preserves crossfade metadata from the so
   assert.equal(result.tracks[0]?.segments[1]?.crossfadeInMs, 250);
   assert.equal(result.tracks[0]?.segments[1]?.crossfadeOutMs, null);
   assert.equal(result.tracks[0]?.segments[1]?.crossfadeCurve, 'linear');
+  assert.deepEqual(result.tracks[0]?.plugins, [
+    {
+      instanceId: 'plugin-1',
+      pluginKey: 'com.example.delay',
+      version: '1.0.0',
+      backend: 'wam',
+      position: 0,
+      bypassed: false,
+      params: {
+        mix: 0.5,
+      },
+      state: {
+        preset: 'wide',
+      },
+      stateBlobKey: null,
+    },
+    {
+      instanceId: 'plugin-2',
+      pluginKey: 'com.example.eq',
+      version: '2.0.0',
+      backend: 'remote',
+      position: 1,
+      bypassed: true,
+      params: {},
+      stateBlobKey: '/plugin-state/plugin-2.json',
+    },
+  ]);
   assert.equal(createdSegments[0]?.crossfadeInMs, undefined);
   assert.equal(createdSegments[0]?.crossfadeOutMs, undefined);
   assert.equal(createdSegments[0]?.crossfadeCurve, undefined);
   assert.equal(createdSegments[1]?.crossfadeInMs, undefined);
   assert.equal(createdSegments[1]?.crossfadeOutMs, undefined);
   assert.equal(createdSegments[1]?.crossfadeCurve, undefined);
+});
+
+test('createDemoVersionWithCopiedTracks preserves plugin chains when forking a version', async () => {
+  const sourceTrackVersion = {
+    id: 'track-version-a',
+    trackId: 'track-a',
+    storageKey: '/tracks/a.wav',
+    sourceFileUrl: null,
+    startOffsetMs: 0,
+    durationMs: 2000,
+    sampleRate: 48000,
+    channels: 2,
+    mimeType: 'audio/wav',
+    sizeBytes: 1024,
+    checksum: 'checksum-a',
+    isDerived: false,
+    operationType: 'ORIGINAL',
+    parentTrackVersionId: null,
+    track: {
+      name: 'Track A',
+      position: 0,
+    },
+    segments: [
+      {
+        id: 'segment-1',
+        startMs: 100,
+        endMs: 900,
+        timelineStartMs: 3500,
+        gainDb: 0,
+        fadeInMs: 0,
+        fadeOutMs: 0,
+        isMuted: false,
+        position: 0,
+      },
+    ],
+  };
+  const sourceSnapshot = {
+    id: 'snapshot-1',
+    projectId: 'project-1',
+    demoId: 'demo-1',
+    operationSeq: 1,
+    snapshot: {
+      id: 'demo-1',
+      name: 'Demo',
+      description: null,
+      currentVersionId: 'version-root',
+      project: {
+        id: 'project-1',
+        slug: 'project-1',
+        group: {
+          id: 'group-1',
+          slug: 'group',
+        },
+      },
+      versions: [
+        {
+          id: 'version-root',
+          label: 'Root',
+          description: null,
+          tempoBpm: 120,
+          timeSignatureNum: 4,
+          timeSignatureDen: 4,
+          musicalKey: null,
+          tempoSource: 'MANUAL',
+          keySource: 'MANUAL',
+          parentId: null,
+          createdAt: '2025-01-01T00:00:00.000Z',
+          tracks: [
+            {
+              id: 'track-version-a',
+              trackId: 'track-a',
+              trackName: 'Track A',
+              trackPosition: 0,
+              trackVersionId: 'track-version-a',
+              storageKey: '/tracks/a.wav',
+              mimeType: 'audio/wav',
+              durationMs: 2000,
+              startOffsetMs: 0,
+              createdAt: '2025-01-01T00:00:00.000Z',
+              isDerived: false,
+              operationType: 'ORIGINAL',
+              parentTrackVersionId: null,
+              segments: [],
+              plugins: [
+                {
+                  instanceId: 'plugin-1',
+                  pluginKey: 'com.example.delay',
+                  version: '1.0.0',
+                  backend: 'wam',
+                  position: 0,
+                  bypassed: false,
+                  params: {
+                    mix: 0.5,
+                  },
+                  state: {
+                    preset: 'wide',
+                  },
+                  stateBlobKey: null,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      comments: [],
+      annotations: [],
+    },
+    createdById: 'user-a',
+    createdAt: '2025-01-01T00:00:00.000Z',
+  };
+
+  const tx = {
+    demo: {
+      findFirst: async () => ({
+        projectId: 'project-1',
+      }),
+    },
+    demoVersion: {
+      findFirst: async (args?: { select?: { demoId?: boolean } }) => {
+        if (args?.select && 'demoId' in args.select) {
+          return {
+            demoId: 'demo-1',
+          };
+        }
+
+        return {
+          description: 'Source version',
+          tempoBpm: 120,
+          timeSignatureNum: 4,
+          timeSignatureDen: 4,
+          musicalKey: null,
+          tempoSource: 'MANUAL',
+          keySource: 'MANUAL',
+        };
+      },
+      create: async (args: {
+        data: {
+          demoId: string;
+          label: string;
+          description: string | null;
+          tempoBpm?: number | null;
+          timeSignatureNum?: number;
+          timeSignatureDen?: number;
+          musicalKey?: string | null;
+          tempoSource?: 'MANUAL' | 'ANALYZED' | 'IMPORTED';
+          keySource?: 'MANUAL' | 'ANALYZED' | 'IMPORTED';
+          parentId: string | null;
+        };
+      }) => ({
+        id: 'version-clone',
+        label: args.data.label,
+        description: args.data.description,
+        tempoBpm: args.data.tempoBpm ?? 120,
+        timeSignatureNum: args.data.timeSignatureNum ?? 4,
+        timeSignatureDen: args.data.timeSignatureDen ?? 4,
+        musicalKey: args.data.musicalKey ?? null,
+        tempoSource: args.data.tempoSource ?? 'MANUAL',
+        keySource: args.data.keySource ?? 'MANUAL',
+        createdAt: new Date('2025-01-03T00:00:00.000Z'),
+        parentId: args.data.parentId,
+      }),
+    },
+    projectSnapshot: {
+      findFirst: async () => sourceSnapshot,
+    },
+    projectOperationLog: {
+      findMany: async () => [],
+    },
+    trackVersion: {
+      findMany: async () => [sourceTrackVersion],
+      create: async () => ({ id: 'track-version-clone', createdAt: new Date('2025-01-03T00:00:00.000Z') }),
+    },
+    segment: {
+      create: async (args: { data: Record<string, unknown> }) => ({
+        id: `segment-clone-${Object.keys(args.data).length}`,
+      }),
+    },
+  } as const;
+
+  const result = await createDemoVersionWithCopiedTracks(tx as never, {
+    demoId: 'demo-1',
+    label: 'Branch clone',
+    sourceVersionId: 'version-root',
+    parentId: 'version-root',
+    loadSourceSnapshotState: async () => sourceSnapshot.snapshot as never,
+  });
+
+  assert.deepEqual(result.tracks[0]?.plugins, [
+    {
+      instanceId: 'plugin-1',
+      pluginKey: 'com.example.delay',
+      version: '1.0.0',
+      backend: 'wam',
+      position: 0,
+      bypassed: false,
+      params: {
+        mix: 0.5,
+      },
+      state: {
+        preset: 'wide',
+      },
+      stateBlobKey: null,
+    },
+  ]);
+  assert.equal(result.tracks[0]?.segments[0]?.timelineStartMs, 3500);
 });
 
 test('createDemoVersionWithCopiedTracks produces a DAG where every non-root version resolves its parent and cycles are absent', async () => {

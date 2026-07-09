@@ -14,6 +14,7 @@
     "@git-for-music/db": "workspace:*",
     "@git-for-music/server": "workspace:*",
     "@git-for-music/shared": "workspace:*",
+    "lamejs": "^1.2.1",
     "next": "^15.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

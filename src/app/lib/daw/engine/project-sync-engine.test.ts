@@ -8,7 +8,13 @@ import type {
 import { dawLocalCache } from '@/app/lib/daw/engine/daw-local-cache';
 import { ProjectSyncEngine } from '@/app/lib/daw/engine/project-sync-engine';
 import { applyAcceptedProjectOperation, createLocalProjectStateFromBootstrap } from '@/app/lib/daw/state/operation-reducer';
-import type { DawTrack, DawVersion, TrackTimelineSegment } from '@/app/lib/daw/state/local-project-state';
+import { createWamPlaybackPluginGraphFactory, loadWamModule } from '@/app/lib/daw/engine/wam-host';
+import type {
+  DawTrack,
+  DawVersion,
+  HostedPluginInstanceState,
+  TrackTimelineSegment,
+} from '@/app/lib/daw/state/local-project-state';
 
 function makeVersion(id: string, overrides: Partial<DawVersion> = {}): DawVersion {
   return {
@@ -31,6 +37,20 @@ function makeVersion(id: string, overrides: Partial<DawVersion> = {}): DawVersio
     tempoSource: overrides.tempoSource ?? 'MANUAL',
     keySource: overrides.keySource ?? 'MANUAL',
     tracks: overrides.tracks ?? [],
+  };
+}
+
+function makePlugin(instanceId: string, overrides: Partial<HostedPluginInstanceState> = {}): HostedPluginInstanceState {
+  return {
+    instanceId,
+    pluginKey: overrides.pluginKey ?? 'com.example.delay',
+    version: overrides.version ?? '1.0.0',
+    backend: overrides.backend ?? 'wam',
+    position: overrides.position ?? 0,
+    bypassed: overrides.bypassed ?? false,
+    params: overrides.params ?? { mix: 0.5 },
+    state: overrides.state ?? { preset: 'wide' },
+    stateBlobKey: overrides.stateBlobKey ?? null,
   };
 }
 
@@ -68,6 +88,7 @@ function makeTrack(trackVersionId: string, overrides: Partial<DawTrack> = {}): D
     operationType: overrides.operationType ?? 'ORIGINAL',
     parentTrackVersionId: overrides.parentTrackVersionId ?? null,
     segments: overrides.segments ?? [segment],
+    plugins: overrides.plugins ?? [makePlugin(`plugin-${trackVersionId}`)],
   };
 }
 
@@ -148,6 +169,10 @@ function jsonResponse(body: unknown, status = 200) {
   });
 }
 
+function dataModule(source: string) {
+  return `data:text/javascript,${encodeURIComponent(source)}`;
+}
+
 test('ProjectSyncEngine applies remote accepted_operation updates once', async () => {
   const root = makeVersion('version-root', { isCurrent: true });
   const initial = createLocalProjectStateFromBootstrap(makeBootstrap([root], root.id));
@@ -193,6 +218,12 @@ test('ProjectSyncEngine applies remote accepted_operation updates once', async (
       createdAt: '2025-01-02T00:00:00.000Z',
       isCurrent: true,
       operationSeq: 2,
+      tracks: [
+        makeTrack('track-version-branch', {
+          trackId: 'track-branch',
+          trackName: 'Branch Track',
+        }),
+      ],
     });
 
     const operation = makeOperation('VERSION_BRANCH_CREATED', 2, {
@@ -216,6 +247,9 @@ test('ProjectSyncEngine applies remote accepted_operation updates once', async (
     assert.equal(appliedState?.currentVersionId, branchVersion.id);
     assert.equal(appliedState?.activeVersionId, root.id);
     assert.equal(appliedState?.lastSeenOperationSeq, 2);
+    assert.deepEqual(appliedState?.versions.find((version) => version.id === branchVersion.id)?.tracks[0]?.plugins, [
+      makePlugin('plugin-track-version-branch'),
+    ]);
 
     await engine.receiveAcceptedRemoteOperations([operation]);
     const duplicateState = engine.getState().projectState;
@@ -225,6 +259,201 @@ test('ProjectSyncEngine applies remote accepted_operation updates once', async (
     stubbedCache.putAcceptedOperation = originalPutAcceptedOperation;
     stubbedCache.deletePendingOperation = originalDeletePendingOperation;
     stubbedCache.putProject = originalPutProject;
+  }
+});
+
+test('ProjectSyncEngine bootstrap replays the snapshot tail so plugin chains and params rebuild on reload', async () => {
+  const root = makeVersion('version-root', { isCurrent: true });
+  const pluginModuleA = `com.example.replay-a-${crypto.randomUUID()}`;
+  const pluginModuleB = `com.example.replay-b-${crypto.randomUUID()}`;
+  const connectionLog: Array<{ from: string; to: string }> = [];
+  const paramLog: Array<{ plugin: string; values: Record<string, number> }> = [];
+
+  await loadWamModule(
+    pluginModuleA,
+    '1.0.0',
+    dataModule(`
+      export function createInstance() {
+        return {
+          id: 'replay-a',
+          connect(target) {
+            globalThis.__replayConnectionLog = globalThis.__replayConnectionLog ?? [];
+            globalThis.__replayConnectionLog.push({ from: 'replay-a', to: target.id ?? 'unknown' });
+            return target;
+          },
+          disconnect() {
+            return undefined;
+          },
+          setParameterValues(values) {
+            globalThis.__replayParamLog = globalThis.__replayParamLog ?? [];
+            globalThis.__replayParamLog.push({ plugin: 'replay-a', values });
+          },
+        };
+      }
+    `),
+  );
+  await loadWamModule(
+    pluginModuleB,
+    '1.0.0',
+    dataModule(`
+      export function createInstance() {
+        return {
+          id: 'replay-b',
+          connect(target) {
+            globalThis.__replayConnectionLog = globalThis.__replayConnectionLog ?? [];
+            globalThis.__replayConnectionLog.push({ from: 'replay-b', to: target.id ?? 'unknown' });
+            return target;
+          },
+          disconnect() {
+            return undefined;
+          },
+          setParameterValues(values) {
+            globalThis.__replayParamLog = globalThis.__replayParamLog ?? [];
+            globalThis.__replayParamLog.push({ plugin: 'replay-b', values });
+          },
+        };
+      }
+    `),
+  );
+
+  const initialTrack = makeTrack('track-version-1', {
+    trackId: 'track-1',
+    trackName: 'Track 1',
+    plugins: [
+      {
+        instanceId: 'plugin-a',
+        pluginKey: pluginModuleA,
+        version: '1.0.0',
+        backend: 'wam',
+        position: 0,
+        bypassed: false,
+        params: { mix: 0.25 },
+        state: { preset: 'wide' },
+        stateBlobKey: null,
+      },
+      {
+        instanceId: 'plugin-b',
+        pluginKey: pluginModuleB,
+        version: '1.0.0',
+        backend: 'wam',
+        position: 1,
+        bypassed: false,
+        params: { mix: 0.5 },
+        state: { preset: 'narrow' },
+        stateBlobKey: null,
+      },
+    ],
+  });
+  const rootVersion = makeVersion(root.id, {
+    isCurrent: true,
+    tracks: [initialTrack],
+  });
+  const bootstrap = makeBootstrap([rootVersion], rootVersion.id);
+  bootstrap.projectState = undefined;
+  bootstrap.latestSnapshot = {
+    ...bootstrap.latestSnapshot!,
+    snapshot: {
+      versions: [rootVersion],
+      currentVersionId: rootVersion.id,
+      comments: [],
+      annotations: [],
+      tempoMetadataByTrackVersionId: {},
+    },
+  };
+  bootstrap.operationTail = [
+    makeOperation('PLUGIN_REORDERED', 2, {
+      trackVersionId: 'track-version-1',
+      instanceId: 'plugin-a',
+      position: 1,
+    }),
+    makeOperation('PLUGIN_PARAM_SET', 3, {
+      trackVersionId: 'track-version-1',
+      instanceId: 'plugin-b',
+      paramId: 'mix',
+      value: 0.9,
+    }),
+    makeOperation('PLUGIN_PARAM_SET', 4, {
+      trackVersionId: 'track-version-1',
+      instanceId: 'plugin-a',
+      paramId: 'mix',
+      value: 0.75,
+    }),
+  ];
+
+  const stubbedCache = dawLocalCache as unknown as {
+    getProject: () => Promise<null>;
+    listAcceptedOperations: () => Promise<DawProjectOperationRecord[]>;
+    listPendingOperations: () => Promise<Array<{ createdAt: number; updatedAt: number; key: string }>>;
+    putProject: (...args: unknown[]) => Promise<void>;
+    putPluginDefinitions: (...args: unknown[]) => Promise<void>;
+  };
+  const originalGetProject = stubbedCache.getProject;
+  const originalListAcceptedOperations = stubbedCache.listAcceptedOperations;
+  const originalListPendingOperations = stubbedCache.listPendingOperations;
+  const originalPutProject = stubbedCache.putProject;
+  const originalPutPluginDefinitions = stubbedCache.putPluginDefinitions;
+  stubbedCache.getProject = async () => null;
+  stubbedCache.listAcceptedOperations = async () => [];
+  stubbedCache.listPendingOperations = async () => [];
+  stubbedCache.putProject = async () => {};
+  stubbedCache.putPluginDefinitions = async () => {};
+
+  const originalFetch = globalThis.fetch;
+  (globalThis as typeof globalThis & { fetch: typeof fetch }).fetch = async () => jsonResponse(bootstrap);
+
+  (globalThis as Record<string, unknown>).__replayConnectionLog = connectionLog;
+  (globalThis as Record<string, unknown>).__replayParamLog = paramLog;
+
+  try {
+    const engine = new ProjectSyncEngine();
+    await engine.bootstrap({
+      projectId: 'project-1',
+      demoId: 'demo-1',
+      initialProjectState: createLocalProjectStateFromBootstrap(makeBootstrap([root], root.id)),
+    });
+
+    const restoredTrack = engine.getState().projectState?.versions[0]?.tracks[0];
+    assert.ok(restoredTrack);
+    assert.deepEqual(restoredTrack?.plugins.map((plugin) => plugin.instanceId), ['plugin-b', 'plugin-a']);
+    assert.equal(restoredTrack?.plugins.find((plugin) => plugin.instanceId === 'plugin-a')?.params.mix, 0.75);
+    assert.equal(restoredTrack?.plugins.find((plugin) => plugin.instanceId === 'plugin-b')?.params.mix, 0.9);
+
+    const graph = createWamPlaybackPluginGraphFactory({
+      getTrackPlugins: (trackVersionId) =>
+        engine.getState().projectState?.versions
+          .flatMap((version) => version.tracks)
+          .find((track) => track.trackVersionId === trackVersionId)?.plugins ?? [],
+    })(
+      'track-version-1',
+      {
+        id: 'input',
+        connect(target: { id?: string }) {
+          connectionLog.push({ from: 'input', to: target.id ?? 'unknown' });
+          return target;
+        },
+        disconnect() {
+          return undefined;
+        },
+      } as unknown as AudioNode,
+      {} as AudioContext,
+    );
+
+    assert.equal((graph.outputNode as { id?: string }).id, 'replay-a');
+    assert.deepEqual(connectionLog, [
+      { from: 'input', to: 'replay-b' },
+      { from: 'replay-b', to: 'replay-a' },
+    ]);
+    assert.deepEqual(paramLog, [
+      { plugin: 'replay-b', values: { mix: 0.9 } },
+      { plugin: 'replay-a', values: { mix: 0.75 } },
+    ]);
+  } finally {
+    stubbedCache.getProject = originalGetProject;
+    stubbedCache.listAcceptedOperations = originalListAcceptedOperations;
+    stubbedCache.listPendingOperations = originalListPendingOperations;
+    stubbedCache.putProject = originalPutProject;
+    stubbedCache.putPluginDefinitions = originalPutPluginDefinitions;
+    (globalThis as typeof globalThis & { fetch: typeof fetch }).fetch = originalFetch;
   }
 });
 
@@ -3351,6 +3580,7 @@ test('ProjectSyncEngine catches up on open and reconnects when realtime goes sil
     assert.ok(projectStateAfterOpen);
     assert.equal(projectStateAfterOpen?.versions.length, 1);
     assert.equal(projectStateAfterOpen?.versions[0]?.tracks[0]?.segments.length, 1);
+    assert.deepEqual(projectStateAfterOpen?.versions[0]?.tracks[0]?.plugins, [makePlugin('plugin-track-version-a')]);
     assert.equal(projectStateAfterOpen?.lastSeenOperationSeq, 1);
     assert.deepEqual(capturedUrls, [
       '/api/daw/projects/project-1/operations?demoId=demo-1&afterSeq=1',

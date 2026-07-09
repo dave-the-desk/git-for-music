@@ -11,6 +11,7 @@ Offline edits must keep:
 - local audio files
 - local metadata
 - sync state
+- plugin chain state per track version, including any JSON-only opaque plugin state and blob keys for large payloads
 
 ## Reconnect Flow
 
@@ -21,6 +22,7 @@ On reconnect:
 - compare against the latest branch head
 - auto-merge safe changes
 - branch or conflict unsafe changes
+- restore plugin chains from the replayed state so reconnect reconstructs the same ordered insert chain a user had offline
 
 ## Related Context
 
@@ -28,4 +30,3 @@ On reconnect:
 - [[40_FEATURES/merge-and-conflict-guide]]
 - [[01_PROTOCOLS/non-negotiable-rules]]
 - [docs/architecture/daw-realtime-sync.md](../../docs/architecture/daw-realtime-sync.md)
-

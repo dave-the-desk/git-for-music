@@ -8,6 +8,7 @@ import {
   createLocalProjectStateFromBootstrap,
 } from '@/app/lib/daw/state/operation-reducer';
 import type {
+  HostedPluginInstanceState,
   DawTrack,
   DawVersion,
   TrackTimelineSegment,
@@ -34,6 +35,20 @@ function makeVersion(id: string, overrides: Partial<DawVersion> = {}): DawVersio
     tempoSource: overrides.tempoSource ?? 'MANUAL',
     keySource: overrides.keySource ?? 'MANUAL',
     tracks: overrides.tracks ?? [],
+  };
+}
+
+function makePlugin(instanceId: string, overrides: Partial<HostedPluginInstanceState> = {}): HostedPluginInstanceState {
+  return {
+    instanceId,
+    pluginKey: overrides.pluginKey ?? 'com.example.delay',
+    version: overrides.version ?? '1.0.0',
+    backend: overrides.backend ?? 'wam',
+    position: overrides.position ?? 0,
+    bypassed: overrides.bypassed ?? false,
+    params: overrides.params ?? { mix: 0.5 },
+    state: overrides.state ?? { preset: 'wide' },
+    stateBlobKey: overrides.stateBlobKey ?? null,
   };
 }
 
@@ -71,6 +86,7 @@ function makeTrack(trackVersionId: string, overrides: Partial<DawTrack> = {}): D
     operationType: overrides.operationType ?? 'ORIGINAL',
     parentTrackVersionId: overrides.parentTrackVersionId ?? null,
     segments: overrides.segments ?? [segment],
+    plugins: overrides.plugins ?? [makePlugin(`plugin-${trackVersionId}`)],
   };
 }
 
@@ -774,6 +790,7 @@ test('TRACK_VERSION_CREATED replaces the copied track entry when it targets an e
   assert.equal(version?.tracks.length, 1);
   assert.equal(version?.tracks[0]?.trackId, 'track-1');
   assert.equal(version?.tracks[0]?.trackVersionId, track.trackVersionId);
+  assert.deepEqual(version?.tracks[0]?.plugins, [makePlugin(`plugin-${track.trackVersionId}`)]);
 });
 
 test('TRACK_VERSION_CREATED removes a blank duplicate track when the new track has audio and the same name', () => {
@@ -905,6 +922,103 @@ test('TRACK_VERSION_CREATED preserves the recorded segment on the track version'
   assert.equal(createdTrack?.segments[0]?.id, recordedSegment.id);
   assert.equal(createdTrack?.segments[0]?.timelineStartMs, recordedSegment.timelineStartMs);
   assert.equal(createdTrack?.segments[0]?.sourceEndMs, recordedSegment.sourceEndMs);
+  assert.deepEqual(createdTrack?.plugins, [makePlugin(`plugin-${recordedTrack.trackVersionId}`)]);
+});
+
+test('plugin operations keep the insert chain ordered by position and update instance state deterministically', () => {
+  const root = makeVersion('version-root', {
+    isCurrent: true,
+    tracks: [
+      makeTrack('track-version-1', {
+        trackId: 'track-1',
+        trackName: 'Track 1',
+        plugins: [
+          makePlugin('plugin-a', { position: 0, params: { mix: 0.1 } }),
+          makePlugin('plugin-b', { position: 1, params: { mix: 0.2 } }),
+          makePlugin('plugin-c', { position: 2, params: { mix: 0.3 } }),
+        ],
+      }),
+    ],
+  });
+  const initial = createLocalProjectStateFromBootstrap(makeBootstrap([root], root.id));
+
+  const added = applyAcceptedProjectOperation(
+    initial,
+    makeOperation('PLUGIN_ADDED', 2, {
+      trackVersionId: 'track-version-1',
+      instanceId: 'plugin-new',
+      pluginKey: 'com.example.reverb',
+      version: '1.0.0',
+      backend: 'remote',
+      position: 1,
+      bypassed: false,
+      params: { mix: 0.4, feedback: 0.6 },
+      state: { preset: 'wide' },
+      stateBlobKey: null,
+    }),
+  );
+
+  const afterAdd = added.versions[0]?.tracks[0]?.plugins;
+  assert.deepEqual(afterAdd?.map((plugin) => plugin.instanceId), ['plugin-a', 'plugin-new', 'plugin-b', 'plugin-c']);
+  assert.deepEqual(afterAdd?.map((plugin) => plugin.position), [0, 1, 2, 3]);
+
+  const reordered = applyAcceptedProjectOperation(
+    added,
+    makeOperation('PLUGIN_REORDERED', 3, {
+      trackVersionId: 'track-version-1',
+      instanceId: 'plugin-c',
+      position: 1,
+    }),
+  );
+  const afterReorder = reordered.versions[0]?.tracks[0]?.plugins;
+  assert.deepEqual(afterReorder?.map((plugin) => plugin.instanceId), ['plugin-a', 'plugin-c', 'plugin-new', 'plugin-b']);
+  assert.deepEqual(afterReorder?.map((plugin) => plugin.position), [0, 1, 2, 3]);
+
+  const paramSet = applyAcceptedProjectOperation(
+    reordered,
+    makeOperation('PLUGIN_PARAM_SET', 4, {
+      trackVersionId: 'track-version-1',
+      instanceId: 'plugin-new',
+      paramId: 'mix',
+      value: 0.75,
+    }),
+  );
+  const bypassSet = applyAcceptedProjectOperation(
+    paramSet,
+    makeOperation('PLUGIN_BYPASS_SET', 5, {
+      trackVersionId: 'track-version-1',
+      instanceId: 'plugin-c',
+      bypassed: true,
+    }),
+  );
+  const stateSet = applyAcceptedProjectOperation(
+    bypassSet,
+    makeOperation('PLUGIN_STATE_SET', 6, {
+      trackVersionId: 'track-version-1',
+      instanceId: 'plugin-new',
+      state: { preset: 'bright', automation: [0.1, 0.9] },
+      stateBlobKey: 'state-blob-1',
+    }),
+  );
+  const removed = applyAcceptedProjectOperation(
+    stateSet,
+    makeOperation('PLUGIN_REMOVED', 7, {
+      trackVersionId: 'track-version-1',
+      instanceId: 'plugin-b',
+    }),
+  );
+
+  const finalPlugins = removed.versions[0]?.tracks[0]?.plugins;
+  const updatedNewPlugin = finalPlugins?.find((plugin) => plugin.instanceId === 'plugin-new');
+  const bypassedPlugin = finalPlugins?.find((plugin) => plugin.instanceId === 'plugin-c');
+
+  assert.deepEqual(finalPlugins?.map((plugin) => plugin.instanceId), ['plugin-a', 'plugin-c', 'plugin-new']);
+  assert.deepEqual(finalPlugins?.map((plugin) => plugin.position), [0, 1, 2]);
+  assert.equal(updatedNewPlugin?.params.mix, 0.75);
+  assert.deepEqual(updatedNewPlugin?.state, { preset: 'bright', automation: [0.1, 0.9] });
+  assert.equal(updatedNewPlugin?.stateBlobKey, 'state-blob-1');
+  assert.equal(bypassedPlugin?.bypassed, true);
+  assert.equal(removed.operationHistory.length, 6);
 });
 
 test('TRACK_OFFSET_UPDATED updates the track placement in place', () => {

@@ -20,6 +20,8 @@ A Track is a logical lane or role in the demo.
 
 A TrackVersion is the audio state of that track within a specific demo version.
 
+TrackVersion state also includes the ordered plugin insert chain for that track version. Plugin instances are versioned with the track, so branching and reverting carry the chain forward with the rest of the version snapshot.
+
 A Segment is a time-bounded region of a TrackVersion.
 
 ## Version Graph
@@ -45,6 +47,8 @@ meaningful checkpoints.
 In practice, the current system checkpoints the converged head after accepted
 operations, creates non-destructive revert versions as new nodes, and lets safe
 concurrent edits converge before the branch fallback is used.
+
+Branch/version copy logic should preserve each track version's plugin chain as part of the copied track state. If a plugin has large opaque state, the version should reference it by key rather than embedding binary data in the snapshot.
 
 ## Related Context
 

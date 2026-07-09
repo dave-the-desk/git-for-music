@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import type {
   DemoTimingMetadata,
@@ -29,9 +29,18 @@ import { TrackSegmentClip } from './TrackSegmentClip';
 import { VersionHistoryTree } from './VersionHistoryTree';
 import { AudioInputSelector } from './AudioInputSelector';
 import { AudioEditingEngine } from '@/app/lib/daw/engine/audio-editing-engine';
+import {
+  renderDawProjectAsMp3Blob,
+  renderDawTrackStemsAsMp3Blobs,
+} from '@/app/lib/daw/engine/export-engine';
 import { AudioIngestEngine } from '@/app/lib/daw/engine/ingest-engine';
 import { ProjectSyncEngine } from '@/app/lib/daw/engine/project-sync-engine';
 import { AudioPlaybackEngine } from '@/app/lib/daw/engine/playback-engine';
+import {
+  createWamPlaybackPluginGraphFactory,
+  loadWamModule,
+  type PlaybackPluginGraphIssue,
+} from '@/app/lib/daw/engine/wam-host';
 import {
   buildDawVisualProjection,
   PX_PER_SECOND,
@@ -74,6 +83,7 @@ import { shouldShowTemporaryRecordingTrack } from '@/app/lib/daw/utils/recording
 import type {
   DawTrack,
   DawVersion,
+  HostedPluginInstanceState,
   LocalProjectState,
   TrackTimelineSegment,
 } from '@/app/lib/daw/state/local-project-state';
@@ -210,6 +220,49 @@ type ResolvedRecordingTarget = {
   trackName: string;
 };
 
+type PluginParameterSchemaDefinition = {
+  id: string;
+  label?: string | null;
+  name?: string | null;
+  type?: 'number' | 'integer' | 'boolean' | 'toggle' | string;
+  min?: number | null;
+  max?: number | null;
+  step?: number | null;
+  unit?: string | null;
+  default?: number | boolean | null;
+  range?: {
+    min?: number | null;
+    max?: number | null;
+    step?: number | null;
+  } | null;
+};
+
+type PluginDefinition = {
+  id: string;
+  pluginKey: string;
+  name: string;
+  displayName: string | null;
+  description: string | null;
+  version: string;
+  manufacturer: string | null;
+  parameterSchema: unknown;
+  ownerId: string | null;
+  visibility: 'PRIVATE' | 'PUBLIC';
+  descriptorUrl: string;
+  createdAt: string;
+};
+
+type ResolvedPluginParameter = {
+  id: string;
+  label: string;
+  type: 'slider' | 'toggle';
+  min?: number;
+  max?: number;
+  step?: number;
+  unit?: string;
+  defaultValue: number | boolean;
+};
+
 type RecordingSession = {
   id: string;
   targetTrackId: string;
@@ -292,20 +345,13 @@ export function DemoDawClient({
   );
   const [selectedTrackVersionId, setSelectedTrackVersionId] = useState<string | null>(null);
   const [presenceRecords, setPresenceRecords] = useState<ProjectPresenceRecord[]>([]);
-  const [pluginDefinitions, setPluginDefinitions] = useState<
-    Array<{
-      id: string;
-      pluginKey: string;
-      name: string;
-      version: string;
-      manufacturer: string | null;
-      parameterSchema: unknown;
-      createdAt: string;
-    }>
-  >([]);
+  const [pluginDefinitions, setPluginDefinitions] = useState<PluginDefinition[]>([]);
   const [gainByTrackVersionId, setGainByTrackVersionId] = useState<Record<string, number>>({});
   const [soloTrackVersionIds, setSoloTrackVersionIds] = useState<Set<string>>(() => new Set());
   const [recordArmedTrackVersionId, setRecordArmedTrackVersionId] = useState<string | null>(null);
+  const [pluginRackDropTarget, setPluginRackDropTarget] = useState<{ trackVersionId: string; position: number } | null>(
+    null,
+  );
   const [recordedTempoByTrackVersionId, setRecordedTempoByTrackVersionId] = useState<
     Record<string, { recordedTempoBpm: number | null; sourceTempoBpm: number | null }>
   >({});
@@ -323,6 +369,7 @@ export function DemoDawClient({
   const isLiveRecordingRef = useRef(false);
   const recordingSessionRef = useRef<RecordingSession | null>(null);
   const recordingControlsRef = useRef<RecordingControlsHandle | null>(null);
+  const selectedTracksRef = useRef<DawTrack[]>([]);
   const topShellRef = useRef<HTMLDivElement | null>(null);
   const toolsStickySentinelRef = useRef<HTMLDivElement | null>(null);
   const toolsBarRef = useRef<HTMLDivElement | null>(null);
@@ -345,6 +392,9 @@ export function DemoDawClient({
   const [mergeError, setMergeError] = useState<string | null>(null);
   const [mergeSubmitting, setMergeSubmitting] = useState(false);
   const [fadeError, setFadeError] = useState<string | null>(null);
+  const [exportStatus, setExportStatus] = useState<'project' | 'tracks' | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
+  const pluginRackDragRef = useRef<{ trackVersionId: string; instanceId: string } | null>(null);
 
   useEffect(() => {
     const element = topShellRef.current;
@@ -411,6 +461,7 @@ export function DemoDawClient({
   const [historyOperationSeq, setHistoryOperationSeq] = useState<number | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
+  const [pluginGraphIssue, setPluginGraphIssue] = useState<PlaybackPluginGraphIssue | null>(null);
   const clockRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startWallTimeRef = useRef<number>(0);
   const startPlayheadMsRef = useRef<number>(0);
@@ -497,7 +548,16 @@ export function DemoDawClient({
 
   const audioEditingEngine = useMemo(() => new AudioEditingEngine({ demoId }), [demoId]);
   const ingestEngine = useMemo(() => new AudioIngestEngine(), []);
-  const playbackEngine = useMemo(() => new AudioPlaybackEngine(), []);
+  const pluginGraphFactory = useMemo(
+    () =>
+      createWamPlaybackPluginGraphFactory({
+        getTrackPlugins: (trackVersionId) =>
+          selectedTracksRef.current.find((track) => track.trackVersionId === trackVersionId)?.plugins ?? [],
+        onIssue: setPluginGraphIssue,
+      }),
+    [],
+  );
+  const playbackEngine = useMemo(() => new AudioPlaybackEngine({ pluginGraphFactory }), [pluginGraphFactory]);
   const projectSyncEngine = useMemo(() => new ProjectSyncEngine(), []);
   const [projectSyncState, setProjectSyncState] = useState(() => projectSyncEngine.getState());
   const liveProjectState = projectSyncState.projectState;
@@ -541,6 +601,28 @@ export function DemoDawClient({
     () => selectedTracks.find((track) => track.trackVersionId === selectedTrackVersionId) ?? selectedTracks[0] ?? null,
     [selectedTrackVersionId, selectedTracks],
   );
+  const pluginDefinitionsByIdentity = useMemo(
+    () => new Map(pluginDefinitions.map((plugin) => [`${plugin.pluginKey}@${plugin.version}`, plugin] as const)),
+    [pluginDefinitions],
+  );
+  const resolvePluginDefinition = useCallback(
+    (plugin: Pick<DawTrack['plugins'][number], 'pluginKey' | 'version'>) =>
+      pluginDefinitionsByIdentity.get(`${plugin.pluginKey}@${plugin.version}`) ?? null,
+    [pluginDefinitionsByIdentity],
+  );
+  const preloadPluginDefinition = useCallback(
+    async (pluginDefinition: PluginDefinition) => {
+      if (!pluginDefinition.descriptorUrl) {
+        return;
+      }
+
+      await loadWamModule(pluginDefinition.pluginKey, pluginDefinition.version, pluginDefinition.descriptorUrl);
+    },
+    [],
+  );
+  useEffect(() => {
+    selectedTracksRef.current = selectedTracks;
+  }, [selectedTracks]);
   useEffect(() => {
     if (recordArmedTrackVersionId && selectedTracks.some((track) => track.trackVersionId === recordArmedTrackVersionId)) {
       recordArmInitializedRef.current = true;
@@ -558,6 +640,41 @@ export function DemoDawClient({
   const activeRecordingTarget = useMemo(
     () => resolveArmedRecordingTarget(recordArmedTrackVersionId, selectedTracks),
     [recordArmedTrackVersionId, selectedTracks],
+  );
+
+  const exportTracks = useMemo(
+    () =>
+      selectedTracks.map((track) => ({
+        trackId: track.trackId,
+        trackName: track.trackName,
+        trackVersionId: track.trackVersionId,
+        storageKey: track.storageKey,
+        mimeType: getEffectiveTrackMimeType(track, segmentLayoutOverrides),
+        startOffsetMs: selectTrackStartOffsetMs(track, offsetOverrides),
+        durationMs: durationByTrackVersionId[track.trackVersionId] ?? track.durationMs,
+        segments: selectDisplayedTrackSegments(track, segmentLayoutOverrides),
+        recordedTempoBpm:
+          recordedTempoByTrackVersionId[track.trackVersionId]?.recordedTempoBpm ??
+          track.recordedTempoBpm ??
+          sharedDemoTempoBpm,
+        sourceTempoBpm:
+          recordedTempoByTrackVersionId[track.trackVersionId]?.sourceTempoBpm ??
+          track.sourceTempoBpm ??
+          sharedDemoTempoBpm,
+        isMuted: mutedTrackVersionIds.has(track.trackVersionId),
+        gain: gainByTrackVersionId[track.trackVersionId] ?? 1,
+        plugins: track.plugins,
+      })),
+    [
+      durationByTrackVersionId,
+      gainByTrackVersionId,
+      mutedTrackVersionIds,
+      offsetOverrides,
+      recordedTempoByTrackVersionId,
+      selectedTracks,
+      segmentLayoutOverrides,
+      sharedDemoTempoBpm,
+    ],
   );
 
   useEffect(() => {
@@ -604,9 +721,14 @@ export function DemoDawClient({
             id: string;
             pluginKey: string;
             name: string;
+            displayName: string | null;
+            description: string | null;
             version: string;
             manufacturer: string | null;
             parameterSchema: unknown;
+            ownerId: string | null;
+            visibility: 'PRIVATE' | 'PUBLIC';
+            descriptorUrl: string;
             createdAt: string;
           }>;
         };
@@ -945,6 +1067,7 @@ export function DemoDawClient({
       recordedTempoBpm: track.recordedTempoBpm,
       sourceTempoBpm: track.sourceTempoBpm,
       isMuted: track.isMuted,
+      plugins: track.plugins,
     }));
     const projectedMutedTrackVersionIds = new Set(mutedTrackVersionIds);
     const projectedSoloTrackVersionIds = new Set(soloTrackVersionIds);
@@ -1117,19 +1240,72 @@ export function DemoDawClient({
   }, [selectedTracks, selectedVersionId]);
 
   useEffect(() => {
-    playbackEngine.setProject({
-      tracks: playbackEngineProjection.tracks,
-      mutedTrackVersionIds: playbackEngineProjection.mutedTrackVersionIds,
-      soloTrackVersionIds: playbackEngineProjection.soloTrackVersionIds,
-      gainByTrackVersionId: playbackEngineProjection.gainByTrackVersionId,
-      localTempoBpm: resolvedLocalTempoBpm,
-      sharedDemoTempoBpm,
-    });
+    let cancelled = false;
+
+    async function preloadPluginModules() {
+      const pendingLoads = new Map<string, Promise<void>>();
+
+      for (const track of selectedTracks) {
+        for (const plugin of track.plugins) {
+          const definition = resolvePluginDefinition(plugin);
+          if (!definition?.descriptorUrl) {
+            continue;
+          }
+
+          const cacheKey = `${definition.pluginKey}@${definition.version}`;
+          if (pendingLoads.has(cacheKey)) {
+            continue;
+          }
+
+          pendingLoads.set(
+            cacheKey,
+            preloadPluginDefinition(definition)
+              .then(() => undefined)
+              .catch((error) => {
+                setPluginGraphIssue({
+                  trackVersionId: track.trackVersionId,
+                  pluginKey: definition.pluginKey,
+                  version: definition.version,
+                  message:
+                    error instanceof Error
+                      ? error.message
+                      : `Could not load ${definition.pluginKey}@${definition.version}`,
+                  severity: 'error',
+                });
+              }),
+          );
+        }
+      }
+
+      await Promise.all(pendingLoads.values());
+
+      if (cancelled) {
+        return;
+      }
+
+      playbackEngine.setProject({
+        tracks: playbackEngineProjection.tracks,
+        mutedTrackVersionIds: playbackEngineProjection.mutedTrackVersionIds,
+        soloTrackVersionIds: playbackEngineProjection.soloTrackVersionIds,
+        gainByTrackVersionId: playbackEngineProjection.gainByTrackVersionId,
+        localTempoBpm: resolvedLocalTempoBpm,
+        sharedDemoTempoBpm,
+      });
+    }
+
+    void preloadPluginModules();
+
+    return () => {
+      cancelled = true;
+    };
   }, [
     playbackEngine,
     playbackEngineProjection,
     resolvedLocalTempoBpm,
+    preloadPluginDefinition,
+    resolvePluginDefinition,
     sharedDemoTempoBpm,
+    selectedTracks,
   ]);
 
   useEffect(() => {
@@ -1717,6 +1893,62 @@ export function DemoDawClient({
     stopTransport();
   }
 
+  const downloadBlob = useCallback((blob: Blob, fileName: string) => {
+    const objectUrl = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = objectUrl;
+    anchor.download = fileName;
+    anchor.rel = 'noreferrer';
+    anchor.style.display = 'none';
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 500);
+  }, []);
+
+  const handleProjectExport = useCallback(async () => {
+    if (exportStatus) return;
+    setExportStatus('project');
+    setExportError(null);
+
+    try {
+      const blob = await renderDawProjectAsMp3Blob({
+        tracks: exportTracks,
+        localTempoBpm: resolvedLocalTempoBpm,
+        sharedDemoTempoBpm,
+      });
+      downloadBlob(blob, `${demoName}.mp3`);
+    } catch (error) {
+      console.error('[daw] Failed to export project MP3', error);
+      setExportError(error instanceof Error ? error.message : 'Unable to export project MP3.');
+    } finally {
+      setExportStatus(null);
+    }
+  }, [downloadBlob, exportStatus, exportTracks, demoName, resolvedLocalTempoBpm, sharedDemoTempoBpm]);
+
+  const handleTrackExport = useCallback(async () => {
+    if (exportStatus) return;
+    setExportStatus('tracks');
+    setExportError(null);
+
+    try {
+      const files = await renderDawTrackStemsAsMp3Blobs({
+        tracks: exportTracks,
+        localTempoBpm: resolvedLocalTempoBpm,
+        sharedDemoTempoBpm,
+      });
+
+      for (const file of files) {
+        downloadBlob(file.blob, `${demoName} - ${file.fileName}`);
+      }
+    } catch (error) {
+      console.error('[daw] Failed to export track MP3 stems', error);
+      setExportError(error instanceof Error ? error.message : 'Unable to export individual track MP3 files.');
+    } finally {
+      setExportStatus(null);
+    }
+  }, [demoName, downloadBlob, exportStatus, exportTracks, resolvedLocalTempoBpm, sharedDemoTempoBpm]);
+
   useEffect(() => {
     const previousBranchHeadVersionId = previousBranchHeadVersionIdRef.current;
     const branchHeadChanged = previousBranchHeadVersionId !== liveBranchHeadVersionId;
@@ -1860,6 +2092,15 @@ export function DemoDawClient({
       case 'TRACK_REMOVED':
         return (payload as Extract<DawCommandPayload, { trackId: string }>).trackId;
       case 'TRACK_OFFSET_UPDATED':
+        return findTrackByVersionId(
+          (payload as Extract<DawCommandPayload, { trackVersionId: string }>).trackVersionId,
+        )?.trackId ?? null;
+      case 'PLUGIN_ADDED':
+      case 'PLUGIN_REMOVED':
+      case 'PLUGIN_REORDERED':
+      case 'PLUGIN_PARAM_SET':
+      case 'PLUGIN_BYPASS_SET':
+      case 'PLUGIN_STATE_SET':
         return findTrackByVersionId(
           (payload as Extract<DawCommandPayload, { trackVersionId: string }>).trackVersionId,
         )?.trackId ?? null;
@@ -2335,6 +2576,416 @@ export function DemoDawClient({
       ...prev,
       [trackVersionId]: normalizedGain,
     }));
+  }
+
+  async function addPlugin(trackVersionId: string, plugin: HostedPluginInstanceState) {
+    const result = await commitEditingOperation(audioEditingEngine.addPlugin({ trackVersionId, plugin }));
+    playbackEngine.rebuildTrackPluginChain(trackVersionId);
+    return result;
+  }
+
+  async function removePlugin(trackVersionId: string, instanceId: string) {
+    const result = await commitEditingOperation(audioEditingEngine.removePlugin({ trackVersionId, instanceId }));
+    playbackEngine.rebuildTrackPluginChain(trackVersionId);
+    return result;
+  }
+
+  async function reorderPlugin(trackVersionId: string, instanceId: string, position: number) {
+    const result = await commitEditingOperation(audioEditingEngine.reorderPlugin({ trackVersionId, instanceId, position }));
+    playbackEngine.rebuildTrackPluginChain(trackVersionId);
+    return result;
+  }
+
+  async function setPluginParam(trackVersionId: string, instanceId: string, paramId: string, value: number) {
+    const result = await commitEditingOperation(audioEditingEngine.setPluginParam({ trackVersionId, instanceId, paramId, value }));
+    playbackEngine.setPluginParam(trackVersionId, instanceId, paramId, value);
+    return result;
+  }
+
+  async function setPluginBypass(trackVersionId: string, instanceId: string, bypassed: boolean) {
+    const result = await commitEditingOperation(audioEditingEngine.setPluginBypass({ trackVersionId, instanceId, bypassed }));
+    playbackEngine.setPluginBypass(trackVersionId, instanceId, bypassed);
+    return result;
+  }
+
+  async function setPluginState(
+    trackVersionId: string,
+    instanceId: string,
+    state: HostedPluginInstanceState['state'],
+    stateBlobKey?: string | null,
+  ) {
+    return commitEditingOperation(
+      audioEditingEngine.setPluginState({ trackVersionId, instanceId, state, stateBlobKey }),
+    );
+  }
+
+  async function addPluginToSelectedTrack(pluginDefinition: (typeof pluginDefinitions)[number]) {
+    if (!selectedTrack) return;
+
+    try {
+      await preloadPluginDefinition(pluginDefinition);
+    } catch (error) {
+      setPluginGraphIssue({
+        trackVersionId: selectedTrack.trackVersionId,
+        pluginKey: pluginDefinition.pluginKey,
+        version: pluginDefinition.version,
+        message:
+          error instanceof Error
+            ? error.message
+            : `Could not load ${pluginDefinition.pluginKey}@${pluginDefinition.version}`,
+        severity: 'error',
+      });
+      return;
+    }
+
+    const pluginInstance: HostedPluginInstanceState = {
+      instanceId: crypto.randomUUID(),
+      pluginKey: pluginDefinition.pluginKey,
+      version: pluginDefinition.version,
+      backend: 'wam',
+      position: selectedTrack.plugins.length,
+      bypassed: false,
+      params: {},
+      stateBlobKey: null,
+    };
+
+    await addPlugin(selectedTrack.trackVersionId, pluginInstance);
+  }
+
+  function getPluginRackLabel(plugin: DawTrack['plugins'][number]) {
+    const definition = resolvePluginDefinition(plugin);
+    return definition?.displayName ?? definition?.name ?? `${plugin.pluginKey} ${plugin.version}`;
+  }
+
+  function getOrderedTrackPlugins(track: DawTrack) {
+    return [...track.plugins].sort((left, right) => left.position - right.position);
+  }
+
+  function renderPluginChain(track: DawTrack, options?: { variant?: 'rack' | 'browser' }) {
+    const orderedTrackPlugins = getOrderedTrackPlugins(track);
+    const isBrowserVariant = options?.variant === 'browser';
+    const isRackVariant = !isBrowserVariant;
+
+    return (
+      <div
+        className={
+          isBrowserVariant
+            ? 'space-y-4'
+            : 'mt-2 overflow-hidden rounded-xl border border-slate-800/90 bg-slate-950/80 p-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]'
+        }
+      >
+        {isBrowserVariant ? (
+          <div className="space-y-1">
+            <p className="text-sm font-semibold text-white">{track.trackName}</p>
+            <p className="text-xs text-slate-400">Edit the selected track's insert chain from the Plugins tab.</p>
+          </div>
+        ) : (
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <div className="min-w-0">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-300">Insert chain</p>
+              <p className="mt-0.5 text-[10px] text-slate-500">Plugins on this track</p>
+            </div>
+            <span className="shrink-0 rounded-full border border-slate-700 bg-slate-900/80 px-2 py-0.5 text-[10px] font-medium text-slate-300">
+              {orderedTrackPlugins.length} slot{orderedTrackPlugins.length === 1 ? '' : 's'}
+            </span>
+          </div>
+        )}
+        <div className="space-y-2" data-testid={isBrowserVariant ? `browser-plugin-chain-${track.trackVersionId}` : undefined}>
+          {orderedTrackPlugins.length > 0 ? (
+            orderedTrackPlugins.map((plugin, index) => {
+              const pluginDefinition = resolvePluginDefinition(plugin);
+              const pluginLabel = pluginDefinition?.displayName ?? pluginDefinition?.name ?? 'WAM plugin';
+              const isDropTarget =
+                pluginRackDropTarget?.trackVersionId === track.trackVersionId && pluginRackDropTarget.position === index;
+              const parameterEditor = renderPluginParameterEditor(track, plugin);
+
+              return (
+                <div
+                  key={plugin.instanceId}
+                  className={`rounded-xl border px-3 py-2.5 transition-colors ${
+                    plugin.bypassed
+                      ? 'border-slate-800 bg-slate-900/70 opacity-70'
+                      : 'border-slate-700 bg-slate-900/95'
+                  } ${isDropTarget ? 'ring-1 ring-cyan-400/70' : ''} ${
+                    isRackVariant ? 'shadow-[0_8px_20px_-16px_rgba(0,0,0,0.9)]' : ''
+                  }`}
+                  onDragOver={(event) => handlePluginDragOver(event, track.trackVersionId, index)}
+                  onDrop={(event) => void handlePluginDrop(event, track, index)}
+                >
+                  <div className="flex items-start gap-2">
+                    <button
+                      type="button"
+                      draggable
+                      onDragStart={(event) => handlePluginDragStart(event, track.trackVersionId, plugin.instanceId)}
+                      onDragEnd={handlePluginDragEnd}
+                      aria-label={`Drag ${pluginLabel}`}
+                      className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-slate-700 bg-slate-950 text-sm font-semibold text-slate-300 transition-colors hover:border-slate-500 hover:text-white active:cursor-grabbing"
+                    >
+                      <span aria-hidden>::</span>
+                    </button>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex min-w-0 items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-base font-semibold leading-5 text-white">{pluginLabel}</p>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-1">
+                          {!plugin.bypassed ? (
+                            <button
+                              type="button"
+                              onClick={() => void setPluginBypass(track.trackVersionId, plugin.instanceId, true)}
+                              aria-label={`Bypass ${pluginLabel}`}
+                              className="rounded-full border border-slate-700 bg-slate-950/70 px-2 py-1 text-[10px] font-semibold text-slate-300 transition-colors hover:border-slate-500 hover:text-white"
+                            >
+                              Bypass
+                            </button>
+                          ) : (
+                            <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-[10px] font-semibold text-amber-200">
+                              Bypassed
+                            </span>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => void removePlugin(track.trackVersionId, plugin.instanceId)}
+                            aria-label={`Remove ${pluginLabel} from ${track.trackName}`}
+                            className="rounded-full border border-slate-700 bg-slate-950/70 px-2 py-1 text-[10px] font-semibold text-rose-200 transition-colors hover:border-rose-500/40 hover:bg-rose-500/10 hover:text-rose-100"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  {parameterEditor ? (
+                    <div className="mt-3 rounded-lg border border-slate-800/80 bg-slate-950/60 p-2">{parameterEditor}</div>
+                  ) : null}
+                </div>
+              );
+            })
+          ) : (
+            <p className="rounded-lg border border-dashed border-slate-800 px-3 py-3 text-[10px] text-slate-500">
+              No inserts on this track yet.
+            </p>
+          )}
+          <div
+            className={`h-2 rounded ${
+              pluginRackDropTarget?.trackVersionId === track.trackVersionId &&
+              pluginRackDropTarget.position === orderedTrackPlugins.length
+                ? 'bg-cyan-400/40'
+                : 'bg-transparent'
+            }`}
+            onDragOver={(event) => handlePluginDragOver(event, track.trackVersionId, orderedTrackPlugins.length)}
+            onDrop={(event) => void handlePluginDrop(event, track, orderedTrackPlugins.length)}
+            aria-hidden
+          />
+        </div>
+      </div>
+    );
+  }
+
+  function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+  }
+
+  function normalizePluginParameters(parameterSchema: unknown): ResolvedPluginParameter[] {
+    const rawDefinitions: unknown[] = Array.isArray(parameterSchema)
+      ? parameterSchema
+      : isRecord(parameterSchema) && Array.isArray(parameterSchema.parameters)
+        ? parameterSchema.parameters
+        : isRecord(parameterSchema) && Array.isArray(parameterSchema.controls)
+          ? parameterSchema.controls
+          : [];
+
+    return rawDefinitions.flatMap((definition): ResolvedPluginParameter[] => {
+      if (!isRecord(definition)) return [];
+      const id = typeof definition.id === 'string' ? definition.id.trim() : '';
+      if (!id) return [];
+
+      const label =
+        (typeof definition.label === 'string' && definition.label.trim()) ||
+        (typeof definition.name === 'string' && definition.name.trim()) ||
+        id;
+      const unit = typeof definition.unit === 'string' && definition.unit.trim() ? definition.unit.trim() : undefined;
+      const min =
+        typeof definition.min === 'number'
+          ? definition.min
+          : isRecord(definition.range) && typeof definition.range.min === 'number'
+            ? definition.range.min
+            : undefined;
+      const max =
+        typeof definition.max === 'number'
+          ? definition.max
+          : isRecord(definition.range) && typeof definition.range.max === 'number'
+            ? definition.range.max
+            : undefined;
+      const step =
+        typeof definition.step === 'number'
+          ? definition.step
+          : isRecord(definition.range) && typeof definition.range.step === 'number'
+            ? definition.range.step
+            : undefined;
+      const isToggle =
+        definition.type === 'boolean' ||
+        definition.type === 'toggle' ||
+        typeof definition.default === 'boolean';
+      const defaultValue = isToggle
+        ? Boolean(definition.default)
+        : typeof definition.default === 'number'
+          ? definition.default
+          : min ?? 0;
+
+      return [
+        {
+          id,
+          label,
+          type: isToggle ? 'toggle' : 'slider',
+          min: isToggle ? 0 : min ?? 0,
+          max: isToggle ? 1 : max ?? 1,
+          step: isToggle ? 1 : step ?? 0.01,
+          unit,
+          defaultValue,
+        },
+      ];
+    });
+  }
+
+  function beginPluginDrag(trackVersionId: string, instanceId: string) {
+    pluginRackDragRef.current = { trackVersionId, instanceId };
+    setPluginRackDropTarget(null);
+  }
+
+  function cancelPluginDrag() {
+    pluginRackDragRef.current = null;
+    setPluginRackDropTarget(null);
+  }
+
+  async function commitPluginReorder(trackVersionId: string, instanceId: string, position: number) {
+    const result = await reorderPlugin(trackVersionId, instanceId, position);
+    cancelPluginDrag();
+    return result;
+  }
+
+  function handlePluginDragStart(
+    event: DragEvent<HTMLButtonElement>,
+    trackVersionId: string,
+    instanceId: string,
+  ) {
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', instanceId);
+    beginPluginDrag(trackVersionId, instanceId);
+  }
+
+  function handlePluginDragOver(
+    event: DragEvent<HTMLElement>,
+    trackVersionId: string,
+    position: number,
+  ) {
+    if (pluginRackDragRef.current?.trackVersionId !== trackVersionId) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    setPluginRackDropTarget({ trackVersionId, position });
+  }
+
+  async function handlePluginDrop(
+    event: DragEvent<HTMLElement>,
+    track: DawTrack,
+    position: number,
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const drag = pluginRackDragRef.current;
+    if (!drag || drag.trackVersionId !== track.trackVersionId) {
+      cancelPluginDrag();
+      return;
+    }
+
+    const orderedPlugins = getOrderedTrackPlugins(track);
+    const sourceIndex = orderedPlugins.findIndex((plugin) => plugin.instanceId === drag.instanceId);
+    if (
+      sourceIndex === -1 ||
+      sourceIndex === position ||
+      (sourceIndex === orderedPlugins.length - 1 && position === orderedPlugins.length)
+    ) {
+      cancelPluginDrag();
+      return;
+    }
+
+    await commitPluginReorder(track.trackVersionId, drag.instanceId, position);
+  }
+
+  function handlePluginDragEnd() {
+    cancelPluginDrag();
+  }
+
+  function renderPluginParameterEditor(track: DawTrack, plugin: DawTrack['plugins'][number]) {
+    const pluginDefinition = resolvePluginDefinition(plugin);
+    const parameters = normalizePluginParameters(pluginDefinition?.parameterSchema);
+    if (parameters.length === 0) return null;
+
+    return (
+      <div className="mt-2 space-y-2 rounded border border-slate-800 bg-slate-950/70 p-2">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">Parameters</p>
+        <div className="space-y-2">
+          {parameters.map((parameter) => {
+            const currentValue = plugin.params[parameter.id];
+            const normalizedValue =
+              typeof currentValue === 'number'
+                ? currentValue
+                : typeof parameter.defaultValue === 'boolean'
+                  ? parameter.defaultValue
+                    ? 1
+                    : 0
+                  : parameter.defaultValue;
+
+            if (parameter.type === 'toggle') {
+              const isEnabled = normalizedValue >= 0.5;
+              return (
+                <label key={parameter.id} className="flex items-center justify-between gap-3 rounded bg-slate-900/60 px-2 py-1.5 text-[11px] text-slate-200">
+                  <span className="min-w-0">
+                    <span className="block truncate font-medium text-white">{parameter.label}</span>
+                    {parameter.unit ? <span className="text-[10px] text-slate-500">{parameter.unit}</span> : null}
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={isEnabled}
+                    onChange={(event) =>
+                      void setPluginParam(track.trackVersionId, plugin.instanceId, parameter.id, event.currentTarget.checked ? 1 : 0)
+                    }
+                    aria-label={`${parameter.label} toggle`}
+                    className="h-4 w-4 accent-cyan-500"
+                  />
+                </label>
+              );
+            }
+
+            const sliderValue = Number.isFinite(Number(normalizedValue)) ? Number(normalizedValue) : 0;
+            return (
+              <label key={parameter.id} className="flex flex-col gap-1 rounded bg-slate-900/60 px-2 py-1.5 text-[11px] text-slate-200">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="min-w-0 truncate font-medium text-white">{parameter.label}</span>
+                  <span className="shrink-0 text-[10px] text-slate-500">
+                    {sliderValue.toFixed(2)}
+                    {parameter.unit ? ` ${parameter.unit}` : ''}
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={parameter.min ?? 0}
+                  max={parameter.max ?? 1}
+                  step={parameter.step ?? 0.01}
+                  value={sliderValue}
+                  onChange={(event) =>
+                    void setPluginParam(track.trackVersionId, plugin.instanceId, parameter.id, Number(event.currentTarget.value))
+                  }
+                  aria-label={parameter.label}
+                  className="h-1 w-full accent-cyan-500"
+                />
+              </label>
+            );
+          })}
+        </div>
+      </div>
+    );
   }
 
   function beginTrackDrag(track: DawTrack, startX: number) {
@@ -3477,6 +4128,22 @@ export function DemoDawClient({
           ) : null}
         </div>
 
+          {pluginGraphIssue ? (
+            <div
+              role="status"
+              className={`rounded-xl border px-4 py-3 text-sm ${
+                pluginGraphIssue.severity === 'error'
+                  ? 'border-rose-500/40 bg-rose-500/10 text-rose-100'
+                  : 'border-amber-500/40 bg-amber-500/10 text-amber-100'
+              }`}
+            >
+              <p className="font-semibold">
+                {pluginGraphIssue.severity === 'error' ? 'Plugin chain error' : 'Plugin chain warning'}
+              </p>
+              <p className="mt-1 text-xs opacity-90">{pluginGraphIssue.message}</p>
+            </div>
+          ) : null}
+
           <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(280px,0.72fr)_minmax(0,1.58fr)_minmax(280px,0.7fr)] lg:items-stretch">
             <aside
               className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-slate-800/80 bg-slate-950/80 shadow-[0_18px_60px_-36px_rgba(0,0,0,0.85)] backdrop-blur"
@@ -3590,22 +4257,49 @@ export function DemoDawClient({
               ) : null}
 
               {browserTab === 'plugins' ? (
-                <div className="space-y-3">
+                <div className="space-y-4">
                   <div>
                     <p className="text-sm font-semibold text-white">Plugins</p>
+                    <p className="mt-1 text-xs text-slate-400">
+                      Add a plugin to the selected track to emit a `PLUGIN_ADDED` commit.
+                    </p>
                   </div>
+                  {selectedTrack ? (
+                    <section className="rounded-xl border border-slate-800 bg-slate-950/80 p-3">
+                      {renderPluginChain(selectedTrack, { variant: 'browser' })}
+                    </section>
+                  ) : (
+                    <p className="rounded-xl border border-dashed border-slate-800 px-3 py-3 text-xs text-slate-500">
+                      Select a track to edit its insert chain here.
+                    </p>
+                  )}
                   {filteredPluginDefinitions.length > 0 ? (
                     <ul className="grid gap-2">
                       {filteredPluginDefinitions.map((plugin) => (
                         <li key={plugin.id} className="rounded-md border border-slate-700 bg-slate-950 px-3 py-2">
-                          <p className="text-sm font-medium text-white">{plugin.name}</p>
-                          <p className="text-xs text-slate-400">
-                            {plugin.manufacturer ?? 'Unknown maker'} · {plugin.version}
-                          </p>
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium text-white">{plugin.name}</p>
+                              <p className="text-xs text-slate-400">
+                                {plugin.manufacturer ?? 'Unknown maker'} · {plugin.version}
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              disabled={!selectedTrack}
+                              onClick={() => void addPluginToSelectedTrack(plugin)}
+                              className="shrink-0 rounded-lg border border-cyan-500/40 bg-cyan-500/10 px-2.5 py-1 text-xs font-semibold text-cyan-100 transition-colors hover:border-cyan-400 hover:bg-cyan-500/20 disabled:cursor-not-allowed disabled:border-slate-700 disabled:bg-slate-900 disabled:text-slate-500"
+                              aria-label={`Add ${plugin.name} to selected track`}
+                            >
+                              Add
+                            </button>
+                          </div>
                         </li>
                       ))}
                     </ul>
-                  ) : null}
+                  ) : (
+                    <p className="text-xs text-slate-400">No plugins match the current filter.</p>
+                  )}
                 </div>
               ) : null}
 
@@ -4255,6 +4949,8 @@ export function DemoDawClient({
                               />
                             </label>
                           </div>
+
+                          {renderPluginChain(track)}
                         </>
                       )}
                     </div>
@@ -4502,6 +5198,34 @@ export function DemoDawClient({
             </div>
           )}
         </section>
+
+        <div className="rounded-2xl border border-slate-800/80 bg-slate-950/80 px-4 py-4 shadow-[0_18px_60px_-36px_rgba(0,0,0,0.85)] backdrop-blur">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Export</p>
+              <p className="mt-1 text-sm text-slate-300">Download the current mix as MP3 or export each track as its own MP3 file.</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => void handleProjectExport()}
+                disabled={exportStatus !== null}
+                className="rounded-full bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm shadow-indigo-950/40 hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-slate-700"
+              >
+                {exportStatus === 'project' ? 'Exporting project...' : 'Download project MP3'}
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleTrackExport()}
+                disabled={exportStatus !== null}
+                className="rounded-full border border-slate-700 bg-slate-900/80 px-4 py-2 text-sm font-semibold text-slate-100 hover:bg-slate-800 disabled:cursor-not-allowed disabled:border-slate-800 disabled:bg-slate-900 disabled:text-slate-500"
+              >
+                {exportStatus === 'tracks' ? 'Exporting tracks...' : 'Download each track MP3'}
+              </button>
+            </div>
+          </div>
+          {exportError ? <p className="mt-3 text-sm text-rose-200">{exportError}</p> : null}
+        </div>
 
         <div className="fixed bottom-4 right-4 z-[60] pointer-events-none">
           {isLocalOnlySync ? (
