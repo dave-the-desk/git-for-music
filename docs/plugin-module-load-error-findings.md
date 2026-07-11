@@ -1,8 +1,12 @@
 # Findings: `[daw][wam] plugin module load failed` when adding a plugin
 
+Status: resolved/historical as of 2026-07-11. The current module proxy headers
+are centralized in `src/app/pages/api/plugins/[pluginId]/module/response-headers.ts`
+and no longer set `Content-Security-Policy: ... sandbox`.
+
 Investigation of the error thrown on the demo DAW page when adding an uploaded ("fake") WAM plugin to an audio track.
 
-## Summary (95% confidence)
+## Historical Summary (95% confidence)
 
 The plugin module HTTP route returns a **valid 200 JavaScript response**, but it also
 sets a `Content-Security-Policy` response header that contains the **`sandbox`** directive.
@@ -117,7 +121,7 @@ cache-busting query strings and no-store headers ... so a previously cached modu
 does not linger" and "automatic retry pass for plugin module preloading") — those are
 symptoms of a persistent import failure at this exact route, not a transient one.
 
-## Recommended fix (not applied)
+## Historical Recommended Fix
 
 Remove the `sandbox` directive (and preferably the restrictive `default-src 'none'`) from the
 module response so the module keeps its same-origin identity and can be imported. If a CSP is

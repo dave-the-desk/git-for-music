@@ -14,7 +14,7 @@
 - Version-tree design: [docs/60_BRANCHES/daw-realtime-collab/realtime-versioning-and-tree.md](../60_BRANCHES/daw-realtime-collab/realtime-versioning-and-tree.md) — the commit-graph model this plan promotes to a first-class rail (see §10).
 - Research grounding (see §11):
   - Oviatt (2006), *Human-Centered Design Meets Cognitive Load Theory* — [docs/papers/general-ui-design-practices/1180639.1180831.pdf](../papers/general-ui-design-practices/1180639.1180831.pdf).
-  - Brooke (1996), *SUS: A quick and dirty usability scale* — [docs/papers/general-ui-design-practices/systemusabilityscale(sus)_comp[1].pdf](../papers/general-ui-design-practices/systemusabilityscale%28sus%29_comp%5B1%5D.pdf).
+  - Brooke (1996), *SUS: A quick and dirty usability scale* — [docs/papers/general-ui-design-practices/systemusabilityscale%28sus%29_comp%5B1%5D.pdf](../papers/general-ui-design-practices/systemusabilityscale%2528sus%2529_comp%255B1%255D.pdf).
 - Platform / framework guidelines (see §11):
   - Apple **Human Interface Guidelines** — https://developer.apple.com/design/human-interface-guidelines
   - React DOM **common components** reference — https://react.dev/reference/react-dom/components/common
@@ -89,7 +89,7 @@ Re-map the ideal's browser · canvas · inspector frame onto existing pieces. Th
 
 ## 5. Phased implementation plan
 
-Each phase is independently shippable, additive, and preserves all current behavior. Run the relevant Jest tests after each phase (see §8).
+Each phase is independently shippable, additive, and preserves all current behavior. Run the relevant tests after each phase (see §8).
 
 ### Phase 0 — Layout scaffolding (no feature change)
 - Introduce a multi-rail shell wrapper around the existing content (CSS grid / flex), with each rail **collapsible and persisted per project + per user** (localStorage keyed by `projectId`).
@@ -243,7 +243,7 @@ Use the **System Usability Scale** (Brooke 1996) as the lightweight, quantitativ
 ## 13. References
 
 - Oviatt, S. (2006). *Human-Centered Design Meets Cognitive Load Theory: Designing Interfaces that Help People Think.* ACM Multimedia '06. — [PDF](../papers/general-ui-design-practices/1180639.1180831.pdf)
-- Brooke, J. (1996). *SUS: A "quick and dirty" usability scale.* — [PDF](../papers/general-ui-design-practices/systemusabilityscale%28sus%29_comp%5B1%5D.pdf)
+- Brooke, J. (1996). *SUS: A "quick and dirty" usability scale.* — [PDF](../papers/general-ui-design-practices/systemusabilityscale%2528sus%2529_comp%255B1%255D.pdf)
 - Apple. *Human Interface Guidelines.* — https://developer.apple.com/design/human-interface-guidelines
 - React. *Common components (e.g. `<div>`).* React DOM reference. — https://react.dev/reference/react-dom/components/common
 - [Realtime editing + git-like versioning + tree tab visualization](../60_BRANCHES/daw-realtime-collab/realtime-versioning-and-tree.md)

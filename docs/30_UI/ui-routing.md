@@ -10,6 +10,8 @@ This note maps the primary browser-facing routes to the code that owns them.
 | `/home` | [src/app/home/page.tsx](../../src/app/home/page.tsx) | Home page shell |
 | `/login` | [src/app/login/page.tsx](../../src/app/login/page.tsx) | [src/app/pages/auth/login-page.tsx](../../src/app/pages/auth/login-page.tsx) |
 | `/signup` | [src/app/signup/page.tsx](../../src/app/signup/page.tsx) | [src/app/pages/auth/signup-page.tsx](../../src/app/pages/auth/signup-page.tsx) |
+| `/account` | [src/app/account/page.tsx](../../src/app/account/page.tsx) | [src/app/pages/account/account-page.tsx](../../src/app/pages/account/account-page.tsx) |
+| `/account/plugins` | [src/app/account/plugins/page.tsx](../../src/app/account/plugins/page.tsx) | [src/app/pages/account/plugins/account-plugins-page.tsx](../../src/app/pages/account/plugins/account-plugins-page.tsx) |
 | `/groups` | [src/app/groups/page.tsx](../../src/app/groups/page.tsx) | [src/app/pages/groups/list/groups-page.tsx](../../src/app/pages/groups/list/groups-page.tsx) |
 | `/groups/[groupId]` | [src/app/groups/[groupId]/page.tsx](../../src/app/groups/[groupId]/page.tsx) | [src/app/pages/groups/detail/group-page.tsx](../../src/app/pages/groups/detail/group-page.tsx) |
 | `/groups/[groupId]/projects/[projectId]` | [src/app/groups/[groupId]/projects/[projectId]/page.tsx](../../src/app/groups/[groupId]/projects/[projectId]/page.tsx) | [src/app/pages/groups/project/project-page.tsx](../../src/app/pages/groups/project/project-page.tsx) |
@@ -18,6 +20,7 @@ This note maps the primary browser-facing routes to the code that owns them.
 ## Route-Local UI Areas
 
 - `src/app/pages/layouts/` for the app shell and root shell
+- `src/app/pages/account/` for the account page and private plugin library
 - `src/app/pages/groups/list/` for the group list page
 - `src/app/pages/groups/detail/` for group detail pages
 - `src/app/pages/groups/project/` for project detail pages

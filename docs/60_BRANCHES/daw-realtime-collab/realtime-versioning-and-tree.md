@@ -18,7 +18,6 @@ It extends, and does not replace, the existing plans:
 
 - [processing-jobs](../../processing-jobs.md)
 - [papers README + gap analysis](../../papers/README.md)
-- [realtime collaboration plan](../../papers/realtime-collaboration-plan.md)
 - [daw realtime sync model](../../architecture/daw-realtime-sync.md)
 - [versioning mental model](../../40_FEATURES/versioning-mental-model.md)
 - [branching and revert rules](../../40_FEATURES/branching-and-revert-rules.md)
@@ -182,14 +181,16 @@ action and any other version metadata.
 
 - A branch is created off a specific `DemoVersion` (`sourceVersionId`) and gets
   its own head that advances independently of `main`.
-- Branch creation is already wired: `VersionHistoryTree` -> `onCreateBranch` ->
-  `projectSyncEngine.createVersionBranch(...)`; the server persists a branch
-  node and broadcasts a version-tree event.
+- The tree does not expose a separate create-branch button inline on a node.
+  Users check out a version from the node details pop-up; subsequent edits from
+  that checkout either extend the leaf or create a new child branch when the
+  graph requires it. Server stale-base/conflict paths can also create branch
+  nodes and broadcast version-tree events.
 - Concurrent existence: multiple heads (main + N branches) can be live at once.
   Each user's `DemoUserActiveVersion` decides which head they edit; OT operates
   per active head so two branches do not cross-contaminate.
-- Branching remains the fallback for unsafe concurrent overlap that OT cannot
-  transform, per the [realtime collaboration plan](../../papers/realtime-collaboration-plan.md).
+- Branching remains the fallback for unsafe concurrent overlap that the
+  timeline transform/rebase layer cannot preserve safely.
 - Merging branches back is future work; the DAG and layout already allow
   multi-parent nodes so the Tree tab can render merges when merge lands.
 

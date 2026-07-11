@@ -29,21 +29,27 @@ So there are two ways a plugin becomes usable in a demo:
 
 | Capability | Status | Evidence |
 |---|---|---|
-| Plugin catalog model | Exists (global, no owner) | `PluginMetadata` in `@/Users/davidriede/PROJECTS/git-for-music/packages/db/prisma/schema.prisma:506-517` |
-| Catalog in bootstrap payload | Exists | `pluginDefinitions[]` + `DawProjectBootstrapPluginDefinition` in `@/Users/davidriede/PROJECTS/git-for-music/packages/server/app/lib/daw/protocol/command-api.ts:537-566` |
-| Catalog served to client | Exists (returns **all** rows) | `client.pluginMetadata.findMany` in `@/Users/davidriede/PROJECTS/git-for-music/packages/server/app/lib/daw/server/command-api.ts:2390-2403` |
+| Plugin catalog model | Exists with owner, visibility, module storage fields, and grants | `PluginMetadata`, `PluginGrant`, `PluginVisibility`, and `PluginBundleKind` in `packages/db/prisma/schema.prisma` |
+| Catalog in bootstrap payload | Exists with `descriptorUrl`, owner, visibility, description, and display name | `pluginDefinitions[]` + `DawProjectBootstrapPluginDefinition` in `packages/server/app/lib/daw/protocol/command-api.ts` |
+| Catalog served to client | Exists with demo/user availability filtering | `listPluginsForDemo(...)` in `packages/server/app/lib/plugins/index.ts` |
 | Real-time WAM host / graph factory | Exists | `@/Users/davidriede/PROJECTS/git-for-music/src/app/lib/daw/engine/wam-host.ts` |
 | Plugin instances on tracks + ops (add/remove/param/bypass/state) | Exists | `local-project-state.ts`, `operation-reducer.ts`, protocol `command-api.ts` |
-| Read-only Plugins tab + add-to-track + param editor | Exists | `@/Users/davidriede/PROJECTS/git-for-music/src/app/pages/groups/demo/components/daw/DemoDawClient.tsx:2442-2461,4059-4062` |
-| Signed upload + same-origin download proxy | Exists (for audio) | `createAssetUploadTarget`/`createAssetDownloadUrl` in `storage-provider.ts`; audio proxy `@/Users/davidriede/PROJECTS/git-for-music/src/app/pages/api/daw/track-versions/[trackVersionId]/audio/index.ts` |
+| Plugins tab + add-to-track + param editor + insert-chain controls | Exists | `src/app/pages/groups/demo/components/daw/DemoDawClient.tsx` |
+| Signed upload + same-origin module proxy | Exists for plugins | `createPluginUploadTarget(...)`, `completePluginUpload(...)`, and `/api/plugins/[pluginId]/module` |
 | Auth + group-membership access checks | Exists | `getAuthenticatedUserFromRequest` in `@git-for-music/server/app/lib/auth/current-user` |
 
-### 2.1 Two concrete gaps this plan must close
+### 2.1 Current remaining gaps
 
-1. **No module source.** `PluginMetadata` has `pluginKey`, `name`, `version`, `manufacturer`, `parameterSchema` — but **no `descriptorUrl` / module storage**. The WAM host needs a URL to `import()` (`loadWamModule(pluginKey, version, descriptorUrl)` in `wam-host.ts:235`). Uploads must supply that URL.
-2. **The host is never actually loaded in production.** `loadWamModule` is only called in tests, never in `DemoDawClient.tsx` (verified). Today, adding a plugin to a track produces a load-error issue because the module was never pre-resolved. Any upload feature must also wire the client to `loadWamModule(...)` before building the graph.
+The original module-source, descriptor URL, production `loadWamModule(...)`
+wiring, account route, upload, grant, revoke, and module-proxy gaps are now
+implemented. Remaining follow-up work is mostly product polish and hardening:
 
-There is also **no account/settings page** anywhere under `src/app` (verified) — the account library route is net-new.
+- Account plugin UI supports upload and delete; backend PATCH support exists,
+  but richer edit/toggle controls need UI polish.
+- The security model still needs continued review as plugin execution remains
+  trusted JavaScript in the browser.
+- ZIP bundles are modeled but single-module JavaScript plugins are the supported
+  upload path today.
 
 ## 3. Security — read before building
 
@@ -54,7 +60,7 @@ Non-negotiables for this feature:
 - **Same-origin serving only.** Serve uploaded modules through an authenticated same-origin proxy route (mirroring the audio proxy), never a public bucket URL. This keeps auth/access checks server-side and avoids leaking signed URLs.
 - **Access-gated `import()`.** The module proxy must verify the requesting user is a member of a group that has access to the plugin (public/system, demo-shared for a demo they belong to, or granted to such a demo).
 - **Explicit trust boundary.** A private-library plugin becomes runnable in a demo **only** after an explicit grant by the owner; demo members implicitly trust project-shared uploads by being in the project. Surface this in the UI ("Plugins run code in your browser").
-- **Content-Type pinned to `text/javascript`** and a strict `Content-Security-Policy`/`X-Content-Type-Options: nosniff` on the proxy; no HTML/execution ambiguity.
+- **Content-Type pinned to `text/javascript`** and `X-Content-Type-Options: nosniff` on the proxy; no HTML/execution ambiguity. Do not add a response CSP `sandbox` directive to module responses, because it breaks same-origin dynamic import.
 - **Size/type validation** on upload (allow a bundled `.js`/`.mjs` entry + a `descriptor.json`, or a `.zip` we control the extraction of). Reject anything else.
 - Record this decision in [architecture-decision-log.md](../../01_PROTOCOLS/architecture-decision-log.md).
 

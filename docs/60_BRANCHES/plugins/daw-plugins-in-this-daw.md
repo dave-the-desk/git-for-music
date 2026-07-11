@@ -95,28 +95,33 @@ export type PlaybackEnginePluginGraphFactory = (
 ) => AudioNode;
 ```
 
-Today no caller passes a `pluginGraphFactory` — the engine is constructed bare in
+Current source wires a `pluginGraphFactory` from
 [`DemoDawClient.tsx`](../../../src/app/pages/groups/demo/components/daw/DemoDawClient.tsx)
-(`new AudioPlaybackEngine()`), so `pluginOutput === input` and audio passes
-through untouched. **This is the single wiring point for real-time (WAM) plugins.**
+into `new AudioPlaybackEngine({ pluginGraphFactory })`, so track plugin chains
+can build live WAM insert graphs. If no plugins are present, or every plugin in
+the chain is bypassed/unavailable, the factory returns the input node and audio
+passes through untouched.
 
 ### 2.2 Plugin metadata already round-trips end to end
 
 - **Database:** `PluginMetadata` in
   [`packages/db/prisma/schema.prisma`](../../../packages/db/prisma/schema.prisma)
-  stores `pluginKey`, `name`, `version`, `manufacturer`, and a JSON
-  `parameterSchema`, unique on `[pluginKey, version]`.
+  stores `pluginKey`, `name`, display metadata, owner/visibility fields,
+  module storage keys, bundle metadata, and a JSON `parameterSchema`, unique on
+  `[pluginKey, version]`.
 - **Bootstrap:** `DawProjectBootstrapPluginDefinition` and the
-  `pluginDefinitions[]` field are already returned by the bootstrap endpoint.
+  `pluginDefinitions[]` field are returned by the bootstrap endpoint with
+  descriptor URLs filtered by demo/user availability.
 - **Offline cache:** the local IndexedDB cache has a dedicated
   `pluginDefinitions` store (`DawLocalCachePluginDefinitionRecord` in
   [`daw-local-cache.ts`](../../../src/app/lib/daw/engine/daw-local-cache.ts)).
-- **UI:** `DemoDawClient` fetches `pluginDefinitions`, filters them, and lists
-  them in a read-only **Plugins** browser tab / toolbar tab.
+- **UI:** `DemoDawClient` fetches `pluginDefinitions`, filters them, lists them
+  in the **Plugins** browser tab / toolbar tab, and lets users add, reorder,
+  bypass, remove, and edit parameters on a selected track's insert chain.
 
-So the *catalog* half of the system (discover, describe, list) exists. What is
-missing is the *instance* half: putting a plugin **on a track**, storing its
-parameter state, running it, and syncing/versioning that state.
+The catalog and instance halves now both exist for browser-side WAM inserts:
+plugins can be discovered, added to tracks, stored with versioned track state,
+run during playback, and synced/versioned through the DAW operation path.
 
 ---
 

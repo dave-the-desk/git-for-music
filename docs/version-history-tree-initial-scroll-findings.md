@@ -1,10 +1,15 @@
 # Findings: version-history tree opens scrolled down (not at its root/top) on the demo DAW page
 
+Status: resolved/historical as of 2026-07-11. The current source has a single
+inner version-history scroll container in `VersionHistoryTree.tsx`, a rail
+layout reset signal from `DemoDawClient.tsx`, and interaction coverage that
+resets `scrollTop` when that layout signal changes.
+
 Investigation of why the version-history graph in the demo DAW right-hand rail does **not**
 start at its natural top on first render, and instead appears pre-scrolled to a lower part of
 the tree before the user interacts with it.
 
-## Summary (95% confidence)
+## Historical Summary (95% confidence)
 
 There is already a scroll-reset in `VersionHistoryTree`, but **it resets the wrong element**,
 so it is a no-op in a real browser. The component resets its own inner
@@ -204,7 +209,7 @@ corroboration that the reset is aimed at the wrong element.
 - **Not scroll persistence/restoration.** No stored scroll position is read for the tree; the
   only persisted rail state is the expand/collapse boolean.
 
-## Recommended fix (most robust, not applied)
+## Historical Recommended Fix
 
 Make a **single, predictable scroll container** and reset *that* one. Two coordinated changes:
 

@@ -64,5 +64,3 @@ They verify that:
 - [[40_FEATURES/versioning-mental-model]]
 - [[40_FEATURES/branching-and-revert-rules]]
 - [[40_FEATURES/active-problems]]
-</CodeContent>
-<parameter name="EmptyFile">false

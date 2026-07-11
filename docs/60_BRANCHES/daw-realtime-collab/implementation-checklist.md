@@ -33,14 +33,12 @@ What already exists (do not rebuild):
 - **Tree tab:** `VersionHistoryTree.tsx` + `version-tree-layout.ts` render the
   live `LocalProjectState.versions` graph with a centered commit-graph layout.
 - **Realtime events:** `accepted_operation`, `version_tree_changed`,
-  `version_created`, presence, transport, asset, comment
-  (`realtime-gateway.ts`). Semantic `head_moved` / `reverted` events are still
-  part of the later sync-event phase.
+  `version_created`, `branch_created`, `head_moved`, `reverted`, presence,
+  transport, asset, and comment (`realtime-gateway.ts`).
 
 Key gaps vs the design doc:
 
-- Realtime semantic sync events are still narrower than the final event model.
-- Processing-jobs alignment still needs the explicit phase-G audit.
+- Merge behavior is still future work; storage/layout are merge-ready but no branch merge command has shipped.
 
 ---
 
@@ -112,8 +110,8 @@ centered forks, column-assigned branches/merges, colored per branch.
 ## Phase E - OT Convergence (from realtime plan)
 
 Goal: safe concurrent edits converge without an unwanted branch; branching stays
-the unsafe-overlap fallback. (Tracks the phased
-[realtime collaboration plan](../../papers/realtime-collaboration-plan.md).)
+the unsafe-overlap fallback. This is grounded in the realtime-collaboration
+papers summarized in [docs/papers/README.md](../../papers/README.md).
 
 - [x] Add pure transform helpers for the timeline ops in `TIMELINE_EDIT_OPERATION_TYPES` (move, trim, split, merge, fade,  crossfade, rename) under `src/app/lib/daw/state/`.
 - [x] Rebase an incoming edit against intervening accepted operations in `commitDawProjectOperation` before finalizing; only fall back to `analyzeDawOperationConflict` branch/409 when a transform cannot preserve intent.
@@ -174,25 +172,25 @@ The following items are now verified by repo regression tests and should be trea
 
 ## Suggested Verification Commands
 
-Tests in this repo are `node:test` files (`*.test.ts` importing `node:test` and
-`node:assert/strict`); there is no configured `test` npm script yet. Run the
-relevant suites directly with Node's test runner and a TS loader, for example:
+Web tests use the Vitest harness from `src/package.json`; server-side unit tests
+commonly use Node's test runner with `tsx`. Run the suites closest to the files
+you touch, for example:
 
 ```bash
-# from repo root
-node --import tsx --test packages/server/app/lib/daw/server/command-api.test.ts
-node --import tsx --test src/app/pages/groups/demo/components/daw/version-history-tree.test.ts
-node --import tsx --test src/app/lib/daw/state/operation-reducer.test.ts
+# from repo root for web tests
+pnpm --filter @git-for-music/web test -- src/app/lib/daw/state/operation-reducer.test.ts
+pnpm --filter @git-for-music/web test -- src/app/pages/groups/demo/components/daw/version-history-tree.test.ts
+
+# from packages/server for server tests
+pnpm exec tsx --test app/lib/daw/server/command-api.test.ts
 ```
 
 Validation loop:
 
-1. Run the relevant `node --import tsx --test ...` suite for the code you
-   touched.
+1. Run the relevant Vitest or `tsx --test` suite for the code you touched.
 2. If a test fails, fix the implementation or fixture.
 3. Rerun the same test until it passes.
 4. Record the passing result in the daily log for the work date.
 
-New tests added by this work should follow the same `node:test` pattern and sit
-next to the code they cover (for example `versioning.test.ts`,
-`version-tree-layout.test.ts`).
+New tests should sit next to the code they cover and follow the local harness
+already used in that subtree.
