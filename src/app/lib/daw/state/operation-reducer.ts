@@ -258,8 +258,8 @@ function normalizeVersionNode(
     name: node.name ?? label,
     branchName: node.branchName ?? label,
     operationSummary: node.operationSummary ?? node.description ?? existing?.operationSummary ?? existing?.description ?? null,
-    createdBy: node.createdBy ?? existing?.createdBy ?? null,
-    createdByName: node.createdByName ?? existing?.createdByName ?? null,
+    createdBy: existing?.createdBy ?? node.createdBy ?? null,
+    createdByName: existing?.createdByName ?? node.createdByName ?? null,
     description: node.description ?? existing?.description ?? null,
     parentId: parentVersionId,
     parentVersionId,
@@ -1283,15 +1283,14 @@ export function applyAcceptedProjectOperation(
         versionParentId,
         payload.branchMode,
       );
-      const nextActiveVersionId = shouldAdvanceActiveVersion
-        ? versionId
-        : state.activeVersionId ?? state.currentVersionId;
       return {
         ...state,
         ...touchVersionTree(state, operation),
         versions: setCurrentVersionFlags(versions, nextCurrentVersionId, operation.operationSeq),
         currentVersionId: nextCurrentVersionId,
-        activeVersionId: nextActiveVersionId,
+        activeVersionId: shouldAdvanceActiveVersion
+          ? versionId
+          : state.activeVersionId ?? state.currentVersionId,
       };
     }
     case 'VERSION_RENAMED': {

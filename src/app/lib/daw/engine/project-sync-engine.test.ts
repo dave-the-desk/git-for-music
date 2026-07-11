@@ -457,7 +457,7 @@ test('ProjectSyncEngine bootstrap replays the snapshot tail so plugin chains and
   }
 });
 
-test('ProjectSyncEngine persists a realtime follow-head checkout when another user advances the branch', async () => {
+test('ProjectSyncEngine keeps a follower on their checkout when another user advances the branch', async () => {
   const root = makeVersion('version-root', { isCurrent: true });
   const initial = createLocalProjectStateFromBootstrap(makeBootstrap([root], root.id));
   const engine = new ProjectSyncEngine();
@@ -539,15 +539,10 @@ test('ProjectSyncEngine persists a realtime follow-head checkout when another us
     try {
       await engine.receiveAcceptedRemoteOperations([operation]);
 
-      assert.equal(capturedUrl, '/api/daw/projects/project-1/active-version');
-      assert.ok(capturedBody);
-      assert.deepEqual(JSON.parse(capturedBody ?? '{}'), {
-        demoId: 'demo-1',
-        activeVersionId: branchVersion.id,
-        isFollowingHead: true,
-      });
+      assert.equal(capturedUrl, null);
+      assert.equal(capturedBody, null);
       assert.equal(engine.getState().projectState?.currentVersionId, branchVersion.id);
-      assert.equal(engine.getState().projectState?.activeVersionId, branchVersion.id);
+      assert.equal(engine.getState().projectState?.activeVersionId, root.id);
       assert.equal(engine.getState().projectState?.isFollowingHead, true);
     } finally {
       (globalThis as typeof globalThis & { fetch: typeof fetch }).fetch = originalFetch;
@@ -2803,7 +2798,7 @@ test('ProjectSyncEngine setActiveVersion updates the viewer checkout through the
   }
 });
 
-test('ProjectSyncEngine rebootstrap prefers the server-resolved branch head over a stale cached activeVersionId', async () => {
+test('ProjectSyncEngine rebootstrap preserves an existing checkout when a newer branch exists', async () => {
   const root = makeVersion('version-root', { isCurrent: true });
   const branch = makeVersion('version-branch', {
     parentId: root.id,
@@ -2834,8 +2829,8 @@ test('ProjectSyncEngine rebootstrap prefers the server-resolved branch head over
   };
 
   const bootstrapResponse: DawProjectBootstrapResponse = {
-    ...makeBootstrap([root, branch], branch.id),
-    activeVersionId: null,
+    ...makeBootstrap([root, branch], root.id),
+    activeVersionId: root.id,
     isFollowingHead: true,
     latestSnapshot: {
       ...makeBootstrap([root, branch], branch.id).latestSnapshot!,
@@ -2880,13 +2875,12 @@ test('ProjectSyncEngine rebootstrap prefers the server-resolved branch head over
     assert.deepEqual(capturedUrls, [
       '/api/daw/projects/project-1/operations?demoId=demo-1&afterSeq=1',
       '/api/daw/projects/project-1/bootstrap?demoId=demo-1',
-      '/api/daw/projects/project-1/active-version',
     ]);
     const projectState = engine.getState().projectState;
     assert.ok(projectState);
     assert.equal(projectState?.versions.length, 2);
     assert.equal(projectState?.currentVersionId, branch.id);
-    assert.equal(projectState?.activeVersionId, branch.id);
+    assert.equal(projectState?.activeVersionId, root.id);
     assert.equal(projectState?.isFollowingHead, true);
     assert.equal(engine.getState().lastSyncedOperationSeq, 2);
   } finally {
@@ -3336,13 +3330,12 @@ test('ProjectSyncEngine reboots when a realtime version_tree_changed event arriv
 
     assert.deepEqual(capturedUrls, [
       '/api/daw/projects/project-1/bootstrap?demoId=demo-1',
-      '/api/daw/projects/project-1/active-version',
     ]);
     const projectState = engine.getState().projectState;
     assert.ok(projectState);
     assert.equal(projectState?.versions.length, 2);
     assert.equal(projectState?.currentVersionId, branch.id);
-    assert.equal(projectState?.activeVersionId, branch.id);
+    assert.equal(projectState?.activeVersionId, root.id);
     assert.equal(projectState?.isFollowingHead, true);
     assert.equal(engine.getState().lastSyncedOperationSeq, 2);
     assert.equal(engine.getState().versionTreeAttention?.versionId, branch.id);
@@ -3621,7 +3614,7 @@ test('ProjectSyncEngine catches up on open and reconnects when realtime goes sil
   }
 });
 
-test('ProjectSyncEngine reboots when a realtime version_created event arrives', async () => {
+test('ProjectSyncEngine reboots when a realtime version_created event arrives without moving the active checkout', async () => {
   const root = makeVersion('version-root', { isCurrent: true });
   const initial = createLocalProjectStateFromBootstrap(makeBootstrap([root], root.id));
   const engine = new ProjectSyncEngine();
@@ -3653,8 +3646,8 @@ test('ProjectSyncEngine reboots when a realtime version_created event arrives', 
     isCurrent: true,
     operationSeq: 2,
   });
-  const bootstrapResponse = makeBootstrap([root, branch], branch.id);
-  bootstrapResponse.activeVersionId = branch.id;
+  const bootstrapResponse = makeBootstrap([root, branch], root.id);
+  bootstrapResponse.activeVersionId = root.id;
   bootstrapResponse.isFollowingHead = true;
   bootstrapResponse.activeBranchName = branch.label;
   bootstrapResponse.project.currentVersionId = branch.id;
@@ -3721,13 +3714,12 @@ test('ProjectSyncEngine reboots when a realtime version_created event arrives', 
 
     assert.deepEqual(capturedUrls, [
       '/api/daw/projects/project-1/bootstrap?demoId=demo-1',
-      '/api/daw/projects/project-1/active-version',
     ]);
     const projectState = engine.getState().projectState;
     assert.ok(projectState);
     assert.equal(projectState?.versions.length, 2);
     assert.equal(projectState?.currentVersionId, branch.id);
-    assert.equal(projectState?.activeVersionId, branch.id);
+    assert.equal(projectState?.activeVersionId, root.id);
     assert.equal(projectState?.isFollowingHead, true);
     assert.equal(engine.getState().lastSyncedOperationSeq, 2);
   } finally {
@@ -3738,7 +3730,7 @@ test('ProjectSyncEngine reboots when a realtime version_created event arrives', 
   }
 });
 
-test('ProjectSyncEngine reboots when a realtime branch_created event arrives', async () => {
+test('ProjectSyncEngine reboots when a realtime branch_created event arrives without moving the active checkout', async () => {
   const root = makeVersion('version-root', { isCurrent: true });
   const initial = createLocalProjectStateFromBootstrap(makeBootstrap([root], root.id));
   const engine = new ProjectSyncEngine();
@@ -3770,8 +3762,8 @@ test('ProjectSyncEngine reboots when a realtime branch_created event arrives', a
     isCurrent: true,
     operationSeq: 2,
   });
-  const bootstrapResponse = makeBootstrap([root, branch], branch.id);
-  bootstrapResponse.activeVersionId = branch.id;
+  const bootstrapResponse = makeBootstrap([root, branch], root.id);
+  bootstrapResponse.activeVersionId = root.id;
   bootstrapResponse.isFollowingHead = true;
   bootstrapResponse.activeBranchName = branch.label;
   bootstrapResponse.project.currentVersionId = branch.id;
@@ -3838,13 +3830,12 @@ test('ProjectSyncEngine reboots when a realtime branch_created event arrives', a
 
     assert.deepEqual(capturedUrls, [
       '/api/daw/projects/project-1/bootstrap?demoId=demo-1',
-      '/api/daw/projects/project-1/active-version',
     ]);
     const projectState = engine.getState().projectState;
     assert.ok(projectState);
     assert.equal(projectState?.versions.length, 2);
     assert.equal(projectState?.currentVersionId, branch.id);
-    assert.equal(projectState?.activeVersionId, branch.id);
+    assert.equal(projectState?.activeVersionId, root.id);
     assert.equal(projectState?.isFollowingHead, true);
     assert.equal(engine.getState().lastSyncedOperationSeq, 2);
   } finally {

@@ -200,6 +200,90 @@ test('setUserActiveVersion preserves an explicit pinned checkout without moving 
   });
 });
 
+test('setUserActiveVersion moves an existing checkout to the requested branch when the user switches branches', async () => {
+  let upsertArgs: unknown = null;
+
+  const client = {
+    demo: {
+      findFirst: async () => ({
+        id: 'demo-1',
+        name: 'Demo',
+        description: null,
+        currentVersionId: 'version-root',
+        versions: [
+          {
+            id: 'version-root',
+            label: 'Root',
+            parentId: null,
+            createdAt: '2025-01-01T00:00:00.000Z',
+          },
+          {
+            id: 'version-branch',
+            label: 'Branch label',
+            parentId: 'version-root',
+            createdAt: '2025-01-02T00:00:00.000Z',
+          },
+        ],
+        project: {
+          id: 'project-1',
+          slug: 'project-1',
+          name: 'Project',
+          description: null,
+          group: {
+            id: 'group-1',
+            slug: 'group',
+          },
+        },
+      }),
+    },
+    groupMember: {
+      findFirst: async () => ({
+        role: 'MEMBER',
+      }),
+    },
+    demoVersion: {
+      findFirst: async () => ({
+        id: 'version-branch',
+        label: 'Branch label',
+      }),
+    },
+    demoUserActiveVersion: {
+      findFirst: async () => ({
+        activeVersionId: 'version-root',
+        isFollowingHead: true,
+      }),
+      upsert: async (args: unknown) => {
+        upsertArgs = args;
+        return {
+          activeVersionId: 'version-branch',
+          isFollowingHead: true,
+          activeVersion: {
+            label: 'Branch label',
+          },
+        };
+      },
+    },
+  } as const;
+
+  const result = await setUserActiveVersion(client as never, {
+    projectId: 'project-1',
+    demoId: 'demo-1',
+    userId: 'user-1',
+    activeVersionId: 'version-branch',
+    isFollowingHead: true,
+  });
+
+  assert.ok(result);
+  assert.equal(result?.activeVersionId, 'version-branch');
+  assert.equal(result?.isFollowingHead, true);
+  assert.equal(result?.activeBranchName, 'Branch label');
+  assert.ok(upsertArgs);
+  assert.deepEqual((upsertArgs as { update: Record<string, unknown> }).update, {
+    activeVersionId: 'version-branch',
+    isFollowingHead: true,
+  });
+});
+
 test('setUserActiveVersion defaults isFollowingHead to true', async () => {
   let upsertArgs: unknown = null;
 
@@ -529,7 +613,15 @@ test('safe concurrent edits on the same branch head converge without creating an
           activeVersion: {
             label: row.activeVersionId === rootVersionId ? 'Root' : 'Branch',
           },
-        };
+          };
+      },
+    },
+    user: {
+      findMany: async (args: { where: { id: { in: string[] } } }) => {
+        return args.where.id.in.map((id) => ({
+          id,
+          name: id === 'user-a' ? 'Avery Fox' : id === 'user-b' ? 'Bea Moss' : null,
+        }));
       },
     },
     projectSnapshot: {
@@ -721,6 +813,7 @@ test('safe concurrent edits on the same branch head converge without creating an
     groupMember: tx.groupMember,
     demoVersion: tx.demoVersion,
     demoUserActiveVersion: tx.demoUserActiveVersion,
+    user: tx.user,
     projectSnapshot: tx.projectSnapshot,
     projectOperationLog: tx.projectOperationLog,
     track: tx.track,

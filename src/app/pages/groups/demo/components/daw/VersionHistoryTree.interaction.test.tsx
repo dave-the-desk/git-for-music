@@ -330,6 +330,65 @@ describe('VersionHistoryTree live version updates', () => {
     }
   });
 
+  it('keeps the demo creator on the initial version node even if later operations touch the same version', () => {
+    const root = makeVersion('version-root', {
+      isCurrent: false,
+      createdByName: null,
+      createdBy: null,
+      operationSeq: 1,
+      createdAt: '2025-01-01T00:00:00.000Z',
+    });
+    const head = makeVersion('version-head', {
+      parentId: root.id,
+      parentVersionId: root.id,
+      isCurrent: true,
+      operationSeq: 2,
+      createdAt: '2025-01-02T00:00:00.000Z',
+    });
+
+    render(
+      createElement(VersionHistoryTree, {
+        projectId: 'project-1',
+        demoId: 'demo-1',
+        demoName: 'Sunset Session',
+        baseOperationSeq: 2,
+        liveVersions: [root, head],
+        operationHistory: [
+          makeHistoryEntry({
+            operationType: 'VERSION_CREATED',
+            versionId: root.id,
+            currentVersionId: root.id,
+            actorUserId: 'user-a',
+            operationSeq: 1,
+          }),
+          makeHistoryEntry({
+            operationType: 'TRACK_VERSION_CREATED',
+            versionId: root.id,
+            currentVersionId: root.id,
+            actorUserId: 'user-b',
+            operationSeq: 2,
+          }),
+        ],
+        userDisplayNamesById: {
+          'user-a': 'Avery Fox',
+          'user-b': 'Bea Moss',
+        },
+        currentVersionId: head.id,
+        activeVersionId: head.id,
+        selectedVersionId: head.id,
+        zoomLevel: 1,
+        isFollowingHead: true,
+        isHistoryViewActive: false,
+        highlightedVersionId: null,
+        highlightedVersionCreatedAt: null,
+        onSelectVersion: vi.fn(),
+      }),
+    );
+
+    expect(screen.getAllByText('Avery Fox').length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText('Bea Moss')).toBeNull();
+  });
+
   it('shows a newly created revert version while keeping older versions visible', async () => {
     const root = makeVersion('version-root', {
       isCurrent: true,

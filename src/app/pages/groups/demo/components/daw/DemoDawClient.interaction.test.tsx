@@ -1136,12 +1136,70 @@ describe('DemoDawClient recording regression', () => {
 
     expect(mockPendingActiveVersionUpdates.pending.at(-1)).toMatchObject({
       activeVersionId: initialVersion.id,
-      options: { isFollowingHead: false },
+      options: { isFollowingHead: true },
     });
 
     await act(async () => {
       await mockPendingActiveVersionUpdates.flush();
     });
+  });
+
+  it('keeps the selected checkout stable when another branch advances', async () => {
+    const rootVersion = makeVersion('version-root', ['Track 1'], {
+      isCurrent: false,
+      operationSeq: 1,
+      createdAt: '2026-07-05T00:00:00.000Z',
+      tracks: [makeTrack('Track 1', 'version-root-track-1', { trackId: 'track-1', trackPosition: 0 })],
+    });
+    const branchAVersion = makeVersion('version-branch-a', ['Track 1'], {
+      isCurrent: true,
+      operationSeq: 2,
+      createdAt: '2026-07-05T00:05:00.000Z',
+      parentId: rootVersion.id,
+      tracks: [makeTrack('Track 1', 'version-branch-a-track-1', { trackId: 'track-1', trackPosition: 0 })],
+    });
+    const branchBVersion = makeVersion('version-branch-b', ['Track 1'], {
+      isCurrent: true,
+      operationSeq: 3,
+      createdAt: '2026-07-05T00:10:00.000Z',
+      parentId: rootVersion.id,
+      tracks: [makeTrack('Track 1', 'version-branch-b-track-1', { trackId: 'track-1', trackPosition: 0 })],
+    });
+
+    render(
+      <DemoDawClient
+        groupSlug="demo-group"
+        projectSlug="demo-project"
+        projectId="project-1"
+        demoId="demo-1"
+        currentUserId="user-1"
+        demoName="Demo"
+        demoDescription={null}
+        initialCurrentVersionId={branchAVersion.id}
+        initialActiveVersionId={branchAVersion.id}
+        initialIsFollowingHead={true}
+        initialVersions={[rootVersion, branchAVersion]}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(mockVersionHistoryTree.lastProps).toBeTruthy();
+      expect(mockVersionHistoryTree.lastProps?.selectedVersionId).toBe(branchAVersion.id);
+    });
+
+    await act(async () => {
+      mockProjectSync.updateProjectState({
+        ...mockProjectSync.getState().projectState!,
+        versions: [rootVersion, branchAVersion, branchBVersion],
+        currentVersionId: branchBVersion.id,
+        activeVersionId: branchAVersion.id,
+        isFollowingHead: true,
+      });
+    });
+
+    expect(mockVersionHistoryTree.lastProps?.currentVersionId).toBe(branchBVersion.id);
+    expect(mockVersionHistoryTree.lastProps?.activeVersionId).toBe(branchAVersion.id);
+    expect(mockVersionHistoryTree.lastProps?.selectedVersionId).toBe(branchAVersion.id);
   });
 
   it('adds a track from the selected checkout instead of snapping back to the current head', async () => {
@@ -2039,18 +2097,15 @@ describe('DemoDawClient recording regression', () => {
       mockProjectSync.updateProjectState({
         ...makeProjectState([initialVersion, remoteVersion]),
         currentVersionId: remoteVersion.id,
-        activeVersionId: initialVersion.id,
-        isFollowingHead: false,
+        activeVersionId: remoteVersion.id,
+        isFollowingHead: true,
         lastVersionOperationSeq: 2,
         lastSeenOperationSeq: 2,
       });
     });
 
-    await waitFor(() => {
-      expect(container.querySelector('[data-track-version-id]')?.textContent).toContain('Remote Update Track');
-    });
+    await screen.findAllByText('Remote Update Track');
 
-    await user.click((await screen.findAllByRole('button', { name: 'Enable mock mic' }))[0]);
     expect(container.querySelector('[data-track-version-id]')?.textContent).toContain('Remote Update Track');
   });
 

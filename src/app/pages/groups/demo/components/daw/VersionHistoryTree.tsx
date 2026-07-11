@@ -101,24 +101,20 @@ function getVersionCreatorLabel(
     }
   }
 
-  const historyMatch = [...operationHistory]
-    .reverse()
-    .find((entry) => {
-      if (entry.versionId !== version.id && entry.currentVersionId !== version.id) {
-        return false;
-      }
+  const historyMatch = operationHistory.find((entry) => {
+    if (entry.versionId !== version.id && entry.currentVersionId !== version.id) {
+      return false;
+    }
 
-      return (
-        entry.operationType === 'VERSION_CREATED' ||
-        entry.operationType === 'VERSION_BRANCH_CREATED' ||
-        entry.operationType === 'VERSION_REVERTED_FROM' ||
-        entry.operationType === 'TRACK_VERSION_CREATED'
-      );
-    });
+    return (
+      entry.operationType === 'VERSION_CREATED' ||
+      entry.operationType === 'VERSION_BRANCH_CREATED' ||
+      entry.operationType === 'VERSION_REVERTED_FROM' ||
+      entry.operationType === 'TRACK_VERSION_CREATED'
+    );
+  });
 
-  const fallbackMatch = [...operationHistory]
-    .reverse()
-    .find((entry) => entry.versionId === version.id || entry.currentVersionId === version.id);
+  const fallbackMatch = operationHistory.find((entry) => entry.versionId === version.id || entry.currentVersionId === version.id);
 
   const resolvedHistoryActor = resolveUserDisplayName(historyMatch?.actorUserId, userDisplayNamesById);
   if (resolvedHistoryActor) {

@@ -307,7 +307,7 @@ export function DemoDawClient({
   const router = useRouter();
 
   const [selectedVersionId, setSelectedVersionId] = useState(initialActiveVersionId ?? initialCurrentVersionId);
-  const previousBranchHeadVersionIdRef = useRef(initialActiveVersionId ?? initialCurrentVersionId);
+  const previousActiveVersionIdRef = useRef(initialActiveVersionId ?? initialCurrentVersionId);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTimeMs, setCurrentTimeMs] = useState(0);
   const [durationByTrackVersionId, setDurationByTrackVersionId] = useState<Record<string, number>>({});
@@ -2023,19 +2023,19 @@ export function DemoDawClient({
   }, [demoName, downloadBlob, exportStatus, exportTracks, resolvedLocalTempoBpm, sharedDemoTempoBpm]);
 
   useEffect(() => {
-    const previousBranchHeadVersionId = previousBranchHeadVersionIdRef.current;
-    const branchHeadChanged = previousBranchHeadVersionId !== liveBranchHeadVersionId;
+    const previousActiveVersionId = previousActiveVersionIdRef.current;
+    const activeVersionChanged = previousActiveVersionId !== liveActiveVersionId;
 
-    if (branchHeadChanged && !isHistoryViewActive) {
-      setSelectedVersionId(liveBranchHeadVersionId);
+    if (activeVersionChanged && !isHistoryViewActive && selectedVersionId === previousActiveVersionId) {
+      setSelectedVersionId(liveActiveVersionId);
     }
 
-    if (branchHeadChanged && !isHistoryViewActive) {
+    if (activeVersionChanged && !isHistoryViewActive) {
       stopTransport();
     }
 
-    previousBranchHeadVersionIdRef.current = liveBranchHeadVersionId;
-  }, [isHistoryViewActive, liveBranchHeadVersionId, stopTransport]);
+    previousActiveVersionIdRef.current = liveActiveVersionId;
+  }, [isHistoryViewActive, liveActiveVersionId, selectedVersionId, stopTransport]);
 
   function seekAllTracks(timeMs: number) {
     playbackEngine.seek(timeMs);
@@ -4526,7 +4526,7 @@ export function DemoDawClient({
                     onSelectVersion={(id) => {
                       setSelectedVersionId(id);
                       stopTransport();
-                      void projectSyncEngine.setActiveVersion(id, { isFollowingHead: false });
+                      void projectSyncEngine.setActiveVersion(id, { isFollowingHead: true });
                     }}
                   />
                 </div>

@@ -27,50 +27,6 @@ function buildDemoVersionLookup(versions: DemoVersionCheckoutNode[]) {
   );
 }
 
-function isDescendantOf(
-  candidateVersionId: string,
-  ancestorVersionId: string,
-  versionsById: Map<string, DemoVersionCheckoutNode>,
-) {
-  const visited = new Set<string>();
-  let currentVersionId: string | null = candidateVersionId;
-
-  while (currentVersionId) {
-    if (currentVersionId === ancestorVersionId) {
-      return true;
-    }
-
-    if (visited.has(currentVersionId)) {
-      break;
-    }
-
-    visited.add(currentVersionId);
-    currentVersionId = versionsById.get(currentVersionId)?.parentId ?? null;
-  }
-
-  return false;
-}
-
-function resolveDemoBranchHeadVersionId(
-  versionsById: Map<string, DemoVersionCheckoutNode>,
-  candidateVersionId: string | null,
-  sharedHeadVersionId: string | null,
-) {
-  if (!candidateVersionId) {
-    return sharedHeadVersionId;
-  }
-
-  if (!versionsById.has(candidateVersionId)) {
-    return sharedHeadVersionId;
-  }
-
-  if (sharedHeadVersionId && isDescendantOf(sharedHeadVersionId, candidateVersionId, versionsById)) {
-    return sharedHeadVersionId;
-  }
-
-  return candidateVersionId;
-}
-
 export async function setDemoUserActiveVersion(
   client: DawDatabaseClient,
   input: {
@@ -232,17 +188,16 @@ export async function loadOrCreateDemoUserActiveVersionState(
   });
 
   const shouldFollowHead = input.isFollowingHead ?? existingActiveVersionState?.isFollowingHead ?? true;
-  const preferredActiveVersionId =
-    (input.currentActiveVersionId && versionLookup.has(input.currentActiveVersionId)
-      ? input.currentActiveVersionId
-      : null) ??
-    (existingActiveVersionState?.activeVersionId && versionLookup.has(existingActiveVersionState.activeVersionId)
+  const existingActiveVersionId =
+    existingActiveVersionState?.activeVersionId && versionLookup.has(existingActiveVersionState.activeVersionId)
       ? existingActiveVersionState.activeVersionId
-      : null) ??
-    sharedHeadVersionId;
-  const resolvedActiveVersionId = shouldFollowHead
-    ? resolveDemoBranchHeadVersionId(versionLookup, preferredActiveVersionId, sharedHeadVersionId)
-    : preferredActiveVersionId;
+      : null;
+  const requestedActiveVersionId =
+    input.currentActiveVersionId && versionLookup.has(input.currentActiveVersionId)
+      ? input.currentActiveVersionId
+      : null;
+  const resolvedActiveVersionId =
+    requestedActiveVersionId ?? existingActiveVersionId ?? (shouldFollowHead ? sharedHeadVersionId : sharedHeadVersionId);
 
   if (!resolvedActiveVersionId) {
     return {

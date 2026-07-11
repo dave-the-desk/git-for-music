@@ -749,7 +749,7 @@ function hydrateVersionCreatorNames(snapshot: DemoDawSnapshotData) {
   const userDisplayNamesById = snapshot.userDisplayNamesById ?? {};
   const historyByVersionId = new Map<string, string>();
 
-  for (const historyItem of [...snapshot.operationHistory].reverse()) {
+  for (const historyItem of snapshot.operationHistory) {
     if (!historyItem.versionId) continue;
     if (historyByVersionId.has(historyItem.versionId)) continue;
     if (
