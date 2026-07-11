@@ -33,7 +33,7 @@ Solution:
 Problem:
 
 - When one user added the first track to a blank demo, other connected users did not see the new track immediately.
-- The UI could remain anchored to the old branch head because it waited on the active-version field instead of the shared current branch head.
+- The UI could remain anchored to the old branch head because it waited on the wrong sync state instead of the selected checkout.
 
 Solution:
 
@@ -52,8 +52,8 @@ Problem:
 
 Solution:
 
-- Introduced `resolveUploadSourceVersionId` so uploads prefer the freshest committed version.
-- Tracked the freshest committed version in the client during upload completion.
+- Introduced `resolveUploadSourceVersionId` so uploads and recording source from the selected checkout.
+- Kept the selected checkout authoritative for add-track and recording flows while still tracking the latest committed version for fallback cases.
 - Added a regression test for the upload source selection helper and the add-track flow.
 
 ## 5. Server payload shape did not fully support version-tree updates

@@ -160,6 +160,73 @@ test('createDemoVersionWithCopiedTracks preserves moved segment placement when c
   assert.equal(createdSegments[0]?.position, 0);
 });
 
+test('createDemoVersionWithCopiedTracks preserves the creator name on the new version node', async () => {
+  const tx = {
+    demo: {
+      findFirst: async () => null,
+    },
+    demoVersion: {
+      findFirst: async () => ({
+        description: 'Source version',
+        tempoBpm: 120,
+        timeSignatureNum: 4,
+        timeSignatureDen: 4,
+        musicalKey: null,
+        tempoSource: 'MANUAL',
+        keySource: 'MANUAL',
+      }),
+      create: async (args: {
+        data: {
+          demoId: string;
+          label: string;
+          description: string | null;
+          tempoBpm?: number | null;
+          timeSignatureNum?: number;
+          timeSignatureDen?: number;
+          musicalKey?: string | null;
+          tempoSource?: 'MANUAL' | 'ANALYZED' | 'IMPORTED';
+          keySource?: 'MANUAL' | 'ANALYZED' | 'IMPORTED';
+          parentId: string | null;
+        };
+      }) => ({
+        id: 'version-clone',
+        label: args.data.label,
+        description: args.data.description,
+        tempoBpm: args.data.tempoBpm ?? 120,
+        timeSignatureNum: args.data.timeSignatureNum ?? 4,
+        timeSignatureDen: args.data.timeSignatureDen ?? 4,
+        musicalKey: args.data.musicalKey ?? null,
+        tempoSource: args.data.tempoSource ?? 'MANUAL',
+        keySource: args.data.keySource ?? 'MANUAL',
+        createdAt: new Date('2025-01-03T00:00:00.000Z'),
+        parentId: args.data.parentId,
+      }),
+    },
+    trackVersion: {
+      findMany: async () => [],
+      create: async () => ({
+        id: 'track-version-clone',
+        createdAt: new Date('2025-01-03T00:00:00.000Z'),
+      }),
+    },
+    segment: {
+      create: async () => ({
+        id: 'segment-clone-1',
+      }),
+    },
+  } as const;
+
+  const result = await createDemoVersionWithCopiedTracks(tx as never, {
+    demoId: 'demo-1',
+    label: 'Branch clone',
+    sourceVersionId: 'version-root',
+    parentId: 'version-root',
+    createdByName: 'Avery Fox',
+  });
+
+  assert.equal(result.createdByName, 'Avery Fox');
+});
+
 test('createDemoVersionWithCopiedTracks preserves crossfade metadata from the source version snapshot', async () => {
   const createdSegments: Array<Record<string, unknown>> = [];
   const sourceTrackVersion = {

@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
+import { FormEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import type {
   DemoTimingMetadata,
@@ -66,7 +66,6 @@ import {
 } from '@/app/lib/daw/utils/timing';
 import {
   DEFAULT_SNAP,
-  TICK_INTERVAL_MS,
   TRACK_HEIGHT,
   TRACK_LABEL_WIDTH,
   localTempoStateFromTempo,
@@ -340,6 +339,7 @@ export function DemoDawClient({
   const [browserTab, setBrowserTab] = useState<BrowserTab>('upload');
   const [browserQuery, setBrowserQuery] = useState('');
   const [isVersionTreeRailExpanded, setIsVersionTreeRailExpanded] = useState(true);
+  const [versionHistoryZoomLevel, setVersionHistoryZoomLevel] = useState(1);
   const [viewportWidth, setViewportWidth] = useState(() =>
     typeof window !== 'undefined' ? window.innerWidth : 1440,
   );
@@ -380,6 +380,9 @@ export function DemoDawClient({
   const [isToolsBarStuck, setIsToolsBarStuck] = useState(false);
   const [isTopControlRowCollapsed, setIsTopControlRowCollapsed] = useState(false);
   const freshestCommittedVersionIdRef = useRef(initialActiveVersionId ?? initialCurrentVersionId);
+  const versionHistoryScrollResetSignal = `${isVersionTreeRailExpanded ? 'expanded' : 'collapsed'}:${
+    inspectorScrollHeightPx ?? -1
+  }`;
 
   const [offsetOverrides, setOffsetOverrides] = useState<Record<string, number>>({});
   const [segmentLayoutOverrides, setSegmentLayoutOverrides] = useState<Record<string, TrackTimelineSegment[]>>({});
@@ -412,7 +415,7 @@ export function DemoDawClient({
     return () => observer.disconnect();
   }, []);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const element = inspectorScrollRef.current;
     if (!element || typeof ResizeObserver === 'undefined') return undefined;
 
@@ -464,9 +467,7 @@ export function DemoDawClient({
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [pluginGraphIssue, setPluginGraphIssue] = useState<PlaybackPluginGraphIssue | null>(null);
-  const clockRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const startWallTimeRef = useRef<number>(0);
-  const startPlayheadMsRef = useRef<number>(0);
+  const clockRef = useRef<number | null>(null);
   const lastAppliedTempoBpmRef = useRef<number>(0);
   const tracksScrollContainerRef = useRef<HTMLDivElement | null>(null);
   const versionTreeRailRef = useRef<HTMLDivElement | null>(null);
@@ -576,6 +577,13 @@ export function DemoDawClient({
   const isLocalOnlySync = !projectSyncState.isOnline;
   const localOnlyStatusText =
     projectSyncState.lastError ?? 'Changes stay in this browser until syncing resumes.';
+
+  const updateVersionHistoryZoom = useCallback((nextZoomLevel: number | ((current: number) => number)) => {
+    setVersionHistoryZoomLevel((current) => {
+      const resolved = typeof nextZoomLevel === 'function' ? nextZoomLevel(current) : nextZoomLevel;
+      return Math.min(1.5, Number(Math.max(0.05, resolved).toFixed(3)));
+    });
+  }, []);
 
   const selectedVersion = useMemo(
     () => selectVersionById(displayVersions, selectedVersionId),
@@ -872,13 +880,6 @@ export function DemoDawClient({
     if (versionTreeRailHydratedFromStorageRef.current) return;
     setIsVersionTreeRailExpanded(isWideViewport);
   }, [isWideViewport]);
-
-  useEffect(() => {
-    if (toolbarTab !== 'tree') return;
-    versionTreeRailShouldPersistRef.current = true;
-    setIsVersionTreeRailExpanded(true);
-    versionTreeRailRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }, [toolbarTab]);
 
   useEffect(() => {
     if (toolbarTab === 'upload' || toolbarTab === 'plugins' || toolbarTab === 'members') {
@@ -1396,8 +1397,6 @@ export function DemoDawClient({
     if (lastAppliedTempoBpmRef.current === resolvedLocalTempoBpm) return;
     lastAppliedTempoBpmRef.current = resolvedLocalTempoBpm;
     const playhead = currentTimeMsRef.current;
-    startPlayheadMsRef.current = playhead;
-    startWallTimeRef.current = performance.now();
     seekAllTracks(playhead);
     void playbackEngine.play(playhead);
   }, [isPlaying, playbackEngine, resolvedLocalTempoBpm]);
@@ -1941,10 +1940,7 @@ export function DemoDawClient({
   }, [isPlaying, metronomeEnabled, resolvedLocalTempoBpm, stopMetronomeSchedule]);
 
   const stopTransport = useCallback(() => {
-    if (clockRef.current) {
-      clearInterval(clockRef.current);
-      clockRef.current = null;
-    }
+    stopTransportClock();
     setIsPlaying(false);
     setCurrentTimeMs(0);
     playbackEngine.stop();
@@ -1953,10 +1949,7 @@ export function DemoDawClient({
   }, [playbackEngine, publishPresence, stopMetronomeSchedule]);
 
   function pauseTransport() {
-    if (clockRef.current) {
-      clearInterval(clockRef.current);
-      clockRef.current = null;
-    }
+    stopTransportClock();
     setCurrentTimeMs(playbackEngine.getCurrentTimeMs());
     setIsPlaying(false);
     playbackEngine.pause();
@@ -2044,62 +2037,6 @@ export function DemoDawClient({
     previousBranchHeadVersionIdRef.current = liveBranchHeadVersionId;
   }, [isHistoryViewActive, liveBranchHeadVersionId, stopTransport]);
 
-  const selectedCheckoutVersionId = liveVersions.find((version) => version.id === selectedVersionId)?.id ?? null;
-  const jumpToHistoryOperation = useCallback(
-    (operationSeq: number | null) => {
-      stopTransport();
-      if (operationSeq === null) {
-        setHistoryError(null);
-        setHistoryProjectState(null);
-        setHistoryOperationSeq(null);
-        setSelectedVersionId(liveActiveVersionId);
-        return;
-      }
-
-      setHistoryOperationSeq(operationSeq);
-    },
-    [liveActiveVersionId, stopTransport],
-  );
-  const checkoutSelectedVersion = useCallback(() => {
-    const nextVersionId = selectedCheckoutVersionId;
-    if (!nextVersionId) return;
-    stopTransport();
-    void projectSyncEngine.setActiveVersion(nextVersionId);
-  }, [projectSyncEngine, selectedCheckoutVersionId, stopTransport]);
-
-  const createBranchFromSelectedVersion = useCallback(
-    async (sourceVersionId: string, label: string) => {
-      stopTransport();
-      const result = await projectSyncEngine.createVersionBranch({
-        sourceVersionId,
-        label,
-      });
-      return result
-        ? {
-            versionId: result.id,
-            label: result.label,
-          }
-        : null;
-    },
-    [projectSyncEngine, stopTransport],
-  );
-
-  const revertToSelectedVersion = useCallback(
-    async (sourceVersionId: string) => {
-      stopTransport();
-      const result = await projectSyncEngine.revertToVersion({
-        sourceVersionId,
-      });
-      return result
-        ? {
-            versionId: result.id,
-            label: result.label,
-          }
-        : null;
-    },
-    [projectSyncEngine, stopTransport],
-  );
-
   function seekAllTracks(timeMs: number) {
     playbackEngine.seek(timeMs);
   }
@@ -2110,15 +2047,17 @@ export function DemoDawClient({
     void publishPresence();
   }
 
-  function playTransport(fromMs?: number) {
-    const startMs = fromMs ?? currentTimeMs;
-    startPlayheadMsRef.current = startMs;
-    startWallTimeRef.current = performance.now();
+  function stopTransportClock() {
+    if (clockRef.current !== null) {
+      cancelAnimationFrame(clockRef.current);
+      clockRef.current = null;
+    }
+  }
 
-    seekAllTracks(startMs);
-    void playbackEngine.play(startMs);
+  function startTransportClock() {
+    stopTransportClock();
 
-    clockRef.current = setInterval(() => {
+    const tick = () => {
       const newTimeMs = playbackEngine.getCurrentTimeMs();
 
       // While a take is actively recording, the transport must keep running even if
@@ -2130,9 +2069,19 @@ export function DemoDawClient({
       }
 
       setCurrentTimeMs(newTimeMs);
-    }, TICK_INTERVAL_MS);
+      clockRef.current = requestAnimationFrame(tick);
+    };
 
+    clockRef.current = requestAnimationFrame(tick);
+  }
+
+  function playTransport(fromMs?: number) {
+    const startMs = fromMs ?? currentTimeMs;
+    seekAllTracks(startMs);
+    void playbackEngine.play(startMs);
+    setCurrentTimeMs(startMs);
     setIsPlaying(true);
+    startTransportClock();
     void publishPresence('online');
   }
 
@@ -3817,10 +3766,7 @@ export function DemoDawClient({
       syncStatus: 'idle',
       peaks: [],
     });
-    if (clockRef.current) {
-      clearInterval(clockRef.current);
-      clockRef.current = null;
-    }
+    stopTransportClock();
     playTransport(startOffsetMs);
     void publishPresence('online');
   }
@@ -3976,7 +3922,6 @@ export function DemoDawClient({
         selectedVersionId,
         liveActiveVersionId,
         freshestCommittedVersionId: freshestCommittedVersionIdRef.current,
-        isHistoryViewActive,
       });
 
       console.log('[DemoDawClient] handleSaveRecording source selection', {
@@ -4067,7 +4012,6 @@ export function DemoDawClient({
       selectedVersionId,
       liveActiveVersionId,
       freshestCommittedVersionId: freshestCommittedVersionIdRef.current,
-      isHistoryViewActive,
     });
     try {
       const data = (await ingestEngine.uploadAudioFile({
@@ -4508,6 +4452,32 @@ export function DemoDawClient({
                     <h2 className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-200">Version history</h2>
                   </div>
                   <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1 rounded-full border border-slate-800 bg-slate-950/85 px-2 py-1 shadow-lg backdrop-blur">
+                      <button
+                        type="button"
+                        onClick={() => updateVersionHistoryZoom((current) => current - 0.125)}
+                        aria-label="Zoom out version history"
+                        className="rounded-full border border-slate-700 px-2.5 py-1 text-xs font-semibold text-slate-200 transition-colors hover:border-slate-500 hover:text-white"
+                      >
+                        -
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => updateVersionHistoryZoom(1)}
+                        aria-label="Reset version history zoom"
+                        className="min-w-14 rounded-full border border-slate-700 px-3 py-1 text-xs font-semibold text-slate-200 transition-colors hover:border-slate-500 hover:text-white"
+                      >
+                        {Math.round(versionHistoryZoomLevel * 100)}%
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => updateVersionHistoryZoom((current) => current + 0.125)}
+                        aria-label="Zoom in version history"
+                        className="rounded-full border border-slate-700 px-2.5 py-1 text-xs font-semibold text-slate-200 transition-colors hover:border-slate-500 hover:text-white"
+                      >
+                        +
+                      </button>
+                    </div>
                     {toolbarTab === 'tree' ? (
                       <span className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2 py-1 text-[10px] font-semibold text-cyan-200">
                         Focused
@@ -4527,52 +4497,37 @@ export function DemoDawClient({
                     </button>
                   </div>
                 </div>
-                {historyOperationSeq !== null ? (
-                  <div className="rounded-lg border border-cyan-400/30 bg-cyan-500/10 px-4 py-3 text-sm text-cyan-50">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div>
-                        <p className="font-semibold">{historyLoading ? 'Loading history point' : 'Viewing history point'}</p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => jumpToHistoryOperation(null)}
-                        className="rounded-full border border-cyan-300/30 bg-cyan-950/40 px-3 py-1 text-[11px] font-semibold text-cyan-50 transition-colors hover:border-cyan-200/70 hover:bg-cyan-900/60 hover:text-white"
-                      >
-                        Back to latest
-                      </button>
-                    </div>
-                    {historyError ? <p className="mt-2 text-xs text-rose-200">{historyError}</p> : null}
-                  </div>
-                ) : null}
               </div>
               <div
                 className={`mt-4 min-h-0 flex-1 rounded-xl border border-slate-800/70 bg-slate-950/70 ${
-                  isVersionTreeRailExpanded ? 'overflow-auto' : 'max-h-0 overflow-hidden'
+                  isVersionTreeRailExpanded ? 'flex flex-col overflow-hidden' : 'max-h-0 overflow-hidden'
                 }`}
               >
-                <div className="flex min-h-0 min-w-full flex-1 overflow-auto">
+                <div className="flex min-h-0 min-w-full flex-1 overflow-hidden">
                   <VersionHistoryTree
                     projectId={projectId}
                     demoId={demoId}
+                    demoName={demoName}
                     baseOperationSeq={displayProjectState?.lastVersionOperationSeq ?? projectSyncState.lastSyncedOperationSeq}
                     liveVersions={liveVersions}
                     operationHistory={liveProjectState?.operationHistory ?? []}
                     currentVersionId={liveBranchHeadVersionId}
                     activeVersionId={liveActiveVersionId}
                     selectedVersionId={selectedVersionId}
-                    selectedHistoryOperationSeq={historyOperationSeq}
+                    zoomLevel={versionHistoryZoomLevel}
+                    scrollResetSignal={versionHistoryScrollResetSignal}
                     isFollowingHead={isFollowingHead}
                     isHistoryViewActive={isHistoryViewActive}
                     highlightedVersionId={projectSyncState.versionTreeAttention?.versionId ?? null}
                     highlightedVersionCreatedAt={projectSyncState.versionTreeAttention?.createdAt ?? null}
+                    userDisplayNamesById={
+                      displayProjectState?.userDisplayNamesById ?? liveProjectState?.userDisplayNamesById ?? {}
+                    }
                     onSelectVersion={(id) => {
                       setSelectedVersionId(id);
                       stopTransport();
+                      void projectSyncEngine.setActiveVersion(id, { isFollowingHead: false });
                     }}
-                    onCheckoutSelectedVersion={checkoutSelectedVersion}
-                    onSelectHistoryOperation={jumpToHistoryOperation}
-                    onCreateBranch={createBranchFromSelectedVersion}
-                    onRevertToVersion={revertToSelectedVersion}
                   />
                 </div>
               </div>

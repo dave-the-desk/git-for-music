@@ -24,14 +24,16 @@ It covers the DAW editor itself. The surrounding groups and project pages use a 
 
 - The version DAG, tracks, takes, operations, and branch nodes are shared durable project data.
 - Each viewer also has a per-user active checkout in `DemoUserActiveVersion` with `activeVersionId` and `isFollowingHead`.
-- `selectedVersionId` in the client is only UI selection state.
+- `selectedVersionId` in the client is the selected version node and the checkout source for edit actions, while the durable checkout state also lives in `DemoUserActiveVersion`.
 - `Demo.currentVersionId` is now a fallback/default seed for legacy demos and bootstrap gaps, not the live checkout pointer.
 - `snapshot.currentVersionId` and operation-history `currentVersionId` are shared-head metadata for replay and tree rendering only; they do not define the viewer checkout.
 - `VERSION_SELECTED` and `CURRENT_VERSION_CHANGED` are legacy compatibility operations only; new checkout changes go through the per-user active-version API.
-- Recording and audio-tool commits branch the active checkout into a new `DemoVersion`, and the version tree refreshes so the new node appears immediately for every subscribed viewer.
-- UI actions that create new tracks should name them from the live active checkout, not from a stale selected/history version, or collaborators can generate duplicate `Track N` names.
+- Clicking a version node opens its details pop-up, and the checkout action in that pop-up updates the active checkout so the user can move back to any historical node from the tree.
+- Recording and audio-tool commits branch from the active checkout into a new `DemoVersion`, and the version tree refreshes so the new node appears immediately for every subscribed viewer.
+- UI actions that create new tracks should name them from the selected checkout, not from a stale history snapshot, or collaborators can generate duplicate `Track N` names.
 - Recording previews should be cleared once the uploaded track is materialized so the preview lane does not linger beside the committed track.
-- Only stale-base/conflict recovery and explicit branch flows use the other branch creation paths.
+- The version tree does not expose separate branch or revert buttons inline on the node; the pop-up checkout action is the user-facing history action, and branch creation is an implementation detail of edits from that checkout.
+- Stale-base/conflict recovery still uses the server-side branch creation paths when needed.
 
 ## 2. Local edit
 

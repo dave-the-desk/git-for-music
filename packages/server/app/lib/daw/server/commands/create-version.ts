@@ -16,7 +16,10 @@ import {
   emitAcceptedDawOperation,
   emitDawBranchCreated,
 } from '@/app/lib/daw/server/realtime-gateway';
-import { serializeCreatedDemoVersionTreeNode } from '@/app/lib/daw/server/versioning';
+import {
+  loadUserDisplayName,
+  serializeCreatedDemoVersionTreeNode,
+} from '@/app/lib/daw/server/versioning';
 
 const MAX_LABEL_LENGTH = 120;
 const MAX_DESCRIPTION_LENGTH = 500;
@@ -119,6 +122,7 @@ export async function createDemoVersionCommand(input: {
     | null = null;
 
   const createdVersion = await prisma.$transaction(async (tx) => {
+    const createdByName = await loadUserDisplayName(tx, input.userId);
     const version = await createDemoVersionWithCopiedTracks(tx, {
       demoId: demo.id,
       sourceVersionId: sourceVersion.id,
@@ -126,6 +130,7 @@ export async function createDemoVersionCommand(input: {
       kind: 'EXPLICIT',
       label: label || `Snapshot from ${sourceVersion.label}`,
       description: description || null,
+      createdByName,
     });
 
     await setDemoUserActiveVersion(tx, {
@@ -157,6 +162,7 @@ export async function createDemoVersionCommand(input: {
             id: version.id,
             label: version.label,
             description: version.description,
+            createdByName: version.createdByName,
             parentId: version.parentId,
             createdAt: version.createdAt,
             branchMode,

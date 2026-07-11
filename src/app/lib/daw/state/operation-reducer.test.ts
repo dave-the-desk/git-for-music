@@ -160,7 +160,27 @@ function makeOperation(
 
 test('VERSION_CREATED from the active head advances the active checkout when following head is enabled', () => {
   const root = makeVersion('version-root', { isCurrent: true });
-  const initial = createLocalProjectStateFromBootstrap(makeBootstrap([root], root.id));
+  const initial = createLocalProjectStateFromBootstrap({
+    ...makeBootstrap([root], root.id),
+    latestSnapshot: {
+      id: 'snapshot-1',
+      projectId: 'project-1',
+      demoId: 'demo-1',
+      operationSeq: 1,
+      snapshot: {
+        versions: [root],
+        currentVersionId: root.id,
+        userDisplayNamesById: {
+          'user-b': 'Avery Fox',
+        },
+        comments: [],
+        annotations: [],
+        tempoMetadataByTrackVersionId: {},
+      },
+      createdById: 'user-b',
+      createdAt: '2025-01-01T00:00:00.000Z',
+    },
+  });
   assert.equal(initial.activeVersionId, root.id);
   assert.equal(initial.isFollowingHead, true);
 
@@ -196,6 +216,7 @@ test('VERSION_CREATED from the active head advances the active checkout when fol
   assert.equal(created.activeVersionId, childVersion.id);
   assert.equal(created.versions[1]?.id, childVersion.id);
   assert.equal(created.versions[1]?.parentId, root.id);
+  assert.equal(created.versions[1]?.createdByName, 'Avery Fox');
   assert.equal(created.versions.find((version) => version.id === root.id)?.isCurrent, false);
   assert.equal(created.versions.find((version) => version.id === childVersion.id)?.isCurrent, true);
 });
@@ -234,6 +255,33 @@ test('createLocalProjectStateFromBootstrap defaults to the newest version when t
   assert.equal(state.currentVersionId, newestVersion.id);
   assert.equal(state.versions.find((version) => version.id === oldestVersion.id)?.isCurrent, false);
   assert.equal(state.versions.find((version) => version.id === newestVersion.id)?.isCurrent, true);
+});
+
+test('createLocalProjectStateFromBootstrap preserves resolved actor display names', () => {
+  const root = makeVersion('version-root', { isCurrent: true });
+  const state = createLocalProjectStateFromBootstrap({
+    ...makeBootstrap([root], root.id),
+    latestSnapshot: {
+      id: 'snapshot-1',
+      projectId: 'project-1',
+      demoId: 'demo-1',
+      operationSeq: 1,
+      snapshot: {
+        versions: [root],
+        currentVersionId: root.id,
+        userDisplayNamesById: {
+          'user-a': 'Avery Fox',
+        },
+        comments: [],
+        annotations: [],
+        tempoMetadataByTrackVersionId: {},
+      },
+      createdById: 'user-a',
+      createdAt: '2025-01-01T00:00:00.000Z',
+    },
+  });
+
+  assert.equal(state.userDisplayNamesById?.['user-a'], 'Avery Fox');
 });
 
 test('createLocalProjectStateFromBootstrap removes a blank duplicate track when the version already has audio for the same name', () => {

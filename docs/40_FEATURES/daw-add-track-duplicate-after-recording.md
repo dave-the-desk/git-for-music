@@ -24,8 +24,8 @@ was not awaited.
 The current implementation fixes the behavior in three layers:
 
 - The client resolves the source version for both upload and recording from the
-  freshest committed version it knows about, instead of relying on an async
-  active-version update.
+  selected checkout, which is the authoritative source for edit-producing
+  actions.
 - The client reducer normalizes version state and removes blank duplicate track
   entries whenever a version is created or bootstrap state is replayed.
 - The server upload flows do the same cleanup after `TRACK_VERSION_CREATED` is

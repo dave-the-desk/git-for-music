@@ -138,6 +138,10 @@ const mockPlaybackEngine = vi.hoisted(() => ({
   lastSetProject: null as unknown,
 }));
 
+const mockVersionHistoryTree = vi.hoisted(() => ({
+  lastProps: null as null | Record<string, unknown>,
+}));
+
 const mockPendingActiveVersionUpdates = vi.hoisted(() => ({
   pending: [] as Array<{
     activeVersionId: string;
@@ -412,7 +416,10 @@ vi.mock('./AudioInputSelector', () => ({
 }));
 
 vi.mock('./VersionHistoryTree', () => ({
-  VersionHistoryTree: () => createElement('div', { 'data-testid': 'version-history-tree' }),
+  VersionHistoryTree: (props: Record<string, unknown>) => {
+    mockVersionHistoryTree.lastProps = props;
+    return createElement('div', { 'data-testid': 'version-history-tree' });
+  },
 }));
 
 vi.mock('./TrackSegmentClip', () => ({
@@ -892,6 +899,7 @@ describe('DemoDawClient recording regression', () => {
     mockPlaybackEngine.lastConstructorOptions = null;
     mockPlaybackEngine.setProjectCount = 0;
     mockPlaybackEngine.lastSetProject = null;
+    mockVersionHistoryTree.lastProps = null;
     mockPendingActiveVersionUpdates.pending = [];
     mockRecordingSave.deferred = createDeferred();
     mockProjectSync.reset();
@@ -913,6 +921,103 @@ describe('DemoDawClient recording regression', () => {
       }
       return new Response(JSON.stringify({}), { status: 200 });
     }) as typeof fetch;
+  });
+
+  it('sets the version history rail height on the first layout pass', () => {
+    const resizeObserver = class {
+      observe() {}
+      disconnect() {}
+      unobserve() {}
+    };
+    const rectSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(() => ({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 500,
+      width: 800,
+      height: 500,
+      toJSON: () => ({}),
+    } as DOMRect));
+
+    vi.stubGlobal('ResizeObserver', resizeObserver);
+
+    try {
+      const initialVersion = makeVersion('version-1', ['Track 1'], {
+        isCurrent: true,
+        operationSeq: 1,
+        createdAt: '2026-07-05T00:00:00.000Z',
+        tracks: [makeTrack('Track 1', 'version-1-track-1', { trackId: 'track-1', trackPosition: 0 })],
+      });
+
+      render(
+        <DemoDawClient
+          groupSlug="demo-group"
+          projectSlug="demo-project"
+          projectId="project-1"
+          demoId="demo-1"
+          currentUserId="user-1"
+          demoName="Demo"
+          demoDescription={null}
+          initialCurrentVersionId={initialVersion.id}
+          initialActiveVersionId={initialVersion.id}
+          initialIsFollowingHead={true}
+          initialVersions={[initialVersion]}
+        />,
+      );
+
+      expect(screen.getByTestId('version-tree-rail').style.height).toBe('545px');
+      expect(String(mockVersionHistoryTree.lastProps?.scrollResetSignal)).toMatch(/:500$/);
+    } finally {
+      rectSpy.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('does not auto-scroll the version history rail on the initial mount', () => {
+    const originalScrollIntoView = HTMLElement.prototype.scrollIntoView;
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: vi.fn(),
+    });
+    const scrollIntoViewSpy = HTMLElement.prototype.scrollIntoView as unknown as ReturnType<typeof vi.fn>;
+
+    try {
+      const initialVersion = makeVersion('version-1', ['Track 1'], {
+        isCurrent: true,
+        operationSeq: 1,
+        createdAt: '2026-07-05T00:00:00.000Z',
+        tracks: [makeTrack('Track 1', 'version-1-track-1', { trackId: 'track-1', trackPosition: 0 })],
+      });
+
+      render(
+        <DemoDawClient
+          groupSlug="demo-group"
+          projectSlug="demo-project"
+          projectId="project-1"
+          demoId="demo-1"
+          currentUserId="user-1"
+          demoName="Demo"
+          demoDescription={null}
+          initialCurrentVersionId={initialVersion.id}
+          initialActiveVersionId={initialVersion.id}
+          initialIsFollowingHead={true}
+          initialVersions={[initialVersion]}
+        />,
+      );
+
+      expect(scrollIntoViewSpy).not.toHaveBeenCalled();
+    } finally {
+      if (originalScrollIntoView) {
+        Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+          configurable: true,
+          value: originalScrollIntoView,
+        });
+      } else {
+        delete (HTMLElement.prototype as unknown as { scrollIntoView?: unknown }).scrollIntoView;
+      }
+    }
   });
 
   it('keeps only one Track 1 after recording and names the next added track Track 2', async () => {
@@ -995,6 +1100,102 @@ describe('DemoDawClient recording regression', () => {
     });
   });
 
+  it('checks out a selected version node as a pinned active version', async () => {
+    const initialVersion = makeVersion('version-1', ['Track 1'], {
+      isCurrent: true,
+      operationSeq: 1,
+      createdAt: '2026-07-05T00:00:00.000Z',
+      tracks: [makeTrack('Track 1', 'version-1-track-1', { trackId: 'track-1', trackPosition: 0 })],
+    });
+
+    render(
+      <DemoDawClient
+        groupSlug="demo-group"
+        projectSlug="demo-project"
+        projectId="project-1"
+        demoId="demo-1"
+        currentUserId="user-1"
+        demoName="Demo"
+        demoDescription={null}
+        initialCurrentVersionId={initialVersion.id}
+        initialActiveVersionId={initialVersion.id}
+        initialIsFollowingHead={true}
+        initialVersions={[initialVersion]}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(mockVersionHistoryTree.lastProps).toBeTruthy();
+    });
+
+    await act(async () => {
+      (mockVersionHistoryTree.lastProps?.onSelectVersion as ((id: string) => void) | undefined)?.(
+        initialVersion.id,
+      );
+    });
+
+    expect(mockPendingActiveVersionUpdates.pending.at(-1)).toMatchObject({
+      activeVersionId: initialVersion.id,
+      options: { isFollowingHead: false },
+    });
+
+    await act(async () => {
+      await mockPendingActiveVersionUpdates.flush();
+    });
+  });
+
+  it('adds a track from the selected checkout instead of snapping back to the current head', async () => {
+    const rootVersion = makeVersion('version-root', ['Track 1'], {
+      isCurrent: false,
+      operationSeq: 1,
+      createdAt: '2026-07-04T00:00:00.000Z',
+      tracks: [makeTrack('Track 1', 'version-root-track-1', { trackId: 'track-1', trackPosition: 0 })],
+    });
+    const headVersion = makeVersion('version-head', ['Track 1', 'Track 2'], {
+      isCurrent: true,
+      operationSeq: 2,
+      createdAt: '2026-07-05T00:00:00.000Z',
+      parentId: rootVersion.id,
+      tracks: [
+        makeTrack('Track 1', 'version-head-track-1', { trackId: 'track-1', trackPosition: 0 }),
+        makeTrack('Track 2', 'version-head-track-2', { trackId: 'track-2', trackPosition: 1 }),
+      ],
+    });
+
+    const user = userEvent.setup();
+    const { container } = render(
+      <DemoDawClient
+        groupSlug="demo-group"
+        projectSlug="demo-project"
+        projectId="project-1"
+        demoId="demo-1"
+        currentUserId="user-1"
+        demoName="Demo"
+        demoDescription={null}
+        initialCurrentVersionId={headVersion.id}
+        initialActiveVersionId={headVersion.id}
+        initialIsFollowingHead={true}
+        initialVersions={[rootVersion, headVersion]}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(mockVersionHistoryTree.lastProps).toBeTruthy();
+    });
+
+    await act(async () => {
+      (mockVersionHistoryTree.lastProps?.onSelectVersion as ((id: string) => void) | undefined)?.(rootVersion.id);
+    });
+
+    await user.click(screen.getAllByRole('button', { name: '+ Add track' })[0]);
+
+    await waitFor(() => {
+      expect(mockIngest.lastUploadAudioFileSourceVersionId).toBe(rootVersion.id);
+    });
+
+    expect(container.querySelectorAll('[data-track-version-id]').length).toBe(2);
+  });
+
   it('updates the docked rail when the viewport crosses the desktop breakpoint', async () => {
     const initialVersion = makeVersion('version-1', ['Track 1'], {
       isCurrent: true,
@@ -1033,6 +1234,51 @@ describe('DemoDawClient recording regression', () => {
 
     unmount();
     window.innerWidth = previousWidth;
+  });
+
+  it('zooms the version history rail from the header controls', async () => {
+    const initialVersion = makeVersion('version-1', ['Track 1'], {
+      isCurrent: true,
+      operationSeq: 1,
+      createdAt: '2026-07-05T00:00:00.000Z',
+      tracks: [makeTrack('Track 1', 'version-1-track-1', { trackId: 'track-1', trackPosition: 0 })],
+    });
+
+    const user = userEvent.setup();
+    render(
+      <DemoDawClient
+        groupSlug="demo-group"
+        projectSlug="demo-project"
+        projectId="project-1"
+        demoId="demo-1"
+        currentUserId="user-1"
+        demoName="Demo"
+        demoDescription={null}
+        initialCurrentVersionId={initialVersion.id}
+        initialActiveVersionId={initialVersion.id}
+        initialIsFollowingHead={true}
+        initialVersions={[initialVersion]}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(mockVersionHistoryTree.lastProps).toBeTruthy();
+      expect(mockVersionHistoryTree.lastProps?.zoomLevel).toBe(1);
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Zoom out version history' }));
+    await user.click(screen.getByRole('button', { name: 'Zoom out version history' }));
+    await user.click(screen.getByRole('button', { name: 'Zoom out version history' }));
+
+    await waitFor(() => {
+      expect(mockVersionHistoryTree.lastProps?.zoomLevel).toBeCloseTo(0.625, 3);
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Reset version history zoom' }));
+
+    await waitFor(() => {
+      expect(mockVersionHistoryTree.lastProps?.zoomLevel).toBe(1);
+    });
   });
 
   it('renders upload, plugin, and member controls in the left browser rail', async () => {

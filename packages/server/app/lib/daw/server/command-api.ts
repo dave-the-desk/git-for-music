@@ -38,7 +38,11 @@ import {
   emitDawVersionTreeChanged,
 } from '@/app/lib/daw/server/realtime-gateway';
 import { createDemoVersionWithCopiedTracks } from '@/app/lib/daw/server/versions';
-import { createAutoDemoVersion, serializeCreatedDemoVersionTreeNode } from '@/app/lib/daw/server/versioning';
+import {
+  createAutoDemoVersion,
+  loadUserDisplayName,
+  serializeCreatedDemoVersionTreeNode,
+} from '@/app/lib/daw/server/versioning';
 import { listPluginsForDemo } from '@/app/lib/plugins';
 import { rebaseTimelineEditRequest } from '@/app/lib/daw/state/timeline-edit-rebase';
 import type { LocalProjectState } from '@/app/lib/daw/state/local-project-state';
@@ -2770,6 +2774,7 @@ export async function commitDawProjectOperation(
         });
 
         if (sourceVersion) {
+          const createdByName = await loadUserDisplayName(tx, input.userId);
           const branchVersion = await createDemoVersionWithCopiedTracks(tx, {
             demoId: workspace.demo.id,
             sourceVersionId: sourceVersion.id,
@@ -2777,6 +2782,7 @@ export async function commitDawProjectOperation(
             kind: 'BRANCH',
             label: `${sourceVersion.label} branch`,
             description: `Branch created from ${sourceVersion.label}.`,
+            createdByName,
           });
 
           await setDemoUserActiveVersion(tx, {
@@ -2824,6 +2830,7 @@ export async function commitDawProjectOperation(
             });
 
             if (currentVersion) {
+              const createdByName = await loadUserDisplayName(tx, input.userId);
               const createdBranch = await createDemoVersionWithCopiedTracks(tx, {
                 demoId: workspace.demo.id,
                 sourceVersionId: currentVersion.id,
@@ -2831,6 +2838,7 @@ export async function commitDawProjectOperation(
                 kind: 'BRANCH',
                 label: `${currentVersion.label} conflict`,
                 description: `Conflict branch created while applying ${effectiveRequest.operationType}.`,
+                createdByName,
               });
 
               branchVersion = {
@@ -2886,6 +2894,7 @@ export async function commitDawProjectOperation(
         if (!branchLabel) {
           throw new Error(`No branch label available for ${effectiveRequest.operationType}`);
         }
+        const createdByName = await loadUserDisplayName(tx, input.userId);
         const branchVersion = await createDemoVersionWithCopiedTracks(tx, {
           demoId: workspace.demo.id,
           sourceVersionId: branchSourceVersion.id,
@@ -2893,6 +2902,7 @@ export async function commitDawProjectOperation(
           kind: 'BRANCH',
           label: branchLabel,
           description: `${branchLabel} from ${branchSourceVersion.label}`,
+          createdByName,
         });
 
         await setDemoUserActiveVersion(tx, {
@@ -2925,6 +2935,7 @@ export async function commitDawProjectOperation(
                 id: branchVersion.id,
                 label: branchVersion.label,
                 description: branchVersion.description,
+                createdByName: branchVersion.createdByName,
                 parentId: branchVersion.parentId,
                 createdAt: branchVersion.createdAt,
                 branchMode: 'continue',

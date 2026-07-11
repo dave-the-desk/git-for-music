@@ -31,7 +31,7 @@ What already exists (do not rebuild):
   replay through `operation-reducer.ts`, with timeline edits replayed through
   the same transform/rebase helpers used on the server.
 - **Tree tab:** `VersionHistoryTree.tsx` + `version-tree-layout.ts` render the
-  live `LocalProjectState.versions` graph with commit-graph row/column layout.
+  live `LocalProjectState.versions` graph with a centered commit-graph layout.
 - **Realtime events:** `accepted_operation`, `version_tree_changed`,
   `version_created`, presence, transport, asset, comment
   (`realtime-gateway.ts`). Semantic `head_moved` / `reverted` events are still
@@ -86,23 +86,25 @@ preserved.
 - [x] Add an API route (e.g. `POST /api/versions/revert`) mirroring `create-version.ts` auth + validation.
 - [x] Record a `VERSION_REVERTED_FROM` operation whose payload carries the new version node (like `VERSION_BRANCH_CREATED` does), and update the reducer case in `src/app/lib/daw/state/operation-reducer.ts` to upsert the new version node instead of only moving `currentVersionId`.
 - [x] In a live session, commit the revert like any accepted operation so all clients converge; move the branch head and let followers follow, without yanking pinned checkouts (respect `isFollowingHead`).
-- [x] Add `revertToVersion(...)` to `ProjectSyncEngine` and wire a "Revert to this version" action in `VersionHistoryTree.tsx` (reuse the existing history-lane / branch-from-point surface).
+- [x] Add `revertToVersion(...)` to `ProjectSyncEngine`; the tree no longer exposes a separate revert control and now relies on checkout selection.
 - [x] Tests: revert produces a new node whose content equals the ancestor; older nodes remain; follow-head vs pinned checkout behavior is correct.
 
 ## Phase D - Tree Tab Commit-Graph (DoltHub layout)
 
-Goal: render the version DAG as a real commit graph with topological rows and
-column-assigned branches/merges, colored per branch.
+Goal: render the version DAG as a real commit graph with topological rows,
+centered forks, column-assigned branches/merges, colored per branch.
 
 - [x] Rework `src/app/pages/groups/demo/components/daw/version-tree-layout.ts`:
   - [x] Build a `childrenMap` from `parentId` (extend `buildTree`); support multiple parents for future merges.
   - [x] Rows = topological order (reuse `compareVersions`: `createdAt`, `operationSeq`, `id`); row index -> y.
-  - [x] Columns via a head->root pass: branch head -> new column; branch children -> leftmost child column; merge-only children -> first free column to the right so merge edges point right-to-left.
+  - [x] Columns via a head->root pass: branch head -> new column; multiple branch children -> center the parent between those branch children; a single branch child -> keep that column; merge-only children -> first free column to the right so merge edges point right-to-left.
   - [x] Assign a stable per-branch/column color.
 - [x] Update `VersionHistoryTree.tsx` to consume the new layout:
   - [x] Draw dots + parent->child edges from the new node/column positions.
-  - [x] Keep existing badges (branch head, my active version, selected, following/pinned) and the per-version history lane.
-  - [x] Add "Revert to this version" (Phase C) and keep branch-from-point.
+  - [x] Keep the semantic badge set aligned to the graph palette (current branch head, current branch, other branch nodes, other branch heads) and the simplified node details pop-up.
+  - [x] Keep the rail-header zoom controls as the standard zoom affordance for the graph.
+  - [x] Keep branch color semantic: current branch blue, current branch head lighter blue, other-branch nodes lighter yellow, other-branch heads darker yellow.
+  - [x] Keep node details in a pop-up with the checkout action at the bottom; branch/revert controls are not exposed inline on the node.
   - [x] Preserve pan/scroll and expand/minimize.
 - [x] Ensure the tree renders from live `LocalProjectState.versions`, never stale props (design rule in `docs/architecture/daw-realtime-sync.md`).
 - [x] Tests: column assignment for a chain, a fork (two branch children), and a merge (merge child) matches expected columns; layout is deterministic.

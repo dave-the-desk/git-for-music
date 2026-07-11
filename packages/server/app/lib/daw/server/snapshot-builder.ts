@@ -45,6 +45,7 @@ export interface DemoDawSnapshotVersion {
   id: string;
   label: string;
   description: string | null;
+  createdByName?: string | null;
   tempoBpm: number | null;
   timeSignatureNum: number;
   timeSignatureDen: number;
@@ -70,6 +71,7 @@ export interface DemoDawSnapshotData {
     };
   };
   versions: DemoDawSnapshotVersion[];
+  userDisplayNamesById?: Record<string, string | null>;
   comments: DemoDawSnapshotComment[];
   annotations: DemoDawSnapshotAnnotation[];
   operationHistory: DemoDawSnapshotOperationHistoryItem[];
@@ -676,6 +678,7 @@ function serializeDemoSourceData(demo: DemoSourceData): DemoDawSnapshotData {
       },
     },
     versions: demo.versions.map((version) => serializeVersion(version)),
+    userDisplayNamesById: {},
     comments: demo.comments,
     annotations: demo.annotations,
     operationHistory: [],
@@ -697,6 +700,78 @@ function normalizeSnapshotTrackAudioUrls(snapshot: DemoDawSnapshotData) {
 function ensureOperationHistory(snapshot: DemoDawSnapshotData) {
   snapshot.operationHistory ??= [];
   return snapshot.operationHistory;
+}
+
+async function hydrateOperationActorNames(
+  client: DemoDawDatabaseClient,
+  snapshot: DemoDawSnapshotData,
+) {
+  const actorUserIds = Array.from(
+    new Set(
+      snapshot.operationHistory
+        .map((entry) => entry.actorUserId.trim())
+        .filter((actorUserId) => actorUserId.length > 0),
+    ),
+  );
+
+  if (actorUserIds.length === 0) {
+    snapshot.userDisplayNamesById = { ...(snapshot.userDisplayNamesById ?? {}) };
+    return snapshot;
+  }
+
+  const users = await client.user.findMany({
+    where: {
+      id: {
+        in: actorUserIds,
+      },
+    },
+    select: {
+      id: true,
+      name: true,
+    },
+  });
+
+  const userDisplayNamesById = {
+    ...(snapshot.userDisplayNamesById ?? {}),
+    ...Object.fromEntries(
+      users.map((user) => [
+        user.id,
+        user.name?.trim().length ? user.name.trim() : null,
+      ]),
+    ),
+  };
+
+  snapshot.userDisplayNamesById = userDisplayNamesById;
+  return snapshot;
+}
+
+function hydrateVersionCreatorNames(snapshot: DemoDawSnapshotData) {
+  const userDisplayNamesById = snapshot.userDisplayNamesById ?? {};
+  const historyByVersionId = new Map<string, string>();
+
+  for (const historyItem of [...snapshot.operationHistory].reverse()) {
+    if (!historyItem.versionId) continue;
+    if (historyByVersionId.has(historyItem.versionId)) continue;
+    if (
+      historyItem.operationType === 'VERSION_CREATED' ||
+      historyItem.operationType === 'VERSION_BRANCH_CREATED' ||
+      historyItem.operationType === 'VERSION_REVERTED_FROM' ||
+      historyItem.operationType === 'TRACK_VERSION_CREATED'
+    ) {
+      historyByVersionId.set(historyItem.versionId, historyItem.actorUserId);
+    }
+  }
+
+  snapshot.versions = snapshot.versions.map((version) => {
+    const creatorId = version.createdBy?.trim() || historyByVersionId.get(version.id)?.trim() || '';
+    const creatorName = creatorId ? userDisplayNamesById[creatorId]?.trim() ?? '' : '';
+    return {
+      ...version,
+      createdByName: creatorName || (version.createdByName ?? null),
+    };
+  });
+
+  return snapshot;
 }
 
 function upsertOperationHistory(
@@ -2336,6 +2411,8 @@ export async function loadSnapshotStateForDemo(
       }
       ensureOperationHistory(result);
       reconcileCurrentVersion(result);
+      await hydrateOperationActorNames(client, result);
+      hydrateVersionCreatorNames(result);
       return result;
     }
 
@@ -2358,6 +2435,8 @@ export async function loadSnapshotStateForDemo(
     }
 
     reconcileCurrentVersion(result);
+    await hydrateOperationActorNames(client, result);
+    hydrateVersionCreatorNames(result);
     normalizeSnapshotTrackAudioUrls(result);
     return result;
   }
@@ -2371,6 +2450,8 @@ export async function loadSnapshotStateForDemo(
       applyDemoOperation(result, operation);
     }
     reconcileCurrentVersion(result);
+    await hydrateOperationActorNames(client, result);
+    hydrateVersionCreatorNames(result);
     normalizeSnapshotTrackAudioUrls(result);
     return result;
   }
@@ -2391,6 +2472,8 @@ export async function loadSnapshotStateForDemo(
   }
 
   reconcileCurrentVersion(result);
+  await hydrateOperationActorNames(client, result);
+  hydrateVersionCreatorNames(result);
   normalizeSnapshotTrackAudioUrls(result);
 
   return result;

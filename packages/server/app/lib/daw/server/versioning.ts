@@ -305,6 +305,7 @@ export async function createDemoVersionWithCopiedTracks(
     operationSeq,
     sourceVersionId,
     copyTracks = true,
+    createdByName = null,
     loadSourceSnapshotState = loadSourceVersionSnapshotState,
   }: {
     demoId: string;
@@ -315,6 +316,7 @@ export async function createDemoVersionWithCopiedTracks(
     operationSeq?: number | null;
     sourceVersionId?: string | null;
     copyTracks?: boolean;
+    createdByName?: string | null;
     loadSourceSnapshotState?: (
       tx: Prisma.TransactionClient,
       demoId: string,
@@ -375,6 +377,7 @@ export async function createDemoVersionWithCopiedTracks(
     );
     return {
       ...version,
+      createdByName,
       cloneMap,
       tracks: hydratedTracks,
     };
@@ -382,6 +385,7 @@ export async function createDemoVersionWithCopiedTracks(
 
   return {
     ...version,
+    createdByName,
     cloneMap: {
       trackVersionIdMap: new Map<string, string>(),
       segmentIdMap: new Map<string, string>(),
@@ -422,6 +426,7 @@ export function serializeCreatedDemoVersionTreeNode(input: {
   id: string;
   label: string;
   description?: string | null;
+  createdByName?: string | null;
   parentId?: string | null;
   createdAt: string | Date;
   branchMode?: 'continue' | 'fork';
@@ -441,6 +446,7 @@ export function serializeCreatedDemoVersionTreeNode(input: {
     id: input.id,
     label: input.label,
     description: input.description ?? null,
+    createdByName: input.createdByName ?? null,
     parentId: input.parentId ?? null,
     kind: input.kind ?? 'EXPLICIT',
     createdAt:
@@ -457,6 +463,26 @@ export function serializeCreatedDemoVersionTreeNode(input: {
     isMerge: input.isMerge ?? false,
     tracks: input.tracks ?? [],
   };
+}
+
+export async function loadUserDisplayName(
+  tx: Prisma.TransactionClient,
+  userId: string,
+) {
+  if (!('user' in tx) || typeof tx.user?.findFirst !== 'function') {
+    return null;
+  }
+
+  const user = await tx.user.findFirst({
+    where: {
+      id: userId,
+    },
+    select: {
+      name: true,
+    },
+  });
+
+  return user?.name?.trim().length ? user.name.trim() : null;
 }
 
 export function serializeCreatedDemoTrackVersionTreeTrack(input: {

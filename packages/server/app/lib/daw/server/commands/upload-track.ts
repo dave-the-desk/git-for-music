@@ -18,6 +18,7 @@ import {
 } from '@/app/lib/daw/server/realtime-gateway';
 import {
   createDemoVersionWithCopiedTracks,
+  loadUserDisplayName,
   serializeCreatedDemoTrackVersionTreeTrack,
   serializeCreatedDemoVersionTreeNode,
 } from '@/app/lib/daw/server/versioning';
@@ -193,6 +194,7 @@ export async function uploadTrackCommand(input: {
     | null = null;
 
   const createdTrackVersion = await prisma.$transaction(async (tx) => {
+    const createdByName = await loadUserDisplayName(tx, input.userId);
     let effectiveTargetVersionId = currentVersionId;
     const branchMode =
       sourceVersion.id === activeVersionState.activeVersionId ? 'continue' : 'fork';
@@ -205,6 +207,7 @@ export async function uploadTrackCommand(input: {
       kind: 'BRANCH',
       label: branchLabel,
       description: branchDescription,
+      createdByName,
     });
 
     await setDemoUserActiveVersion(tx, {
@@ -341,6 +344,7 @@ export async function uploadTrackCommand(input: {
             id: branchVersion.id,
             label: branchVersion.label,
             description: branchVersion.description,
+            createdByName: branchVersion.createdByName,
             parentId: branchVersion.parentId,
             createdAt: branchVersion.createdAt,
             branchMode,
@@ -397,6 +401,7 @@ export async function uploadTrackCommand(input: {
             id: branchVersion.id,
             label: branchVersion.label,
             description: branchVersion.description,
+            createdByName: branchVersion.createdByName,
             parentId: branchVersion.parentId,
             createdAt: branchVersion.createdAt,
             branchMode,

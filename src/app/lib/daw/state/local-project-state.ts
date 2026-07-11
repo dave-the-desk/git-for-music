@@ -59,6 +59,7 @@ export type DawVersion = {
   branchName?: string | null;
   operationSummary?: string | null;
   createdBy?: string | null;
+  createdByName?: string | null;
   description: string | null;
   parentId: string | null;
   parentVersionId?: string | null;
@@ -101,6 +102,7 @@ export type LocalProjectState = {
   versionTreeUpdatedAt?: string | null;
   lastVersionOperationSeq?: number;
   lastSeenOperationSeq?: number;
+  userDisplayNamesById?: Record<string, string | null>;
   comments: DemoComment[];
   annotations: DemoAnnotation[];
   tempoMetadataByTrackVersionId: Record<string, TempoMetadataEntry>;

@@ -54,7 +54,7 @@ export function TimelineRuler({ totalDurationMs, currentTimeMs, onSeek, timing }
     onSeek(Math.max(0, seekMs));
   }
 
-  const playheadLeft = (currentTimeMs / 1000) * PX_PER_SECOND;
+  const playheadLeft = Math.round((currentTimeMs / 1000) * PX_PER_SECOND);
 
   return (
     <div className="relative select-none" style={{ width: totalWidth, height: 28 }} onClick={handleClick}>

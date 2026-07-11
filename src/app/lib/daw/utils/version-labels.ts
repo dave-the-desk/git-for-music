@@ -47,6 +47,68 @@ export function buildVersionsById<T extends VersionLike>(versions: T[]) {
   return new Map<string, T>(versions.map((version) => [version.id, version]));
 }
 
+function compareVersionDisplayOrder(left: VersionLike, right: VersionLike) {
+  const leftCreatedAt = Date.parse((left as { createdAt?: string }).createdAt ?? '');
+  const rightCreatedAt = Date.parse((right as { createdAt?: string }).createdAt ?? '');
+  if (Number.isFinite(leftCreatedAt) && Number.isFinite(rightCreatedAt) && leftCreatedAt !== rightCreatedAt) {
+    return leftCreatedAt - rightCreatedAt;
+  }
+
+  const leftOperationSeq = (left as { operationSeq?: number | null }).operationSeq ?? 0;
+  const rightOperationSeq = (right as { operationSeq?: number | null }).operationSeq ?? 0;
+  if (leftOperationSeq !== rightOperationSeq) {
+    return leftOperationSeq - rightOperationSeq;
+  }
+
+  return left.id.localeCompare(right.id);
+}
+
+function getAncestorPath<T extends VersionLike>(version: T, versionsById: Map<string, T>) {
+  const path: T[] = [];
+  const seen = new Set<string>();
+  let current: T | null | undefined = version;
+
+  while (current && !seen.has(current.id)) {
+    seen.add(current.id);
+    path.push(current);
+    current = current.parentId ? versionsById.get(current.parentId) ?? null : null;
+  }
+
+  return path.reverse();
+}
+
+function getPrimaryChildren<T extends VersionLike>(versionId: string, versionsById: Map<string, T>) {
+  return Array.from(versionsById.values())
+    .filter((candidate) => candidate.parentId === versionId)
+    .sort(compareVersionDisplayOrder);
+}
+
+export function getVersionBranchSource<T extends VersionLike>(version: T, versionsById: Map<string, T>) {
+  const path = getAncestorPath(version, versionsById);
+  if (path.length <= 1) {
+    return path[0] ?? version;
+  }
+
+  for (let index = 0; index < path.length - 1; index += 1) {
+    const parent = path[index];
+    const children = getPrimaryChildren(parent.id, versionsById);
+    if (children.length > 1) {
+      const branchSource = path[index + 1] ?? path[1] ?? path[0] ?? version;
+      return branchSource;
+    }
+  }
+
+  return path[1] ?? path[0] ?? version;
+}
+
+export function getVersionBranchDisplayLabel<T extends VersionLike>(
+  version: T,
+  versionsById: Map<string, T>,
+  demoName = 'Demo',
+) {
+  return getVersionDisplayLabel(getVersionBranchSource(version, versionsById), versionsById, demoName);
+}
+
 function hasAddedTrackLabel(label: string) {
   return label.startsWith('Added:') || label.startsWith('Upload:');
 }
@@ -54,7 +116,12 @@ function hasAddedTrackLabel(label: string) {
 export function getVersionDisplayLabel<T extends VersionLike>(
   version: T,
   versionsById: Map<string, T>,
+  demoName = 'Demo',
 ) {
+  if (!version.parentId) {
+    return `${demoName.trim() || 'Demo'} created`;
+  }
+
   const storedLabel = version.label.trim();
   if (!storedLabel) {
     return `Version ${version.id.slice(0, 7)}`;
@@ -203,9 +270,10 @@ export function getHistoryOperationBadgeLabel(operationType: string) {
 export function getVersionOperationSummary<T extends VersionLike>(
   version: T,
   versionsById: Map<string, T>,
+  demoName = 'Demo',
 ) {
   const parent = version.parentId ? versionsById.get(version.parentId) : null;
-  if (!parent) return 'Initial version';
+  if (!parent) return `${demoName.trim() || 'Demo'} created`;
 
   const parentTracks = trackMap(parent);
   const addedTracks = version.tracks.filter((track) => !parentTracks.has(track.trackId));

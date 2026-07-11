@@ -34,7 +34,8 @@ Deliver a system where:
   the `main` branch.
 - The **Tree** tab renders the version DAG (versions + branches + merges) as a
   commit-graph, using the row/column layout approach from the DoltHub commit
-  graph write-up.
+  graph write-up, with forks centered around their parent node and the graph
+  centered in the available rail when there is spare space.
 
 ## 2. Source Inputs
 
@@ -89,7 +90,10 @@ Key algorithm points to reuse for the Tree tab:
 - Sort nodes in topological order; the node index becomes its **row** (y).
 - Assign **column** (x) by walking from head to root (children before parents):
   - No children (branch head): place in a new column.
-  - Has branch children: place in the leftmost branch child's column.
+  - Has multiple branch children: center the parent between those branch
+    children so the fork stays balanced.
+  - Has a single branch child: keep that column so linear history stays
+    vertical.
   - No branch children but merge children: search from the leftmost child's
     column rightward for a free column so merge paths point right-to-left.
 - Render dots as SVG circles and paths as SVG lines/paths, one color per branch.
@@ -171,8 +175,8 @@ Revert stays non-destructive (see
   `isFollowingHead` follows it, a user pinned to a specific version does not get
   yanked.
 
-The Tree tab already exposes a per-version history lane and can trigger
-"rewind to operation" and branch-from-point; revert should reuse that surface.
+The Tree tab keeps node details in a pop-up; use that surface for the checkout
+action and any other version metadata.
 
 ## 6. Branches Concurrent With `main`
 
@@ -207,10 +211,10 @@ Mostly additive over today's model.
 
 ## 8. Tree Tab Visualization Plan
 
-The current Tree tab (`VersionHistoryTree.tsx` + `version-tree-layout.ts`) lays
-versions **left-to-right by depth** and drops branches to lower rows. To match a
-real commit graph and scale to many branches, adopt the DoltHub row/column
-model.
+The current Tree tab (`VersionHistoryTree.tsx` + `version-tree-layout.ts`) uses
+the DoltHub row/column model and should keep forks centered around their parent
+while the overall graph stays centered in the available rail when there is
+spare space.
 
 ### 8.1 Layout algorithm (adapt DoltHub)
 
@@ -222,23 +226,38 @@ model.
    bottom is a display choice; pick one and keep it stable.
 3. **Columns via head->root pass:**
    - Branch head (no children): new column.
-   - Has branch children: take the leftmost branch child's column.
+   - Has multiple branch children: center the parent between those branch
+     children so the fork reads symmetrically.
+   - Has a single branch child: keep that column so straight history stays
+     vertical.
    - Only merge children: search rightward from the leftmost child's column for
      the first free column so merge edges point right-to-left.
 4. **Color per branch/column** so `main` and each branch are visually distinct;
    reuse the existing head/active/selected accent colors for state, and add a
    stable per-branch base color.
 
+Current implementation note:
+
+- The tree now keeps sibling branches in parallel columns when that reduces
+  width, while still centering each parent above the full span of its children.
+- The visual palette is semantic rather than column-based:
+  - the user’s current branch is blue
+  - the current branch head / current checkout node is a lighter blue
+  - nodes on other branches are a lighter yellow
+  - heads of other branches are a darker yellow
+- The zoom controls live in the rail header and scale only the graph viewport.
+- The node selection outline is secondary; it should not replace the branch
+  color meaning unless the design explicitly changes.
+
 ### 8.2 Rendering
 
 - Keep the current SVG approach: `<circle>`/node cards for versions, `<line>`/
   `<path>` for parent->child edges (the file already draws edges from a
   `nodeById` map).
-- Keep the existing badges: **branch head**, **my active version**, **selected
-  node**, **following head / pinned checkout**.
-- Keep the per-version history lane (recent operations for the selected node) and
-  the branch-from-point / rewind actions; these give the git-like revert and
-  branch affordances directly on the graph.
+- Keep the current badges aligned to the semantic palette: **current branch
+  head**, **current branch**, **other branch nodes**, **other branch heads**.
+- Keep node details in a pop-up with the checkout action at the bottom; the
+  node itself stays visually simple with only its title and user.
 - Preserve pan/scroll for wide graphs and the expand/minimize toggle.
 
 ### 8.3 Live updates
@@ -247,6 +266,8 @@ model.
   (design rule in [daw realtime sync model](../../architecture/daw-realtime-sync.md)).
 - On `version_created` / `branch_created` / `head_moved` / `reverted`, the tree
   recomputes layout and animates the new node in.
+- The version-history graph should continue to use this centered commit-graph
+  layout and semantic palette unless a future change explicitly replaces it.
 
 ## 9. Update To The Processing-Jobs Plan
 

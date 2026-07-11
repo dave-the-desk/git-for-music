@@ -85,6 +85,7 @@ Re-map the ideal's browser · canvas · inspector frame onto existing pieces. Th
 - **Body + collapsible rails** gives the spatial stability the ideal calls for (§3.1, §2.10) and matches Apple HIG's *depth*/consistency foundations (§11.2).
 - Every existing feature keeps a home: tabs (`upload/plugins/members`) migrate into the **left browser**; comments become a **context inspector panel** and keep their timeline markers; timing/transport/metronome consolidate into the **top bar**; the version tree remains a first-class rail.
 - **The tree is promoted, not moved out of reach** — it graduates from a tab to a dockable, collapsible rail rendered as a **commit-graph** (row/column DAG) per [realtime-versioning-and-tree.md](../60_BRANCHES/daw-realtime-collab/realtime-versioning-and-tree.md); it can also expand full-screen. Full visual spec in §10.
+- Clicking a node opens a version-details pop-up; the checkout action lives in that pop-up rather than as an inline node control.
 
 ## 5. Phased implementation plan
 
@@ -164,18 +165,18 @@ The version tree is git-for-music's differentiator, so the plan promotes it from
 
 ### 10.2 Commit-graph layout (adapt DoltHub row/column model)
 
-Replaces the current left-to-right-by-depth layout in `version-tree-layout.ts`:
+Keeps the centered commit-graph layout in `version-tree-layout.ts`:
 
 - **Build relations** — from `versions[]` build a `childrenMap` keyed by `parentId`; keep multi-parent support so merges render later.
 - **Rows = topological order** — sort by (`createdAt`, `operationSeq`, `id`) as `compareVersions` does; row index = y. Pick newest-at-top or -bottom and keep it stable.
-- **Columns via a head→root pass** — branch head (no children) → new column; has branch children → take the leftmost branch child's column; only merge children → search rightward from the leftmost child's column for the first free column so merge edges point right-to-left.
-- **Color per branch/column** — a stable per-branch base color distinguishes `main` and each branch; state accents (head / my-active / selected) sit on top.
+- **Columns via a head→root pass** — branch head (no children) → new column; multiple branch children → center the parent between those branch children; a single branch child → keep that column; only merge children → search rightward from the leftmost child's column for the first free column so merge edges point right-to-left.
+- **Color per branch/column** — keep the current semantic palette as the baseline: current branch blue, current branch head lighter blue, other-branch nodes lighter yellow, other-branch heads darker yellow. Selection is secondary and should not replace branch meaning.
 
 ### 10.3 Rendering & affordances (all preserved, promoted)
 
 - Keep the SVG approach: `<circle>`/node cards for versions, `<line>`/`<path>` for parent→child edges (already driven by a `nodeById` map).
-- Keep the badges: **branch head**, **my active version**, **selected node**, **following-head vs pinned checkout**.
-- Keep the per-version history lane (recent operations for the selected node) and the **branch-from-point / rewind** actions; revert reuses this surface and appears as a new node while older nodes stay visible.
+- Keep the badges aligned to the current semantic palette: **current branch head**, **current branch**, **other branch nodes**, **other branch heads**.
+- Keep node details in a pop-up with the checkout action at the bottom; the node itself stays visually simple with only its title and user.
 - Preserve **pan/scroll** for wide graphs and the **expand/minimize** toggle; in the new layout the rail can also expand full-screen.
 
 ### 10.4 Live updates

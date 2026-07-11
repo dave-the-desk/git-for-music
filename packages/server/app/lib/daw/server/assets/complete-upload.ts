@@ -22,6 +22,7 @@ import {
 } from '@/app/lib/daw/server/realtime-gateway';
 import {
   createDemoVersionWithCopiedTracks,
+  loadUserDisplayName,
   serializeCreatedDemoTrackVersionTreeTrack,
   serializeCreatedDemoVersionTreeNode,
 } from '@/app/lib/daw/server/versioning';
@@ -121,6 +122,7 @@ export async function completeUploadedOriginalAsset(input: {
   let trackVersionCreatedOperation: DemoDawOperationInsertResult | null = null;
 
   const createdTrackVersion = await prisma.$transaction(async (tx) => {
+    const createdByName = await loadUserDisplayName(tx, input.userId);
     let effectiveTargetVersionId = targetVersionId;
 
     const branchMode =
@@ -135,6 +137,7 @@ export async function completeUploadedOriginalAsset(input: {
       kind: 'BRANCH',
       label: branchLabel,
       description: branchDescription,
+      createdByName,
     });
 
     await setDemoUserActiveVersion(tx, {
@@ -166,6 +169,7 @@ export async function completeUploadedOriginalAsset(input: {
             id: branchVersion.id,
             label: branchVersion.label,
             description: branchVersion.description,
+            createdByName: branchVersion.createdByName,
             parentId: branchVersion.parentId,
             createdAt: branchVersion.createdAt,
             branchMode,
@@ -425,6 +429,7 @@ export async function completeUploadedOriginalAsset(input: {
             id: branchVersion.id,
             label: branchVersion.label,
             description: branchVersion.description,
+            createdByName: branchVersion.createdByName,
             parentId: branchVersion.parentId,
             createdAt: branchVersion.createdAt,
             branchMode,

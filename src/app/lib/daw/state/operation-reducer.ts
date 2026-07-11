@@ -229,6 +229,7 @@ type VersionTreeNodeLike = {
   parentVersionId?: string | null;
   createdAt?: string;
   createdBy?: string | null;
+  createdByName?: string | null;
   kind?: DawVersion['kind'];
   operationSeq?: number;
   isCurrent?: boolean;
@@ -258,6 +259,7 @@ function normalizeVersionNode(
     branchName: node.branchName ?? label,
     operationSummary: node.operationSummary ?? node.description ?? existing?.operationSummary ?? existing?.description ?? null,
     createdBy: node.createdBy ?? existing?.createdBy ?? null,
+    createdByName: node.createdByName ?? existing?.createdByName ?? null,
     description: node.description ?? existing?.description ?? null,
     parentId: parentVersionId,
     parentVersionId,
@@ -790,6 +792,7 @@ export function createLocalProjectStateFromBootstrap(
         currentVersionId?: string;
         activeVersionId?: string;
         isFollowingHead?: boolean;
+        userDisplayNamesById?: Record<string, string | null>;
         comments?: DemoComment[];
         annotations?: DemoAnnotation[];
         tempoMetadataByTrackVersionId?: Record<string, { recordedTempoBpm?: number | null; sourceTempoBpm?: number | null }>;
@@ -846,6 +849,7 @@ export function createLocalProjectStateFromBootstrap(
     versionTreeUpdatedAt: bootstrap?.latestSnapshot?.createdAt ?? null,
     lastVersionOperationSeq: bootstrap?.latestSnapshot?.operationSeq ?? 0,
     lastSeenOperationSeq: bootstrap?.latestSnapshot?.operationSeq ?? 0,
+    userDisplayNamesById: { ...(snapshot?.userDisplayNamesById ?? {}) },
     comments: normalizeComments(snapshot?.comments),
     annotations: normalizeAnnotations(snapshot?.annotations),
     tempoMetadataByTrackVersionId,
@@ -1250,6 +1254,11 @@ export function applyAcceptedProjectOperation(
           parentId: version?.parentId ?? payload.parentId ?? payload.parentVersionId ?? null,
           createdAt: version?.createdAt ?? payload.createdAt,
           createdBy: version?.createdBy ?? payload.createdBy ?? null,
+          createdByName:
+            version?.createdByName ??
+            state.userDisplayNamesById?.[version?.createdBy ?? payload.createdBy ?? ''] ??
+            state.userDisplayNamesById?.[payload.createdBy ?? ''] ??
+            null,
           operationSeq: operation.operationSeq,
           isCurrent: version?.isCurrent,
           tempoBpm: version?.tempoBpm,

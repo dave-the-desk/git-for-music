@@ -33,7 +33,7 @@ is genuinely connected, remote changes flow correctly:
 - Engine state changes emit to the React subscription, so the UI re-renders
   (`@/Users/davidriede/PROJECTS/git-for-music/src/app/pages/groups/demo/components/daw/DemoDawClient.tsx:484-488`).
 - Follow-head display selection updates `selectedVersionId` when the active
-  version moves
+  version moves, so the tree stays focused on the live branch head
   (`@/Users/davidriede/PROJECTS/git-for-music/src/app/pages/groups/demo/components/daw/DemoDawClient.tsx:1545-1558`).
 
 So the problem is **not** the reducer, the version tree, or the render layer.
