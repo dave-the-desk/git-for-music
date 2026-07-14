@@ -697,6 +697,37 @@ function normalizeSnapshotTrackAudioUrls(snapshot: DemoDawSnapshotData) {
   }
 }
 
+async function hydrateEmptySnapshotVersionTracks(
+  client: DemoDawDatabaseClient,
+  scope: DemoScope,
+  snapshot: DemoDawSnapshotData,
+) {
+  if (
+    !snapshot.versions.some((version) => version.tracks.length === 0) ||
+    typeof client.demo?.findFirst !== 'function'
+  ) {
+    return snapshot;
+  }
+
+  // Older checkpoints can contain the version node without the immutable track rows.
+  // Rehydrate only versions already present in the checkpoint; do not add future nodes.
+  const source = await loadDemoSourceData(client, scope);
+  const sourceVersionsById = new Map(source.versions.map((version) => [version.id, version]));
+
+  for (const version of snapshot.versions) {
+    if (version.tracks.length > 0) continue;
+
+    const sourceVersion = sourceVersionsById.get(version.id);
+    if (!sourceVersion || sourceVersion.trackVersions.length === 0) continue;
+
+    version.tracks = sourceVersion.trackVersions
+      .map((trackVersion) => serializeTrackVersion(trackVersion))
+      .sort((left, right) => left.trackPosition - right.trackPosition);
+  }
+
+  return snapshot;
+}
+
 function ensureOperationHistory(snapshot: DemoDawSnapshotData) {
   snapshot.operationHistory ??= [];
   return snapshot.operationHistory;
@@ -2471,6 +2502,7 @@ export async function loadSnapshotStateForDemo(
     applyDemoOperation(result, operation);
   }
 
+  await hydrateEmptySnapshotVersionTracks(client, scope, result);
   reconcileCurrentVersion(result);
   await hydrateOperationActorNames(client, result);
   hydrateVersionCreatorNames(result);

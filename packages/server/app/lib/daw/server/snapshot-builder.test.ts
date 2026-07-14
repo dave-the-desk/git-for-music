@@ -163,6 +163,113 @@ test('loadSnapshotStateForDemo materializes TRACK_VERSION_CREATED into a normal 
   assert.equal(snapshot.operationHistory[0]?.summary, 'Created track version for Recorded track');
 });
 
+test('loadSnapshotStateForDemo hydrates tracks omitted from a persisted version snapshot', async () => {
+  const latestSnapshot = {
+    id: 'snapshot-1',
+    projectId: 'project-1',
+    demoId: 'demo-1',
+    operationSeq: 1,
+    snapshot: {
+      id: 'demo-1',
+      name: 'Demo',
+      description: null,
+      currentVersionId: 'version-root',
+      project: {
+        id: 'project-1',
+        slug: 'project-1',
+        group: {
+          id: 'group-1',
+          slug: 'group',
+        },
+      },
+      versions: [
+        {
+          id: 'version-root',
+          label: 'Root',
+          description: null,
+          tempoBpm: 120,
+          timeSignatureNum: 4,
+          timeSignatureDen: 4,
+          musicalKey: null,
+          tempoSource: 'MANUAL',
+          keySource: 'MANUAL',
+          parentId: null,
+          createdAt: '2025-01-01T00:00:00.000Z',
+          tracks: [],
+        },
+      ],
+      comments: [],
+      annotations: [],
+    },
+    createdById: 'user-a',
+    createdAt: '2025-01-01T00:00:00.000Z',
+  };
+
+  const snapshot = await loadSnapshotStateForDemo(
+    {
+      ...makeClient(latestSnapshot, []),
+      demo: {
+        findFirst: async () => ({
+          id: 'demo-1',
+          name: 'Demo',
+          description: null,
+          currentVersionId: 'version-root',
+          project: {
+            id: 'project-1',
+            slug: 'project-1',
+            group: {
+              id: 'group-1',
+              slug: 'group',
+            },
+          },
+          versions: [
+            {
+              id: 'version-root',
+              label: 'Root',
+              description: null,
+              tempoBpm: 120,
+              timeSignatureNum: 4,
+              timeSignatureDen: 4,
+              musicalKey: null,
+              tempoSource: 'MANUAL',
+              keySource: 'MANUAL',
+              parentId: null,
+              createdAt: new Date('2025-01-01T00:00:00.000Z'),
+              trackVersions: [
+                {
+                  id: 'track-version-1',
+                  storageKey: '/tracks/track-version-1.wav',
+                  mimeType: 'audio/wav',
+                  durationMs: 2000,
+                  startOffsetMs: 0,
+                  createdAt: new Date('2025-01-01T00:00:00.000Z'),
+                  isDerived: false,
+                  operationType: 'ORIGINAL',
+                  parentTrackVersionId: null,
+                  track: {
+                    id: 'track-1',
+                    name: 'Track 1',
+                    position: 0,
+                  },
+                  segments: [],
+                },
+              ],
+            },
+          ],
+        }),
+      },
+    } as never,
+    {
+      projectId: 'project-1',
+      demoId: 'demo-1',
+    },
+  );
+
+  assert.equal(snapshot.versions[0]?.tracks[0]?.trackVersionId, 'track-version-1');
+  assert.equal(snapshot.versions[0]?.tracks[0]?.trackId, 'track-1');
+  assert.equal(snapshot.versions[0]?.tracks[0]?.storageKey, '/api/daw/track-versions/track-version-1/audio');
+});
+
 test('loadSnapshotStateForDemo keeps the original creator on the initial version node', async () => {
   const latestSnapshot = {
     id: 'snapshot-1',
