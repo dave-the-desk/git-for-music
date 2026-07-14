@@ -37,11 +37,13 @@ test('getConfig parses development defaults and feature flags', () => {
     'FEATURE_PLUGINS',
   ];
   const snapshot = snapshotEnv(keys);
+  const originalAppUrl = process.env.NEXT_PUBLIC_APP_URL;
 
   try {
     const tempDir = mkdtempSync(path.join(os.tmpdir(), 'gfm-config-test-'));
     const originalCwd = process.cwd();
     process.env.NODE_ENV = 'development';
+    delete process.env.NEXT_PUBLIC_APP_URL;
     delete process.env.DATABASE_URL;
     delete process.env.REDIS_URL;
     delete process.env.OBJECT_STORAGE_BUCKET_NAME;
@@ -77,6 +79,11 @@ test('getConfig parses development defaults and feature flags', () => {
     }
   } finally {
     restoreEnv(snapshot);
+    if (originalAppUrl === undefined) {
+      delete process.env.NEXT_PUBLIC_APP_URL;
+    } else {
+      process.env.NEXT_PUBLIC_APP_URL = originalAppUrl;
+    }
     resetConfigForTests();
   }
 });
