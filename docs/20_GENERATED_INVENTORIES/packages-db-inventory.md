@@ -1,14 +1,12 @@
 # `packages/db` Inventory
 
-Generated from `rg --files packages/db | sort`.
+Generated from the current workspace with POSIX `find`, excluding dependency,
+build, and TypeScript incremental-output directories.
 
 ```text
 packages/db/package.json
 packages/db/prisma.config.ts
-packages/db/prisma/migrations/20260526182624_add_demo_user_active_version/migration.sql
-packages/db/prisma/migrations/20260704120000_add_demo_version_kind_and_operation_seq/migration.sql
-packages/db/prisma/migrations/20260704123000_add_demo_version_parent_join/migration.sql
-packages/db/prisma/migrations/20260708120000_add_plugin_library_and_grants/migration.sql
+packages/db/prisma/migrations/00000000000000_init/migration.sql
 packages/db/prisma/migrations/migration_lock.toml
 packages/db/prisma/schema.prisma
 packages/db/src/index.ts

@@ -1,57 +1,72 @@
-# Home
+# Documentation Home
 
-This is the navigation entrypoint for the documentation vault.
+This is the human and agent entrypoint for Git for Music documentation. Start
+with the shortest path that matches your goal, then confirm implementation
+details in source.
 
-## Core Context
+## Product Readers
 
-These are the first reads for product and implementation sessions:
+- [Product thesis](40_FEATURES/product-thesis.md) explains what the product is.
+- [Using the app](guides/using-the-app.md) covers the current user journey.
+- [Product feel](40_FEATURES/product-feel.md) and
+  [what good looks like](40_FEATURES/what-good-looks-like.md) describe the
+  intended experience.
+- [Versioning mental model](40_FEATURES/versioning-mental-model.md) explains the
+  core collaboration metaphor.
 
-- [[00_MAPS/git-for-music-context-index]]
-- [[01_PROTOCOLS/ai-start-here]]
-- [[40_FEATURES/product-thesis]]
-- [[01_PROTOCOLS/non-negotiable-rules]]
-- [[40_FEATURES/versioning-mental-model]]
+## Contributors and Agents
 
-## Read First
+- [Context index](00_MAPS/git-for-music-context-index.md) routes by domain.
+- [AI start here](01_PROTOCOLS/ai-start-here.md) gives the minimum context set.
+- [Non-negotiable rules](01_PROTOCOLS/non-negotiable-rules.md) defines product
+  invariants.
+- [Workspace map](00_MAPS/workspace-map.md) and
+  [generated inventories](20_GENERATED_INVENTORIES/README.md) locate source.
+- [Architecture](architecture/README.md) contains source-verified system design.
+- [Latest daily log](daily-logging/2026-07-14.md) records the most recent work.
 
-| If you need... | Read... |
+## Topic Routing
+
+| Need | Start here |
 |---|---|
-| Workspace orientation | [[00_MAPS/workspace-map]] |
-| Operating rules | [[01_PROTOCOLS/operating-protocol]] |
-| Web app context | [[10_REPOS/web-app]] |
-| Server context | [[10_REPOS/server]] |
-| Database context | [[10_REPOS/db]] |
-| Shared contracts | [[10_REPOS/shared]] |
-| UI routing | [[30_UI/ui-routing]] |
-| DAW UI layout | [[30_UI/daw-ui-layout-guide]] |
-| DAW editor context | [[40_FEATURES/daw-editor]] |
-| Realtime shell refresh | [[40_FEATURES/workspace-refresh]] |
-| Processing jobs | [[40_FEATURES/processing-jobs]] |
-| Source inventories | [[20_GENERATED_INVENTORIES/README]] |
-| Daily progress | `daily-logging/` |
+| Web app and routes | [Web app](10_REPOS/web-app.md), [UI routing](30_UI/ui-routing.md) |
+| DAW editor | [DAW editor](40_FEATURES/daw-editor.md), [DAW UI layout](30_UI/daw-ui-layout-guide.md) |
+| Realtime sync and versioning | [Realtime architecture](architecture/daw-realtime-sync.md), [session regressions](60_BRANCHES/daw-realtime-collab/session-problems-and-solutions.md), [versioning model](40_FEATURES/versioning-mental-model.md) |
+| Server | [Server package](10_REPOS/server.md) |
+| Database | [Database package](10_REPOS/db.md) |
+| Shared contracts | [Shared package](10_REPOS/shared.md) |
+| Processing jobs | [Processing-job architecture](architecture/processing-jobs.md), [feature context](40_FEATURES/processing-jobs.md) |
+| Plugins | [Plugin branch context](60_BRANCHES/plugins/README.md) |
+| Downstream private fork | [Public baseline](architecture/public-repo-baseline.md), [setup guide](guides/downstream-private-repo-setup.md) |
 
-## Authoritative Docs
+## Documentation Sections
 
-These repo-local docs are the first things to trust for implementation context:
+| Folder | Purpose | Update policy |
+|---|---|---|
+| `00_MAPS/` | Navigation and workspace orientation | Update when routes or ownership move |
+| `01_PROTOCOLS/` | Invariants, operating rules, and decisions | Update when team rules or decisions change |
+| `10_REPOS/` | Package-level context | Update when package responsibilities change |
+| `20_GENERATED_INVENTORIES/` | Generated file and symbol lookup | Regenerate after structural source changes |
+| `30_UI/` | Current UI, design references, and presentation plans | Keep current behavior distinct from proposed design |
+| `40_FEATURES/` | Product and feature-domain context | Prefer durable behavior over task tracking |
+| `50_TEMPLATES/` | Reusable documentation templates | Use as structure, not product truth |
+| `60_BRANCHES/` | Deep design and historical diagnostics for scoped work | Link from daily history when relevant |
+| `architecture/` | Source-verified technical architecture | Trust after source and repo README |
+| `guides/` | User and operator procedures | Keep aligned with visible product behavior |
+| `daily-logging/` | Chronological implementation history | Do not treat old entries as current truth |
+| `papers/` | Research sources and summaries | Use for rationale, not implementation claims |
+| `fixtures/` | Documentation samples and test assets | Not production source |
 
-- [README.md](../README.md)
-- [docs/architecture/codebase-architecture.md](architecture/codebase-architecture.md)
-- [docs/architecture/daw-realtime-sync.md](architecture/daw-realtime-sync.md)
-- [docs/processing-jobs.md](processing-jobs.md)
-- [src/app/lib/daw/README.md](../src/app/lib/daw/README.md)
+## Trust and Freshness
 
-## Workspace Shape
+Use this order when documents disagree:
 
-This repo is a monorepo with:
+1. Source code and committed schema.
+2. Root README and source-adjacent architecture documents.
+3. Durable notes under `docs/`.
+4. Branch records and daily history.
+5. Plans and research references.
 
-- `src/` for the Next.js app and route-local UI
-- `packages/db/` for Prisma schema and the shared Prisma client
-- `packages/server/` for auth, DAW domain logic, realtime, and processing
-- `packages/shared/` for shared contracts, helpers, and payload shapes
-- `docs/` for the context vault and repo-local architecture notes
-
-## When In Doubt
-
-1. Open the matching repo note.
-2. Open the generated inventory for the package or subtree.
-3. Confirm behavior in source before editing anything.
+Generated inventories locate files quickly but do not prove behavior. Open the
+referenced source before making an implementation decision. Historical notes
+retain past filenames and decisions only when the historical context matters.

@@ -104,7 +104,7 @@ The left rail has two stacked responsibilities. In **Arrange** and **Mix** it sh
 
 ### Session Planning view
 
-- Center lists equipment requirements, missing gear, and recording-prep checklists.
+- Center lists equipment requirements, missing gear, and recording preparation notes.
 
 ## Right Panel — Collaboration + Version
 

@@ -4,7 +4,7 @@ This note points to the current job model and the server-side job plumbing.
 
 ## Read First
 
-- [docs/processing-jobs.md](../processing-jobs.md)
+- [processing-jobs architecture](../architecture/processing-jobs.md)
 - [packages/server/app/lib/processing/index.ts](../../packages/server/app/lib/processing/index.ts)
 - [packages/server/app/lib/daw/server/jobs/index.ts](../../packages/server/app/lib/daw/server/jobs/index.ts)
 - [packages/shared/src/index.ts](../../packages/shared/src/index.ts)

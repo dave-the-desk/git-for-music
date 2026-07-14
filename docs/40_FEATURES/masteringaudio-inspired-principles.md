@@ -67,5 +67,4 @@ The app should eventually support validation states:
 
 - [[40_FEATURES/audio-editing-philosophy]]
 - [[40_FEATURES/processing-job-philosophy]]
-- [docs/processing-jobs.md](../../docs/processing-jobs.md)
-
+- [processing-jobs architecture](../architecture/processing-jobs.md)

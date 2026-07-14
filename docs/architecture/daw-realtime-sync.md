@@ -3,6 +3,11 @@
 This note describes the current DAW realtime sync model as it is implemented in the repo today.
 It covers the DAW editor itself. The surrounding groups and project pages use a separate workspace refresh stream so demo lists and other shell data can refresh without a full reload.
 
+Before changing session bootstrap, reconnect, accepted-operation application,
+collaborator track creation, upload source selection, or version-tree payloads,
+read [Session Problems and Solutions](../60_BRANCHES/daw-realtime-collab/session-problems-and-solutions.md).
+It records regressions that the current sync design must continue to prevent.
+
 ## 1. Initial load
 
 - `DemoDawClient` calls `projectSyncEngine.bootstrap(...)`

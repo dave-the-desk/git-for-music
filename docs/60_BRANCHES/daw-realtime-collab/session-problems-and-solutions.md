@@ -2,6 +2,23 @@
 
 This note records the concrete failures encountered while fixing realtime DAW collaboration, along with the corrective changes that resolved them.
 
+## Maintenance Rule
+
+Agents working on realtime sessions, reconnect, accepted operations,
+collaborator updates, upload source selection, or version-tree payloads must
+update this note when they discover or resolve a related problem. Each new
+record must preserve:
+
+- the user-visible or system-visible failure
+- the source-verified root cause
+- the corrective behavior and affected source paths
+- the regression test or other verification that prevents recurrence
+- any remaining limitation when the resolution is incomplete
+
+Do not wait for a later documentation pass. Record the problem and solution in
+the same task that establishes them, and distinguish confirmed behavior from an
+unverified hypothesis.
+
 ## 1. First open did not live-update
 
 Problem:

@@ -187,7 +187,7 @@ Stable public releases are tagged from `main`. The first stable baseline for
 this repo is `v1.0.0`.
 
 If you are setting up a private downstream fork, start with
-[docs/downstream-private-repo-setup.md](docs/downstream-private-repo-setup.md)
+[docs/guides/downstream-private-repo-setup.md](docs/guides/downstream-private-repo-setup.md)
 and keep downstream-only customizations inside
 [docs/architecture/core-vs-product-boundaries.md](docs/architecture/core-vs-product-boundaries.md).
 
@@ -215,7 +215,7 @@ For implementation work, trust order is:
 
 1. Source code
 2. Repo-local architecture docs such as `docs/architecture/codebase-architecture.md`,
-   `docs/architecture/daw-realtime-sync.md`, `docs/processing-jobs.md`, and
+   `docs/architecture/daw-realtime-sync.md`, `docs/architecture/processing-jobs.md`, and
    `src/app/lib/daw/README.md`
 3. Vault notes under `docs/`
 

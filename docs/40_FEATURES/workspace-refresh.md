@@ -6,6 +6,7 @@ This note covers the non-DAW realtime lane used by the group and project shells.
 
 - [docs/architecture/codebase-architecture.md](../architecture/codebase-architecture.md)
 - [docs/architecture/daw-realtime-sync.md](../architecture/daw-realtime-sync.md)
+- [Session Problems and Solutions](../60_BRANCHES/daw-realtime-collab/session-problems-and-solutions.md) when a change also touches DAW sessions or collaborator updates
 
 ## Implementation Paths
 

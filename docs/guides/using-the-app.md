@@ -26,17 +26,19 @@ This is the shortest path through the app as it exists today.
 1. Grant the plugin to that demo from the demo-side plugin controls.
 1. Once granted, the demo can load and use the plugin.
 
-## 5. Update or remove a plugin
+## 5. Review or remove a plugin
 
 1. Return to `/account/plugins`.
 1. Use the plugin library to review what you own.
-1. From there, update or delete plugins as needed.
+1. The current account UI can delete plugins. Metadata editing is available in
+   the backend but is not exposed in this page yet.
 
 ## 6. Try the fake test plugin
 
-1. Upload [`docs/fake-wam-plugin.js`](./fake-wam-plugin.js) from this repo.
+1. Upload [`docs/fixtures/wam/fake-wam-plugin.js`](../fixtures/wam/fake-wam-plugin.js) from this repo.
 1. Grant it to a demo after it appears in your library.
-1. The module is a small delay effect, so it is easy to hear in the DAW.
+1. The `.js` module is a small gain effect. The neighboring `.mjs` fixture is a
+   delay effect.
 
 ## Notes
 

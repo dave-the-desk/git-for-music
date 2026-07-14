@@ -1,6 +1,7 @@
 # `src/app` Inventory
 
-Generated from `rg --files src/app | sort`.
+Generated from the current workspace with POSIX `find`, excluding dependency,
+build, and TypeScript incremental-output directories.
 
 ```text
 src/app/account/page.tsx
@@ -166,8 +167,8 @@ src/app/pages/api/tracks/versions/[trackVersionId]/segments/split/index.ts
 src/app/pages/api/versions/[versionId]/index.ts
 src/app/pages/api/versions/index.ts
 src/app/pages/api/versions/revert/index.ts
-src/app/pages/auth/login-page.tsx
 src/app/pages/auth/auth-pages.interaction.test.tsx
+src/app/pages/auth/login-page.tsx
 src/app/pages/auth/signup-page.tsx
 src/app/pages/groups/demo/components/daw/AddTrackButton.tsx
 src/app/pages/groups/demo/components/daw/AudioInputSelector.tsx
@@ -205,5 +206,6 @@ src/app/product/branding.test.ts
 src/app/product/branding.ts
 src/app/product/providers.test.ts
 src/app/product/providers.ts
+src/app/product/register-features.ts
 src/app/signup/page.tsx
 ```

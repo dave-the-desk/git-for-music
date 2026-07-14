@@ -27,7 +27,7 @@ Unlike a native C++ DAW that loads VST 3 / AU / AAX binaries from disk, this is 
   full project state must round-trip through snapshots and the operation tail.
 - **Heavy processing already goes server-side** as asynchronous jobs
   (`TIME_STRETCH`, `TEMPO_ANALYSIS`, etc. in
-  [`docs/processing-jobs.md`](../../processing-jobs.md)), writing derived outputs
+  [processing jobs](../../architecture/processing-jobs.md)), writing derived outputs
   as new track versions and never mutating the original.
 
 These four facts decide which plugin models are viable and how they attach.
@@ -241,7 +241,7 @@ audio to a remote endpoint, process asynchronously, and bring the result back.
 
 ### 5.1 This DAW already works this way
 
-The repo's processing-job pipeline (`docs/processing-jobs.md`) is *already* a
+The repo's [processing-job pipeline](../../architecture/processing-jobs.md) is *already* a
 HARP-shaped system:
 
 - Jobs like `TIME_STRETCH` take an input storage key, run server-side, and write a
@@ -360,5 +360,5 @@ plugin state is just another kind of diffable, broadcastable, branchable project
 data.
 
 See the companion
-[implementation checklist](./daw-plugins-implementation-checklist.md) for the
+[capability status](./daw-plugins-capability-status.md) for the
 concrete, phased build-out.

@@ -102,7 +102,7 @@ So the browser runs `import('/api/plugins/<id>/module?v=<ts>')`, which returns t
   So this is not a 404/500/network/auth failure.
 - **The fake plugin modules are valid ES modules** with no throwing top-level code — they
   only touch the AudioContext inside `createInstance`, which runs later, not at import time
-  (`docs/fake-wam-plugin.js`, `docs/fake-wam-plugin.mjs`). So module evaluation does not throw.
+  (`docs/fixtures/wam/fake-wam-plugin.js`, `docs/fixtures/wam/fake-wam-plugin.mjs`). So module evaluation does not throw.
 - **MIME is correct** (`text/javascript; charset=utf-8`), so `nosniff` and the module-script
   MIME check are satisfied — not a "wrong MIME type" import failure.
 - **There is no document-level CSP** anywhere in the app (no middleware, no `<meta>` CSP; a

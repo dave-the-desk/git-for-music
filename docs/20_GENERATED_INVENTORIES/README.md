@@ -7,6 +7,7 @@ These notes are source-derived snapshots for quick file lookup.
 - Treat these files as generated context, not as source of truth.
 - Refresh them from the workspace file tree instead of hand-editing paths.
 - Exclude build outputs and dependency directories such as `.next/` and `node_modules/`.
+- Use POSIX `find` so inventory generation does not depend on optional developer tools.
 
 ## Source Roots
 
@@ -22,4 +23,3 @@ These notes are source-derived snapshots for quick file lookup.
 - [[packages-server-inventory]]
 - [[packages-db-inventory]]
 - [[packages-shared-inventory]]
-

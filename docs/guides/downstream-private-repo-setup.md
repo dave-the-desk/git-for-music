@@ -87,7 +87,7 @@ Prefer merging from tagged releases (`vX.Y.Z`) rather than arbitrary `main` comm
 
 ## Where to put private customizations
 
-To keep upstream merges conflict-free, confine private changes to the documented extension surface (see [public-repo-architecture-plan.md](public-repo-architecture-plan.md)):
+To keep upstream merges conflict-free, confine private changes to the documented extension surface (see [public-repo-baseline.md](../architecture/public-repo-baseline.md)):
 
 - `src/app/product/` — feature registrations, provider bindings, and branding.
 - Environment configuration (`.env`) — deployment-specific values and `FEATURE_*` flags.

@@ -7,7 +7,7 @@ version saving, revert, and branches that exist concurrently with `main`) while
 moving the DAW toward real-time collaborative editing, and for visually
 representing versions and branches in the **Tree** tab of the DAW page.
 
-The implementation has now landed through phases A-E of the branch checklist:
+The implementation record shows the work that landed through phases A-E:
 version nodes carry provenance and operation ordering, accepted operations can
 auto-checkpoint the converged head, revert creates a new version node, the Tree
 tab renders a commit-graph layout from live state, and safe concurrent timeline
@@ -16,7 +16,7 @@ branching conflict.
 
 It extends, and does not replace, the existing plans:
 
-- [processing-jobs](../../processing-jobs.md)
+- [processing-jobs](../../architecture/processing-jobs.md)
 - [papers README + gap analysis](../../papers/README.md)
 - [daw realtime sync model](../../architecture/daw-realtime-sync.md)
 - [versioning mental model](../../40_FEATURES/versioning-mental-model.md)
@@ -141,7 +141,7 @@ and tune.
   do not need to replay the whole log (see `snapshot-builder`).
 - Provenance: whether it was auto, semantic, explicit, or revert.
 - Never a copy of audio; audio objects stay immutable and referenced by key
-  (see [processing-jobs](../../processing-jobs.md)).
+  (see [processing-jobs](../../architecture/processing-jobs.md)).
 
 ### 4.3 Interaction with OT
 
@@ -272,7 +272,7 @@ Current implementation note:
 
 ## 9. Update To The Processing-Jobs Plan
 
-The [processing-jobs](../../processing-jobs.md) plan stays valid and is the
+The [processing-jobs](../../architecture/processing-jobs.md) design stays valid and is the
 right home for heavy work. Clarifications for this branch:
 
 - Version checkpointing is **not** a processing job; it is durable log metadata

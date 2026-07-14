@@ -65,6 +65,5 @@ This is not just a DAW. It is a version-controlled collaborative music system.
 - [README.md](../../README.md)
 - [docs/architecture/codebase-architecture.md](../architecture/codebase-architecture.md)
 - [docs/architecture/daw-realtime-sync.md](../architecture/daw-realtime-sync.md)
-- [docs/processing-jobs.md](../processing-jobs.md)
+- [processing-jobs architecture](../architecture/processing-jobs.md)
 - [src/app/lib/daw/README.md](../../src/app/lib/daw/README.md)
-

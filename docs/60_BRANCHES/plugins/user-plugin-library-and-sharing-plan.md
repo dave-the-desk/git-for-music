@@ -7,8 +7,8 @@ WAM plugins**, a **personal plugin library**, and **per-demo sharing/grants**.
 Read first for context:
 
 - [daw-plugins-in-this-daw.md](./daw-plugins-in-this-daw.md) — how WAM inserts map onto this DAW.
-- [daw-plugins-implementation-checklist.md](./daw-plugins-implementation-checklist.md) — the already-built v1 (instances, ops, host adapter, UI).
-- This note's companion: [user-plugin-library-implementation-checklist.md](./user-plugin-library-implementation-checklist.md).
+- [daw-plugins-capability-status.md](./daw-plugins-capability-status.md) - the source-linked record of the built v1 (instances, operations, host adapter, and UI).
+- [user-plugin-library-capability-status.md](./user-plugin-library-capability-status.md) records shipped library behavior and current limitations.
 
 ---
 

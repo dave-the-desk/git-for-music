@@ -19,8 +19,16 @@ Do not treat the app as a normal CRUD app.
 The core challenge is preserving musical intent across collaboration, version history, offline changes, and async audio processing.
 For browser-style React interaction tests, prefer the lightweight Vitest harness in `src/` (`pnpm --filter @git-for-music/web test` or `pnpm test:web`) with `jsdom` and Testing Library.
 
+For any work involving realtime sessions, reconnect, accepted operations,
+collaborator track creation, upload source selection, or version-tree payloads,
+read [Session Problems and Solutions](../60_BRANCHES/daw-realtime-collab/session-problems-and-solutions.md)
+before editing. The regressions documented there are required behavior, not
+historical trivia. Add newly discovered session failures and their verified
+solutions to the same note during the task that finds or resolves them.
+
 ## Related Context
 
 - [[00_MAPS/git-for-music-context-index]]
 - [[01_PROTOCOLS/agent-implementation-guide]]
 - [[40_FEATURES/what-good-looks-like]]
+- [Session Problems and Solutions](../60_BRANCHES/daw-realtime-collab/session-problems-and-solutions.md)

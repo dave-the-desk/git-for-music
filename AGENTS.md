@@ -15,6 +15,7 @@ Workspace rules:
 - Use generated inventories for file lookup and subtree ownership, then confirm details in source.
 - Default execution loop: get context from the vault, implement the change in the repo, run the relevant Jest tests, fix failures until they pass, then refresh the vault docs.
 - Read [docs/01_PROTOCOLS/non-negotiable-rules.md](docs/01_PROTOCOLS/non-negotiable-rules.md) and [docs/01_PROTOCOLS/agent-implementation-guide.md](docs/01_PROTOCOLS/agent-implementation-guide.md) before making product or implementation changes.
+- Before changing realtime sessions, reconnect behavior, accepted-operation handling, track creation, upload source selection, or version-tree payloads, read [docs/60_BRANCHES/daw-realtime-collab/session-problems-and-solutions.md](docs/60_BRANCHES/daw-realtime-collab/session-problems-and-solutions.md) and preserve its regression coverage. When work discovers or resolves a problem in these paths, update that note with the observed failure, verified cause, corrective behavior, affected source, and regression evidence before finishing the task.
 - Update [docs/daily-logging/2026-06-28.md](docs/daily-logging/2026-06-28.md) after implementation work on this date. Create a new daily log first if the date changes.
 - If branch-specific context exists, record it in `docs/60_BRANCHES/` and link it from the daily log.
 - When code changes are made, add or update tests, run the relevant checks, refresh any affected inventories, and summarize what changed.
@@ -22,5 +23,5 @@ Workspace rules:
 Trust order:
 
 1. Source code.
-2. Repo-local docs such as [README.md](README.md), [docs/architecture/codebase-architecture.md](docs/architecture/codebase-architecture.md), [docs/architecture/daw-realtime-sync.md](docs/architecture/daw-realtime-sync.md), [docs/processing-jobs.md](docs/processing-jobs.md), and [src/app/lib/daw/README.md](src/app/lib/daw/README.md).
+2. Repo-local docs such as [README.md](README.md), [docs/architecture/codebase-architecture.md](docs/architecture/codebase-architecture.md), [docs/architecture/daw-realtime-sync.md](docs/architecture/daw-realtime-sync.md), [docs/architecture/processing-jobs.md](docs/architecture/processing-jobs.md), and [src/app/lib/daw/README.md](src/app/lib/daw/README.md).
 3. Vault notes under `docs/`.

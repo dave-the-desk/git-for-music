@@ -21,7 +21,6 @@ Audio processing should be asynchronous, traceable, and derived-output based.
 
 ## Related Context
 
-- [docs/processing-jobs.md](../../docs/processing-jobs.md)
+- [processing-jobs architecture](../architecture/processing-jobs.md)
 - [[40_FEATURES/masteringaudio-inspired-principles]]
 - [[40_FEATURES/storage-model]]
-

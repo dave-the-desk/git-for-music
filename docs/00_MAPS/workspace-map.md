@@ -20,7 +20,7 @@ This map is a high-level view of the monorepo. It is meant for fast navigation, 
 - Start with [docs/00_MAPS/git-for-music-context-index.md](git-for-music-context-index.md) and [docs/01_PROTOCOLS/ai-start-here.md](../01_PROTOCOLS/ai-start-here.md) for product and agent guardrails.
 - Start with [docs/architecture/codebase-architecture.md](../architecture/codebase-architecture.md) for system boundaries.
 - Use [docs/architecture/daw-realtime-sync.md](../architecture/daw-realtime-sync.md) for DAW sync behavior.
-- Use [docs/processing-jobs.md](../processing-jobs.md) for the current job model.
+- Use [processing-jobs architecture](../architecture/processing-jobs.md) for the current job model.
 - Use `docs/20_GENERATED_INVENTORIES/` when you need a quick file location map.
 
 ## Main Flows

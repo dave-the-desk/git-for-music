@@ -5,10 +5,12 @@ Generated from the current workspace layout.
 ## Summary
 
 - Monorepo root with a Next.js app in `src/`
-- `packages/db/`: 10 tracked files from `rg --files packages/db`
-- `packages/server/`: 53 tracked files from `rg --files packages/server`
-- `packages/shared/`: 6 tracked files from `rg --files packages/shared`
-- `src/app/`: 198 tracked files from `rg --files src/app`
+- `packages/db/`: 7 files from the filtered workspace tree
+- `packages/server/`: 61 files from the filtered workspace tree
+- `packages/shared/`: 12 files from the filtered workspace tree
+- `src/app/`: 204 files from the filtered workspace tree
+
+Counts exclude dependencies, build output, and TypeScript incremental metadata.
 
 ## Use This For
 
