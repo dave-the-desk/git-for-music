@@ -8,6 +8,7 @@
     "generate": "prisma generate",
     "db:push": "set -a; . ../../.env; set +a; prisma db push",
     "migrate": "set -a; . ../../.env; set +a; prisma migrate dev",
+    "migrate:deploy": "if [ -z \"$DATABASE_URL\" ] && [ -f ../../.env ]; then set -a; . ../../.env; set +a; fi; prisma migrate deploy",
     "studio": "set -a; . ../../.env; set +a; prisma studio",
     "lint": "pnpm --dir ../.. exec eslint --config eslint.config.mjs packages/db/src",
     "typecheck": "tsc --noEmit"

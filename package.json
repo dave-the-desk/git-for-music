@@ -26,6 +26,7 @@
     "db:generate": "pnpm --filter @git-for-music/db generate",
     "db:push": "pnpm --filter @git-for-music/db db:push",
     "db:migrate": "pnpm --filter @git-for-music/db migrate",
+    "db:migrate:deploy": "pnpm --filter @git-for-music/db migrate:deploy",
     "db:studio": "pnpm --filter @git-for-music/db studio"
   },
   "engines": {

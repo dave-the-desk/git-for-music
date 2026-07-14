@@ -200,8 +200,8 @@ jobs:
       - name: Generate Prisma client
         run: pnpm db:generate
 
-      - name: Push database schema
-        run: pnpm --filter @git-for-music/db exec prisma migrate deploy
+      - name: Apply database migrations
+        run: pnpm db:migrate:deploy
 
       - name: Wait for MinIO and create the bucket
         run: |

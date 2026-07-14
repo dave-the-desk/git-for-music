@@ -143,7 +143,7 @@ Add `.github/workflows/ci.yml` triggered on `push` to `main` and all PRs:
 | `lint` | pnpm install (with store cache) → `pnpm lint` |
 | `typecheck` | install → `pnpm db:generate` → `pnpm typecheck` |
 | `unit` | install → `pnpm db:generate` → node:test suites + Vitest interaction tests |
-| `integration` | Postgres 16 + MinIO as job services → `prisma migrate deploy` (or `db push`) → integration suite with test env vars |
+| `integration` | Postgres 16 + MinIO as job services → `prisma migrate deploy` → integration suite with test env vars |
 | `build` | install → `pnpm db:generate` → `pnpm build` (`next build`) |
 
 Details: Node 20 (`.nvmrc`), `pnpm/action-setup` pinned to `pnpm@10.x`, jobs run in parallel, all required for merge. Optionally add a branch protection note to the README rather than assuming repo settings.

@@ -35,7 +35,8 @@ corepack enable
 
 The recommended development workflow runs the infrastructure in Docker and the
 Next.js app on your host machine. In other words: the database runs with Docker,
-then you generate Prisma, push the schema, and start the app with pnpm.
+then you generate Prisma, apply the committed migrations, and start the app with
+pnpm.
 
 ```bash
 # 1. Install dependencies
@@ -48,9 +49,9 @@ cp src/.env.example src/.env.local
 # 3. Start local services: Postgres, Redis, MinIO, and MinIO bucket/CORS setup
 docker compose up -d postgres redis minio minio-init
 
-# 4. Generate Prisma client and push the schema into the Docker Postgres DB
+# 4. Generate Prisma client and apply committed migrations to the Docker Postgres DB
 pnpm db:generate
-pnpm db:push
+pnpm db:migrate:deploy
 
 # 5. Start the Next.js dev server
 pnpm dev
@@ -75,8 +76,8 @@ docker compose up --build
 ```
 
 This starts Postgres, Redis, MinIO, one-shot `minio-init`, one-shot `db-init`,
-and the production web service. The Compose stack pushes the Prisma schema into
-the local Postgres volume automatically through `db-init`.
+and the production web service. The Compose stack applies committed Prisma
+migrations to the local Postgres volume automatically through `db-init`.
 
 Use the host workflow above for day-to-day development because it gives faster
 Next.js refreshes and simpler test/debug loops.
@@ -90,7 +91,7 @@ cp .env.example .env
 cp src/.env.example src/.env.local
 ```
 
-Root `.env` is used by package-level database commands such as `pnpm db:push`.
+Root `.env` is used by package-level database commands such as `pnpm db:migrate:deploy`.
 `src/.env.local` is used by the Next.js app.
 
 Important local env groups:
@@ -112,10 +113,18 @@ pnpm lint           # Lint the web app
 pnpm test:web       # Run the web Vitest suite
 
 pnpm db:generate    # Generate Prisma client
-pnpm db:push        # Push schema to local dev database
-pnpm db:migrate     # Create/apply a Prisma migration
+pnpm db:migrate:deploy # Apply committed migrations to a database
+pnpm db:migrate     # Create a development migration with Prisma
+pnpm db:push        # Development-only schema prototyping; not CI/deployment setup
 pnpm db:studio      # Open Prisma Studio
 ```
+
+Prisma migrations are the source of truth for fresh environments, CI, staging,
+and production-style startup. Use `pnpm db:migrate` after changing
+`packages/db/prisma/schema.prisma` to create the next migration, review the SQL,
+and commit the migration directory. `pnpm db:push` is retained only for
+development-only prototyping against a disposable database; it does not create
+migration history and must not replace `migrate deploy`.
 
 Useful service commands:
 
@@ -242,7 +251,7 @@ If the app cannot connect to the database:
 ```bash
 docker compose ps
 docker compose up -d postgres
-pnpm db:push
+pnpm db:migrate:deploy
 ```
 
 If uploads or plugin modules fail locally, confirm MinIO is running and the
