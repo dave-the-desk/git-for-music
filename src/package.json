@@ -8,7 +8,9 @@
     "start": "next start",
     "lint": "next lint",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:unit": "node --import tsx --test --test-concurrency=1 $(find app -name '*.test.ts' ! -path 'app/api/versions/revert/route.test.ts' ! -path 'app/pages/api/plugins/\\[pluginId\\]/module/response-headers.test.ts')",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@git-for-music/db": "workspace:*",

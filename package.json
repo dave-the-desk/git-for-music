@@ -9,8 +9,20 @@
     "dev": "pnpm --filter @git-for-music/web dev",
     "prebuild": "pnpm db:generate",
     "build": "pnpm --filter @git-for-music/web build",
-    "lint": "pnpm --filter @git-for-music/web lint",
+    "lint": "pnpm --filter @git-for-music/web lint && pnpm lint:server && pnpm lint:shared && pnpm lint:db",
+    "lint:server": "pnpm --filter @git-for-music/server lint",
+    "lint:shared": "pnpm --filter @git-for-music/shared lint",
+    "lint:db": "pnpm --filter @git-for-music/db lint",
+    "test": "pnpm test:server && pnpm test:unit && pnpm test:web",
+    "test:server": "pnpm --filter @git-for-music/server test",
+    "test:integration": "pnpm --filter @git-for-music/server test:integration",
+    "test:unit": "pnpm --filter @git-for-music/web test:unit",
     "test:web": "pnpm --filter @git-for-music/web test",
+    "typecheck": "pnpm typecheck:server && pnpm typecheck:shared && pnpm typecheck:db && pnpm typecheck:web",
+    "typecheck:server": "pnpm --filter @git-for-music/server typecheck",
+    "typecheck:shared": "pnpm --filter @git-for-music/shared typecheck",
+    "typecheck:db": "pnpm --filter @git-for-music/db typecheck",
+    "typecheck:web": "pnpm --filter @git-for-music/web typecheck",
     "db:generate": "pnpm --filter @git-for-music/db generate",
     "db:push": "pnpm --filter @git-for-music/db db:push",
     "db:migrate": "pnpm --filter @git-for-music/db migrate",
@@ -24,6 +36,9 @@
     "@mermaid-js/mermaid-cli": "^11.15.0"
   },
   "devDependencies": {
-    "tsx": "^4.23.0"
+    "@typescript-eslint/parser": "^8.59.0",
+    "eslint": "^9.39.4",
+    "tsx": "^4.23.0",
+    "typescript": "^5.9.3"
   }
 }
