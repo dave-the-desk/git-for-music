@@ -10,16 +10,7 @@ type VersionArgs = {
 
 type RecordedOperationArgs = {
   operationType?: string;
-  payload?: {
-    version?: {
-      id?: string;
-      parentId?: string | null;
-      tracks?: Array<{ id?: string; trackVersionId?: string }>;
-    };
-    sourceVersionId?: string;
-    revertedFromVersionId?: string;
-    currentVersionId?: string;
-  };
+  payload?: any;
 };
 
 test('revertToVersionCommand creates a revert version from the current branch head', async () => {
@@ -81,7 +72,7 @@ test('revertToVersionCommand creates a revert version from the current branch he
       ],
     },
     $transaction: async (callback: (tx: unknown) => Promise<unknown>) => callback({}),
-  } as const;
+  };
 
   const response = await revertToVersionCommand(
     {
@@ -104,7 +95,7 @@ test('revertToVersionCommand creates a revert version from the current branch he
           activeBranchName: 'Revert to Ancestor version',
         };
       },
-      createDemoVersionWithCopiedTracks: async (_tx, args) => {
+      createDemoVersionWithCopiedTracks: async (_tx, args): Promise<any> => {
         createVersionArgs = {
           parentId: args.parentId ?? null,
           sourceVersionId: args.sourceVersionId ?? null,
@@ -114,6 +105,7 @@ test('revertToVersionCommand creates a revert version from the current branch he
           id: 'version-revert',
           label: args.label,
           description: args.description ?? null,
+          createdByName: null,
           kind: args.kind ?? 'EXPLICIT',
           operationSeq: null,
           tempoBpm: 120,
@@ -136,14 +128,7 @@ test('revertToVersionCommand creates a revert version from the current branch he
       recordDemoDawOperation: async (_tx, args) => {
         recordedOperationArgs = {
           operationType: args.operationType,
-          payload:
-            'version' in args.payload
-              ? {
-                  version: args.payload.version,
-                  revertedFromVersionId: args.payload.revertedFromVersionId,
-                  currentVersionId: args.payload.currentVersionId,
-                }
-              : undefined,
+          payload: args.payload,
         };
         return {
           created: true,
@@ -272,7 +257,7 @@ test('revertToVersionCommand rejects versions that are not ancestors of the curr
       ],
     },
     $transaction: async (callback: (tx: unknown) => Promise<unknown>) => callback({}),
-  } as const;
+  };
 
   const response = await revertToVersionCommand(
     {
@@ -352,7 +337,7 @@ test('revertToVersionCommand preserves a pinned checkout while still creating th
       ],
     },
     $transaction: async (callback: (tx: unknown) => Promise<unknown>) => callback({}),
-  } as const;
+  };
 
   const response = await revertToVersionCommand(
     {
@@ -371,10 +356,11 @@ test('revertToVersionCommand preserves a pinned checkout while still creating th
         setActiveVersionCalled = true;
         throw new Error('should not move a pinned checkout');
       },
-      createDemoVersionWithCopiedTracks: async (_tx, args) => ({
+      createDemoVersionWithCopiedTracks: async (_tx, args): Promise<any> => ({
         id: 'version-revert',
         label: args.label,
         description: args.description ?? null,
+        createdByName: null,
         kind: args.kind ?? 'EXPLICIT',
         operationSeq: null,
         tempoBpm: 120,
@@ -479,7 +465,7 @@ test('revertToVersionCommand creates a revert node that copies the ancestor cont
       ],
     },
     $transaction: async (callback: (tx: unknown) => Promise<unknown>) => callback({}),
-  } as const;
+  };
 
   const response = await revertToVersionCommand(
     {
@@ -499,10 +485,11 @@ test('revertToVersionCommand creates a revert node that copies the ancestor cont
         isFollowingHead: true,
         activeBranchName: 'Revert to Ancestor version',
       }),
-      createDemoVersionWithCopiedTracks: async (_tx, args) => ({
+      createDemoVersionWithCopiedTracks: async (_tx, args): Promise<any> => ({
         id: 'version-revert',
         label: args.label,
         description: args.description ?? null,
+        createdByName: null,
         kind: args.kind ?? 'EXPLICIT',
         operationSeq: null,
         tempoBpm: 120,

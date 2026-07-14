@@ -295,7 +295,7 @@ async function encodeStereoMp3(left: Float32Array, right: Float32Array, sampleRa
     chunks.push(new Uint8Array(finalChunk.buffer.slice(0, finalChunk.byteLength)));
   }
 
-  return new Blob(chunks, { type: 'audio/mpeg' });
+  return new Blob(chunks as unknown as BlobPart[], { type: 'audio/mpeg' });
 }
 
 async function decodeTrackBuffers(tracks: DawExportTrack[]) {

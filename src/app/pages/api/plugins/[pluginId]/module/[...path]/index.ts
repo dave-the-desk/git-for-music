@@ -1,6 +1,7 @@
 import { prisma } from '@git-for-music/db';
 import { NextRequest, NextResponse } from 'next/server';
 import type { ApiError } from '@git-for-music/shared';
+import { getConfig, isFeatureEnabled } from '@git-for-music/shared';
 import { getAuthenticatedUserFromRequest } from '@git-for-music/server/app/lib/auth/current-user';
 import {
   assertPluginModuleAccess,
@@ -8,11 +9,16 @@ import {
 } from '@git-for-music/server/app/lib/plugins';
 import { createAssetDownloadUrl } from '@git-for-music/server/app/lib/daw/server/assets';
 import { createPluginModuleResponseHeaders } from '../response-headers';
+import '@/app/product/register-features';
 
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ pluginId: string; path: string[] }> },
 ) {
+  if (!isFeatureEnabled('plugins', getConfig())) {
+    return NextResponse.json<ApiError>({ error: 'Not found' }, { status: 404, headers: { 'cache-control': 'no-store' } });
+  }
+
   const user = await getAuthenticatedUserFromRequest(req);
   if (!user) {
     return NextResponse.json<ApiError>({ error: 'Unauthorized' }, { status: 401, headers: { 'cache-control': 'no-store' } });

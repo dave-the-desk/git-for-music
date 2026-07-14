@@ -197,11 +197,15 @@ export class AudioEditingEngine {
     state: unknown;
     stateBlobKey?: string | null;
   }): DawOperationCommitRequest {
-    assertJsonValue(input.state, 'plugin state');
+    const state = input.state;
+    assertJsonValue(state, 'plugin state');
     return {
       demoId: this.context.demoId,
       operationType: 'PLUGIN_STATE_SET',
-      payload: input satisfies DawOperationPayloadPluginStateSet,
+      payload: {
+        ...input,
+        state,
+      } satisfies DawOperationPayloadPluginStateSet,
     };
   }
 

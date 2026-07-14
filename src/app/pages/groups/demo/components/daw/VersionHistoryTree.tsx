@@ -314,6 +314,7 @@ export function VersionHistoryTree({
     : '';
   const detailsIsRenaming = Boolean(renameState && renameState.versionId === detailsVersion?.id);
   const detailsIsCurrentSelection = detailsVersion?.id === selectedVersionId;
+  const selectedDetailsVersion = detailsVersion as NonNullable<typeof detailsVersion>;
 
   function getNodeTone(nodeId: string): VersionNodeTone {
     if (nodeId === activeVersionId) {
@@ -496,7 +497,7 @@ export function VersionHistoryTree({
                         ) : (
                           <button
                             type="button"
-                            onClick={() => startRename(detailsVersion.id, detailsLabel)}
+                            onClick={() => startRename(selectedDetailsVersion.id, detailsLabel)}
                             disabled={isHistoryViewActive}
                             title="Click to rename version"
                             className="mt-1 block w-full break-words text-left text-lg font-semibold text-white outline-none transition-colors hover:text-cyan-200 disabled:cursor-not-allowed disabled:hover:text-white"
@@ -547,11 +548,11 @@ export function VersionHistoryTree({
                       <div className="grid grid-cols-2 gap-3">
                         <div className="rounded-xl border border-slate-800 bg-slate-900/70 px-3 py-2">
                           <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Created</p>
-                          <p className="mt-1 text-slate-200">{formatDate(detailsVersion.createdAt)}</p>
+                          <p className="mt-1 text-slate-200">{formatDate(selectedDetailsVersion.createdAt)}</p>
                         </div>
                         <div className="rounded-xl border border-slate-800 bg-slate-900/70 px-3 py-2">
                           <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Tracks</p>
-                          <p className="mt-1 text-slate-200">{detailsVersion.tracks.length}</p>
+                          <p className="mt-1 text-slate-200">{selectedDetailsVersion.tracks.length}</p>
                         </div>
                         <div className="rounded-xl border border-slate-800 bg-slate-900/70 px-3 py-2">
                           <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Branch</p>

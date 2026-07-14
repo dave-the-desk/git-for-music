@@ -253,7 +253,7 @@ export function buildCrossfadePayload(
   const leftDurationMs = Math.max(0, left.endMs - left.startMs);
   const rightDurationMs = Math.max(0, right.endMs - right.startMs);
 
-  if (durationMs > leftDurationMs + CROSSFADE_EPSILON_MS || durationMs > rightDurationMs + CROSSFADE_EPSILON_MS) {
+  if (durationMs > leftDurationMs || durationMs > rightDurationMs) {
     throw new Error(CROSSFADE_DURATION_ERROR);
   }
 

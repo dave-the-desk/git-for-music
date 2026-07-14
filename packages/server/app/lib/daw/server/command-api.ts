@@ -43,6 +43,7 @@ import {
   loadUserDisplayName,
   serializeCreatedDemoVersionTreeNode,
 } from '@/app/lib/daw/server/versioning';
+import type { DawDatabaseClient } from '@/app/lib/daw/server/demo-user-active-version';
 import { listPluginsForDemo } from '@/app/lib/plugins';
 import { rebaseTimelineEditRequest } from '@/app/lib/daw/state/timeline-edit-rebase';
 import type { LocalProjectState } from '@/app/lib/daw/state/local-project-state';
@@ -74,8 +75,7 @@ import type {
   DawOperationPayloadPluginStateSet,
 } from '@/app/lib/daw/protocol';
 import type { JsonValue, TimingSource } from '@git-for-music/shared';
-
-export type DawDatabaseClient = PrismaClient | Prisma.TransactionClient;
+import { getConfig } from '@git-for-music/shared';
 
 interface DawProjectWorkspace {
   project: {
@@ -122,8 +122,6 @@ const BRANCH_CREATING_OPERATION_TYPES = new Set<DawOperationType>([
   'TRACK_RENAMED',
   'SEGMENT_TRIMMED',
 ]);
-const ENABLE_ORDINARY_EDIT_HEAD_ADVANCE =
-  process.env.DAW_ENABLE_ORDINARY_EDIT_HEAD_ADVANCE === 'true';
 const VERSION_TREE_MUTATION_OPERATION_TYPES = new Set<DawOperationType>([
   'VERSION_CREATED',
   'VERSION_BRANCH_CREATED',
@@ -185,7 +183,7 @@ export function shouldCreateBranchForOperation(operationType: DawOperationType) 
 
 export function shouldCreatePerEditBranchForOperation(
   operationType: DawOperationType,
-  enableOrdinaryEditHeadAdvance = ENABLE_ORDINARY_EDIT_HEAD_ADVANCE,
+  enableOrdinaryEditHeadAdvance = getConfig().toggles.enableOrdinaryEditHeadAdvance,
 ) {
   return shouldCreateBranchForOperation(operationType) && !enableOrdinaryEditHeadAdvance;
 }
@@ -2747,7 +2745,7 @@ export async function commitDawProjectOperation(
       const projectState = (await loadSnapshotStateForDemo(tx, {
         projectId: workspace.project.id,
         demoId: workspace.demo.id,
-      })) as LocalProjectState;
+      })) as unknown as LocalProjectState;
       const rebasedRequest = isTimelineEditOperation(request.operationType)
         ? rebaseTimelineEditRequest(projectState, request)
         : request;
@@ -3056,26 +3054,28 @@ export async function commitDawProjectOperation(
   }
 
   if (createdAutoVersion) {
+    const autoVersion = createdAutoVersion as any;
     await emitDawVersionCreated({
       projectId: workspace.project.id,
       demoId: workspace.demo.id,
       actorUserId: input.userId,
-      versionId: createdAutoVersion.id,
-      parentVersionId: createdAutoVersion.parentId,
-      kind: createdAutoVersion.kind,
-      operationSeq: createdAutoVersion.operationSeq ?? null,
+      versionId: autoVersion.id,
+      parentVersionId: autoVersion.parentId,
+      kind: autoVersion.kind,
+      operationSeq: autoVersion.operationSeq ?? null,
     });
   }
 
   if (branchCreatedEvent) {
+    const branchEvent = branchCreatedEvent as any;
     await emitDawBranchCreated({
       projectId: workspace.project.id,
       demoId: workspace.demo.id,
       actorUserId: input.userId,
-      versionId: branchCreatedEvent.versionId,
-      parentVersionId: branchCreatedEvent.parentVersionId,
-      branchMode: branchCreatedEvent.branchMode,
-      operationSeq: branchCreatedEvent.operationSeq,
+      versionId: branchEvent.versionId,
+      parentVersionId: branchEvent.parentVersionId,
+      branchMode: branchEvent.branchMode,
+      operationSeq: branchEvent.operationSeq,
     });
   } else if (versionTreeChanged && !createdAutoVersion) {
     await emitDawVersionTreeChanged({

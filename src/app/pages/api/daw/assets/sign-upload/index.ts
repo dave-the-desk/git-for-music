@@ -2,8 +2,9 @@ import { randomUUID } from 'node:crypto';
 import { prisma } from '@git-for-music/db';
 import { NextRequest, NextResponse } from 'next/server';
 import type { ApiError, DawAssetUploadRequest, DawAssetUploadResponse } from '@git-for-music/shared';
-import { getAuthenticatedUserFromRequest } from '@git-for-music/server/app/lib/auth/current-user';
+import { getAuthenticatedUserFromRequest } from '@git-for-music/server/app/lib/auth';
 import { createAssetUploadTarget } from '@git-for-music/server/app/lib/daw/server/assets';
+import { checkBillingLimit } from '@git-for-music/server/app/lib/extensions';
 
 export async function POST(req: NextRequest) {
   const user = await getAuthenticatedUserFromRequest(req);
@@ -48,6 +49,11 @@ export async function POST(req: NextRequest) {
 
   if (!demo) {
     return NextResponse.json<ApiError>({ error: 'Demo not found' }, { status: 404 });
+  }
+
+  const canUploadAssets = await checkBillingLimit(user.id, 'asset_uploads');
+  if (!canUploadAssets) {
+    return NextResponse.json<ApiError>({ error: 'Upload limit exceeded' }, { status: 403 });
   }
 
   let trackId = body.trackId?.trim() || null;

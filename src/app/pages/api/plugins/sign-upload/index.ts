@@ -1,12 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server';
 import type { ApiError, PluginVisibility } from '@git-for-music/shared';
-import { getAuthenticatedUserFromRequest } from '@git-for-music/server/app/lib/auth/current-user';
+import { getConfig, isFeatureEnabled } from '@git-for-music/shared';
+import { getAuthenticatedUserFromRequest } from '@git-for-music/server/app/lib/auth';
 import { createPluginUploadTarget } from '@git-for-music/server/app/lib/plugins';
+import { checkBillingLimit } from '@git-for-music/server/app/lib/extensions';
+import '@/app/product/register-features';
 
 export async function POST(req: NextRequest) {
+  if (!isFeatureEnabled('plugins', getConfig())) {
+    return NextResponse.json<ApiError>({ error: 'Not found' }, { status: 404 });
+  }
+
   const user = await getAuthenticatedUserFromRequest(req);
   if (!user) {
     return NextResponse.json<ApiError>({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const canUploadPlugins = await checkBillingLimit(user.id, 'plugin_uploads');
+  if (!canUploadPlugins) {
+    return NextResponse.json<ApiError>({ error: 'Upload limit exceeded' }, { status: 403 });
   }
 
   const body = (await req.json()) as Partial<{

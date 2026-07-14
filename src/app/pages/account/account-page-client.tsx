@@ -5,9 +5,14 @@ import Link from 'next/link';
 type AccountPageClientProps = {
   userName: string | null;
   userEmail: string;
+  showPluginLibraryLink?: boolean;
 };
 
-export default function AccountPageClient({ userName, userEmail }: AccountPageClientProps) {
+export default function AccountPageClient({
+  userName,
+  userEmail,
+  showPluginLibraryLink = true,
+}: AccountPageClientProps) {
   return (
     <div className="mx-auto flex min-h-[calc(100vh-8rem)] max-w-xl flex-col justify-between gap-10">
       <section className="space-y-5">
@@ -30,14 +35,16 @@ export default function AccountPageClient({ userName, userEmail }: AccountPageCl
         </dl>
       </section>
 
-      <div className="flex justify-center">
-        <Link
-          href="/account/plugins"
-          className="inline-flex rounded-full bg-cyan-500 px-6 py-3 text-sm font-semibold text-slate-950 transition-colors hover:bg-cyan-400"
-        >
-          Plugin Library
-        </Link>
-      </div>
+      {showPluginLibraryLink ? (
+        <div className="flex justify-center">
+          <Link
+            href="/account/plugins"
+            className="inline-flex rounded-full bg-cyan-500 px-6 py-3 text-sm font-semibold text-slate-950 transition-colors hover:bg-cyan-400"
+          >
+            Plugin Library
+          </Link>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -194,7 +194,7 @@ export function buildGraphLayout(versions: DawVersion[]): GraphLayout {
 
   const rootVersions = sortedVersions.filter((version) => {
     const primaryParentId = primaryParentById.get(version.id);
-    return primaryParentId === null || !versionById.has(primaryParentId);
+    return primaryParentId == null || !versionById.has(primaryParentId);
   });
 
   let nextRootColumn = 0;

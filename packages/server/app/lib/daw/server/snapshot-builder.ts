@@ -763,7 +763,7 @@ function hydrateVersionCreatorNames(snapshot: DemoDawSnapshotData) {
   }
 
   snapshot.versions = snapshot.versions.map((version) => {
-    const creatorId = version.createdBy?.trim() || historyByVersionId.get(version.id)?.trim() || '';
+    const creatorId = version.createdByName?.trim() || historyByVersionId.get(version.id)?.trim() || '';
     const creatorName = creatorId ? userDisplayNamesById[creatorId]?.trim() ?? '' : '';
     return {
       ...version,

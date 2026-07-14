@@ -4,7 +4,13 @@ import {
   normalizeLegacyUploadKey,
   type AudioStorageContext,
 } from '@git-for-music/shared';
+import { getConfig } from '@git-for-music/shared';
 import { buildTrackVersionObjectKey } from '@/app/lib/daw/server/storage';
+import {
+  getStorageProvider,
+  setStorageProvider,
+  type StorageProvider,
+} from '../../../extensions';
 
 type AssetUploadIntent = AudioStorageContext & {
   userId: string;
@@ -40,14 +46,16 @@ type ObjectStorageConfig = {
   internalUrl: URL;
 };
 
-const TOKEN_SECRET =
-  process.env.DAW_ASSET_UPLOAD_TOKEN_SECRET ??
-  process.env.NEXTAUTH_SECRET ??
-  'dev-only-daw-asset-token-secret';
-
-const DEFAULT_OBJECT_STORAGE_REGION = 'us-east-1';
-const R2_REGION = 'auto';
 const S3_SERVICE = 's3';
+
+function getTokenSecret() {
+  const config = getConfig();
+  return (
+    config.secrets.dawAssetUploadTokenSecret ||
+    config.secrets.nextAuthSecret ||
+    'dev-only-daw-asset-token-secret'
+  );
+}
 
 function base64UrlEncode(value: string) {
   return Buffer.from(value, 'utf8').toString('base64url');
@@ -85,68 +93,20 @@ function getSigningKey(secretKey: string, dateStamp: string, region: string, ser
   return hmac(kService, 'aws4_request');
 }
 
-function readEnvValue(...keys: string[]) {
-  for (const key of keys) {
-    const value = process.env[key]?.trim();
-    if (value) {
-      return value;
-    }
-  }
-
-  return null;
-}
-
-function parseUrl(value: string | null) {
-  if (!value) {
-    return null;
-  }
-
-  try {
-    return new URL(value);
-  } catch {
-    return null;
-  }
-}
-
 function getObjectStorageConfig(): ObjectStorageConfig | null {
-  const bucketName = readEnvValue('OBJECT_STORAGE_BUCKET_NAME', 'R2_BUCKET_NAME');
-  const accessKeyId = readEnvValue('OBJECT_STORAGE_ACCESS_KEY_ID', 'R2_ACCESS_KEY_ID');
-  const secretAccessKey = readEnvValue('OBJECT_STORAGE_SECRET_ACCESS_KEY', 'R2_SECRET_ACCESS_KEY');
-  const accountId = readEnvValue('R2_ACCOUNT_ID');
-  const region =
-    readEnvValue('OBJECT_STORAGE_REGION') ?? (accountId ? R2_REGION : DEFAULT_OBJECT_STORAGE_REGION);
-
-  if (!bucketName || !accessKeyId || !secretAccessKey) {
+  const config = getConfig();
+  if (!config.objectStorage) {
     return null;
   }
 
-  const publicUrl = parseUrl(readEnvValue('OBJECT_STORAGE_PUBLIC_URL', 'R2_PUBLIC_URL'));
-  const internalUrl = parseUrl(readEnvValue('OBJECT_STORAGE_INTERNAL_URL'));
-
-  if (publicUrl) {
-    return {
-      bucketName,
-      accessKeyId,
-      secretAccessKey,
-      region,
-      publicUrl,
-      internalUrl: internalUrl ?? publicUrl,
-    };
-  }
-
-  if (accountId) {
-    const r2Url = new URL(`https://${accountId}.r2.cloudflarestorage.com`);
-    return {
-      bucketName,
-      accessKeyId,
-      secretAccessKey,
-      region,
-      publicUrl: r2Url,
-      internalUrl: r2Url,
-    };
-  }
-
-  return null;
+  return {
+    bucketName: config.objectStorage.bucketName,
+    accessKeyId: config.objectStorage.accessKeyId,
+    secretAccessKey: config.objectStorage.secretAccessKey,
+    region: config.objectStorage.region,
+    publicUrl: new URL(config.objectStorage.publicUrl),
+    internalUrl: new URL(config.objectStorage.internalUrl),
+  };
 }
 
 function assertObjectStorageConfig() {
@@ -179,10 +139,69 @@ function buildObjectUrl(endpoint: URL, bucketName: string, objectKey: string) {
   return url;
 }
 
+async function createSignedUploadUrl(
+  input: {
+    objectKey: string;
+    contentType: string;
+    method: 'PUT' | 'GET' | 'HEAD';
+    expiresInSeconds?: number;
+  },
+) {
+  const config = assertObjectStorageConfig();
+  return {
+    url: signPresignedUrl(config, config.publicUrl, input.method, input.objectKey, input.expiresInSeconds ?? 900),
+    expiresAt: new Date(Date.now() + (input.expiresInSeconds ?? 900) * 1000).toISOString(),
+    localFallback: false,
+  };
+}
+
+async function createSignedDownloadUrl(input: {
+  objectKey: string;
+  contentType?: string;
+  expiresInSeconds?: number;
+}) {
+  const config = assertObjectStorageConfig();
+  const objectKey = normalizeLegacyUploadKey(input.objectKey);
+
+  return {
+    url: signPresignedUrl(config, config.publicUrl, 'GET', objectKey, input.expiresInSeconds ?? 900),
+    expiresAt: new Date(Date.now() + (input.expiresInSeconds ?? 900) * 1000).toISOString(),
+    localFallback: false,
+  };
+}
+
+async function deleteObject(objectKey: string) {
+  const config = assertObjectStorageConfig();
+  const normalizedObjectKey = normalizeLegacyUploadKey(objectKey);
+  const deleteUrl = signPresignedUrl(config, config.internalUrl, 'DELETE', normalizedObjectKey, 60);
+  await fetch(deleteUrl, { method: 'DELETE' });
+}
+
+async function getObjectStream(objectKey: string) {
+  const config = assertObjectStorageConfig();
+  const normalizedObjectKey = normalizeLegacyUploadKey(objectKey);
+  const downloadUrl = signPresignedUrl(config, config.internalUrl, 'GET', normalizedObjectKey, 60);
+  const response = await fetch(downloadUrl, { method: 'GET' });
+  if (!response.ok) {
+    return null;
+  }
+
+  return response.body;
+}
+
+export const defaultStorageProvider: StorageProvider = {
+  createSignedUploadUrl,
+  createSignedDownloadUrl,
+  deleteObject,
+  getObjectStream,
+};
+
+setStorageProvider(defaultStorageProvider);
+
 export function signPresignedUrl(
   config: ObjectStorageConfig,
   endpoint: URL,
-  method: 'PUT' | 'GET' | 'HEAD',
+  method: 'PUT' | 'GET' | 'HEAD' | 'DELETE',
   objectKey: string,
   expiresInSeconds = 900,
 ) {
@@ -255,7 +274,7 @@ export function signAssetUploadToken(input: AssetUploadIntent) {
   };
 
   const encodedPayload = base64UrlEncode(JSON.stringify(payload));
-  const signature = createHmac('sha256', TOKEN_SECRET).update(encodedPayload).digest('base64url');
+  const signature = createHmac('sha256', getTokenSecret()).update(encodedPayload).digest('base64url');
   return `${encodedPayload}.${signature}`;
 }
 
@@ -263,7 +282,7 @@ export function verifyAssetUploadToken(token: string) {
   const [encodedPayload, signature] = token.split('.');
   if (!encodedPayload || !signature) return null;
 
-  const expected = createHmac('sha256', TOKEN_SECRET).update(encodedPayload).digest('base64url');
+  const expected = createHmac('sha256', getTokenSecret()).update(encodedPayload).digest('base64url');
   if (expected !== signature) return null;
 
   try {
@@ -322,7 +341,7 @@ export async function storeTrackUploadAsset(input: {
 }
 
 export async function createAssetUploadTarget(input: AssetUploadIntent) {
-  const config = assertObjectStorageConfig();
+  const storageProvider = getStorageProvider();
   const assetId = input.assetId ?? randomUUID();
   const objectKey = buildOriginalAudioObjectKey(input, assetId, input.fileName);
   const expiresAt = input.expiresAt ?? new Date(Date.now() + 15 * 60 * 1000).toISOString();
@@ -337,7 +356,12 @@ export async function createAssetUploadTarget(input: AssetUploadIntent) {
     assetId,
     objectKey,
     uploadToken,
-    uploadUrl: signPresignedUrl(config, config.publicUrl, 'PUT', objectKey, 900),
+    uploadUrl: (await storageProvider.createSignedUploadUrl({
+      objectKey,
+      contentType: input.contentType,
+      method: 'PUT',
+      expiresInSeconds: 900,
+    })).url,
     method: 'PUT' as const,
     headers: {
       'content-type': input.contentType,
@@ -352,12 +376,18 @@ export async function createObjectUploadTarget(input: {
   contentType: string;
   expiresAt?: string;
 }) {
-  const config = assertObjectStorageConfig();
+  const storageProvider = getStorageProvider();
   const expiresAt = input.expiresAt ?? new Date(Date.now() + 15 * 60 * 1000).toISOString();
+  const signedUrl = await storageProvider.createSignedUploadUrl({
+    objectKey: input.objectKey,
+    contentType: input.contentType,
+    method: 'PUT',
+    expiresInSeconds: 900,
+  });
 
   return {
     objectKey: input.objectKey,
-    uploadUrl: signPresignedUrl(config, config.publicUrl, 'PUT', input.objectKey, 900),
+    uploadUrl: signedUrl.url,
     method: 'PUT' as const,
     headers: {
       'content-type': input.contentType,
@@ -372,13 +402,16 @@ export async function createAssetDownloadUrl(input: {
   objectKey: string;
   contentType?: string;
 }) {
-  const config = assertObjectStorageConfig();
-  const objectKey = normalizeLegacyUploadKey(input.objectKey);
-
+  const storageProvider = getStorageProvider();
+  const signedUrl = await storageProvider.createSignedDownloadUrl({
+    objectKey: input.objectKey,
+    contentType: input.contentType,
+    expiresInSeconds: 900,
+  });
   return {
     assetId: input.assetId ?? null,
-    url: signPresignedUrl(config, config.publicUrl, 'GET', objectKey, 900),
-    expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+    url: signedUrl.url,
+    expiresAt: signedUrl.expiresAt,
     localFallback: false,
   };
 }

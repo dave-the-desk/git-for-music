@@ -172,7 +172,7 @@ test('setUserActiveVersion preserves an explicit pinned checkout without moving 
         };
       },
     },
-  } as const;
+  };
 
   const result = await setUserActiveVersion(client as never, {
     projectId: 'project-1',
@@ -263,7 +263,7 @@ test('setUserActiveVersion moves an existing checkout to the requested branch wh
         };
       },
     },
-  } as const;
+  };
 
   const result = await setUserActiveVersion(client as never, {
     projectId: 'project-1',
@@ -338,7 +338,7 @@ test('setUserActiveVersion defaults isFollowingHead to true', async () => {
         };
       },
     },
-  } as const;
+  };
 
   const result = await setUserActiveVersion(client as never, {
     projectId: 'project-1',
@@ -496,7 +496,7 @@ test('safe concurrent edits on the same branch head converge without creating an
     },
     createdById: 'user-a',
     createdAt: '2025-01-01T00:00:00.000Z',
-  } as const;
+  };
 
   const liveSnapshot = cloneSnapshot(rootSnapshot.snapshot);
   const snapshotRows = [rootSnapshot] as Array<typeof rootSnapshot>;
@@ -579,7 +579,7 @@ test('safe concurrent edits on the same branch head converge without creating an
           musicalKey: null,
           tempoSource: 'MANUAL',
           keySource: 'MANUAL',
-          createdAt: new Date('2025-01-01T00:00:00.000Z'),
+          createdAt: '2025-01-01T00:00:00.000Z',
           parentId: rootVersionId,
           isMerge: false,
           tracks: [],
@@ -644,7 +644,7 @@ test('safe concurrent edits on the same branch head converge without creating an
           operationSeq: args.data.operationSeq,
           snapshot: cloneSnapshot(args.data.snapshot),
           createdById: args.data.createdById,
-          createdAt: new Date('2025-01-01T00:00:00.000Z'),
+          createdAt: '2025-01-01T00:00:00.000Z',
         };
         snapshotRows.push(created);
         return cloneSnapshot(created);
@@ -679,27 +679,28 @@ test('safe concurrent edits on the same branch head converge without creating an
           .sort((a, b) => a.operationSeq - b.operationSeq);
       },
       findUnique: async (args: {
-        where:
-          | { demoId_operationSeq: { demoId: string; operationSeq: number } }
-          | { demoId_idempotencyKey: { demoId: string; idempotencyKey: string } }
-          | { demoId_clientOperationId: { demoId: string; clientOperationId: string } };
+        where: {
+          demoId_operationSeq?: { demoId: string; operationSeq: number };
+          demoId_idempotencyKey?: { demoId: string; idempotencyKey: string };
+          demoId_clientOperationId?: { demoId: string; clientOperationId: string };
+        };
       }) => {
-        if ('demoId_operationSeq' in args.where) {
+        if (args.where.demoId_operationSeq) {
           return (
             operationRows.find(
               (row) =>
-                row.demoId === args.where.demoId_operationSeq.demoId &&
-                row.operationSeq === args.where.demoId_operationSeq.operationSeq,
+                row.demoId === args.where.demoId_operationSeq!.demoId &&
+                row.operationSeq === args.where.demoId_operationSeq!.operationSeq,
             ) ?? null
           );
         }
 
-        if ('demoId_idempotencyKey' in args.where) {
+        if (args.where.demoId_idempotencyKey) {
           return (
             operationRows.find(
               (row) =>
-                row.demoId === args.where.demoId_idempotencyKey.demoId &&
-                row.idempotencyKey === args.where.demoId_idempotencyKey.idempotencyKey,
+                row.demoId === args.where.demoId_idempotencyKey!.demoId &&
+                row.idempotencyKey === args.where.demoId_idempotencyKey!.idempotencyKey,
             ) ?? null
           );
         }
@@ -707,8 +708,8 @@ test('safe concurrent edits on the same branch head converge without creating an
         return (
           operationRows.find(
             (row) =>
-              row.demoId === args.where.demoId_clientOperationId.demoId &&
-              row.clientOperationId === args.where.demoId_clientOperationId.clientOperationId,
+              row.demoId === args.where.demoId_clientOperationId!.demoId &&
+              row.clientOperationId === args.where.demoId_clientOperationId!.clientOperationId,
           ) ?? null
         );
       },
@@ -805,10 +806,10 @@ test('safe concurrent edits on the same branch head converge without creating an
       count: async () => 0,
       create: async () => ({ id: 'segment-created' }),
     },
-  } as const;
+  };
 
   const client = {
-    $transaction: async <T>(callback: (tx: typeof tx) => Promise<T>) => callback(tx),
+    $transaction: async <T>(callback: (tx: unknown) => Promise<T>) => callback(tx),
     demo: tx.demo,
     groupMember: tx.groupMember,
     demoVersion: tx.demoVersion,
@@ -819,7 +820,7 @@ test('safe concurrent edits on the same branch head converge without creating an
     track: tx.track,
     trackVersion: tx.trackVersion,
     segment: tx.segment,
-  } as const;
+  };
 
   const trimSegment = (segmentId: string, fromStartMs: number, fromEndMs: number, toStartMs: number, toEndMs: number) =>
     ({
@@ -1186,7 +1187,7 @@ test('maybeCreateAutoDemoVersionAfterAcceptedOperation creates a semantic checkp
     segment: {
       create: async () => ({ id: 'segment-auto' }),
     },
-  } as const;
+  };
 
   const created = await maybeCreateAutoDemoVersionAfterAcceptedOperation(tx as never, {
     projectId: 'project-1',
@@ -1198,7 +1199,6 @@ test('maybeCreateAutoDemoVersionAfterAcceptedOperation creates a semantic checkp
       operationSeq: 7,
       createdAt: '2025-01-02T00:00:02.000Z',
     },
-    loadSourceSnapshotState: async () => null,
   });
 
   assert.ok(created);
@@ -1282,7 +1282,7 @@ test('maybeCreateAutoDemoVersionAfterAcceptedOperation treats plugin adds as sem
     segment: {
       create: async () => ({ id: 'segment-auto' }),
     },
-  } as const;
+  };
 
   const created = await maybeCreateAutoDemoVersionAfterAcceptedOperation(tx as never, {
     projectId: 'project-1',
@@ -1294,7 +1294,6 @@ test('maybeCreateAutoDemoVersionAfterAcceptedOperation treats plugin adds as sem
       operationSeq: 7,
       createdAt: '2025-01-02T00:00:02.000Z',
     },
-    loadSourceSnapshotState: async () => null,
   });
 
   assert.ok(created);
@@ -1378,15 +1377,19 @@ test('maybeCreateAutoDemoVersionAfterAcceptedOperation creates exactly one check
     segment: {
       create: async () => ({ id: 'segment-auto' }),
     },
-  } as const;
+  };
 
   async function commitAcceptedOperation(operationSeq: number, createdAt: string) {
     const operation = {
+      type: 'TRACK_RENAMED' as const,
       operationSeq,
       createdAt,
-      operationType: 'TRACK_RENAMED' as const,
     };
-    operations.push(operation);
+    operations.push({
+      operationType: operation.type,
+      operationSeq: operation.operationSeq,
+      createdAt: operation.createdAt,
+    });
     const created = await maybeCreateAutoDemoVersionAfterAcceptedOperation(tx as never, {
       projectId: 'project-1',
       demoId: 'demo-1',
@@ -1485,15 +1488,19 @@ test('maybeCreateAutoDemoVersionAfterAcceptedOperation creates a checkpoint when
     segment: {
       create: async () => ({ id: 'segment-auto' }),
     },
-  } as const;
+  };
 
   async function commitAcceptedOperation(operationSeq: number, createdAt: string) {
     const operation = {
+      type: 'TRACK_RENAMED' as const,
       operationSeq,
       createdAt,
-      operationType: 'TRACK_RENAMED' as const,
     };
-    operations.push(operation);
+    operations.push({
+      operationType: operation.type,
+      operationSeq: operation.operationSeq,
+      createdAt: operation.createdAt,
+    });
     return maybeCreateAutoDemoVersionAfterAcceptedOperation(tx as never, {
       projectId: 'project-1',
       demoId: 'demo-1',

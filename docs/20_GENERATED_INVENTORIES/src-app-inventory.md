@@ -167,6 +167,7 @@ src/app/pages/api/versions/[versionId]/index.ts
 src/app/pages/api/versions/index.ts
 src/app/pages/api/versions/revert/index.ts
 src/app/pages/auth/login-page.tsx
+src/app/pages/auth/auth-pages.interaction.test.tsx
 src/app/pages/auth/signup-page.tsx
 src/app/pages/groups/demo/components/daw/AddTrackButton.tsx
 src/app/pages/groups/demo/components/daw/AudioInputSelector.tsx
@@ -200,5 +201,9 @@ src/app/pages/layouts/components/NotificationBell.tsx
 src/app/pages/layouts/root-layout.tsx
 src/app/pages/not-found-page.tsx
 src/app/pages/root-page.tsx
+src/app/product/branding.test.ts
+src/app/product/branding.ts
+src/app/product/providers.test.ts
+src/app/product/providers.ts
 src/app/signup/page.tsx
 ```

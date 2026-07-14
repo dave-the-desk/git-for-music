@@ -168,6 +168,7 @@ test('applySegmentSplit and applySegmentMerge produce deterministic replay-safe 
     'track-version-1',
     {
       id: 'segment-left',
+      trackVersionId: 'track-version-1',
       startMs: 0,
       endMs: 500,
       timelineStartMs: 0,
@@ -180,6 +181,7 @@ test('applySegmentSplit and applySegmentMerge produce deterministic replay-safe 
     },
     {
       id: 'segment-right',
+      trackVersionId: 'track-version-1',
       startMs: 500,
       endMs: 1000,
       timelineStartMs: 500,
@@ -226,6 +228,7 @@ test('applySegmentSplit and applySegmentMerge produce deterministic replay-safe 
 
   const merged = applySegmentMerge(splitTwice, 'track-version-1', ['segment-left', 'segment-right'], {
     id: 'segment-merged',
+    trackVersionId: 'track-version-1',
     startMs: 0,
     endMs: 1000,
     timelineStartMs: 0,
@@ -238,6 +241,7 @@ test('applySegmentSplit and applySegmentMerge produce deterministic replay-safe 
   });
   const mergedAgain = applySegmentMerge(merged, 'track-version-1', ['segment-left', 'segment-right'], {
     id: 'segment-merged',
+    trackVersionId: 'track-version-1',
     startMs: 0,
     endMs: 1000,
     timelineStartMs: 0,
@@ -303,5 +307,7 @@ test('applyCrossfadeSet updates only the selected neighbors and the dispatcher r
   assert.equal(crossfaded[0]?.segments[0]?.crossfadeCurve, 'linear');
   assert.equal(crossfaded[0]?.segments[1]?.crossfadeInMs, 250);
   assert.equal(crossfaded[0]?.segments[1]?.crossfadeCurve, 'linear');
-  assert.equal(dispatched[0]?.trackName, 'Renamed via dispatcher');
+  const dispatchedTrack = dispatched[0];
+  assert.ok(dispatchedTrack);
+  assert.equal(dispatchedTrack.trackName, 'Renamed via dispatcher');
 });

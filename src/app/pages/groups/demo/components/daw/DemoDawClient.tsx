@@ -1149,6 +1149,7 @@ export function DemoDawClient({
         startOffsetMs: temporaryRecordingTrack.startOffsetMs,
         durationMs: temporaryRecordingTrack.durationMs,
         isMuted: previewMuted,
+        plugins: previewTrackHost.plugins ?? [],
         segments: [
           {
             id: `temporary-recording-segment:${temporaryRecordingTrack.id}`,
@@ -2340,8 +2341,8 @@ export function DemoDawClient({
       console.log('[DemoDawClient] commitEditingOperation response', {
         operationType: result.type,
         operationSeq: result.operationSeq,
-        trackId: result.trackId ?? null,
-        segmentId: result.segmentId ?? null,
+        trackId: (result as { trackId?: string }).trackId ?? null,
+        segmentId: (result as { segmentId?: string }).segmentId ?? null,
       });
       return result;
     } catch (error) {
@@ -2768,7 +2769,7 @@ export function DemoDawClient({
         {isBrowserVariant ? (
           <div className="space-y-1">
             <p className="text-sm font-semibold text-white">{track.trackName}</p>
-            <p className="text-xs text-slate-400">Edit the selected track's insert chain from the Plugins tab.</p>
+            <p className="text-xs text-slate-400">Edit the selected track&apos;s insert chain from the Plugins tab.</p>
           </div>
         ) : (
           <div className="mb-2 flex items-center justify-between gap-2">
@@ -3941,7 +3942,7 @@ export function DemoDawClient({
         demoId,
         projectId,
         name: track.name,
-        sourceVersionId: recordingSourceVersionId,
+        sourceVersionId: recordingSourceVersionId ?? undefined,
         trackId: shouldReuseArmedTrack ? track.targetTrackId : undefined,
         startOffsetMs: effectiveBounds.startOffsetMs,
         recordedTempoBpm: track.recordedTempoBpm,
@@ -4018,7 +4019,7 @@ export function DemoDawClient({
         demoId,
         projectId,
         name,
-        sourceVersionId: uploadSourceVersionId,
+        sourceVersionId: uploadSourceVersionId ?? undefined,
         recordedTempoBpm: uploadTempoBpm,
         sourceTempoBpm: uploadTempoBpm,
         timingChoice,

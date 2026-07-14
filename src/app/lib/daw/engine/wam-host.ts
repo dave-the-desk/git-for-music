@@ -131,7 +131,8 @@ async function nativeImportModule(descriptorUrl: string) {
 }
 
 function assertMainThreadWamHost() {
-  if (typeof AudioWorkletProcessor !== 'undefined') {
+  const globalScope = globalThis as typeof globalThis & { AudioWorkletProcessor?: unknown };
+  if (typeof globalScope.AudioWorkletProcessor !== 'undefined') {
     throw new Error('WAM host operations must run on the main thread, not inside an AudioWorklet render context.');
   }
 }
@@ -187,36 +188,29 @@ function isConstructorInvocationError(error: unknown) {
 function resolveWamFactory(moduleExports: AnyRecord): WamModuleFactory | null {
   const directFactory = moduleExports.createInstance ?? moduleExports.createNode;
   if (typeof directFactory === 'function') {
-    return async (audioContext, env, group, pluginKey, version) =>
-      (await directFactory(audioContext, env, group, pluginKey, version)) as WamNode;
+    return (audioContext, env, group, pluginKey, version) =>
+      directFactory(audioContext, env, group, pluginKey, version) as WamNode;
   }
 
   const defaultExport = moduleExports.default;
   if (typeof defaultExport === 'function') {
-    return async (audioContext, env, group, pluginKey, version) =>
-      (await (async () => {
-        try {
-          return await (defaultExport as (
-            audioContext: AudioContext,
-            env: WamEnv,
-            group: WamGroup,
-            pluginKey: string,
-            version: string,
-          ) => WamNode)(audioContext, env, group, pluginKey, version);
-        } catch (error) {
-          if (!isConstructorInvocationError(error)) {
-            throw error;
-          }
-
-          return await new (defaultExport as new (...args: unknown[]) => WamNode)(
-            audioContext,
-            env,
-            group,
-            pluginKey,
-            version,
-          );
+    return (audioContext, env, group, pluginKey, version) => {
+      try {
+        return (defaultExport as (
+          audioContext: AudioContext,
+          env: WamEnv,
+          group: WamGroup,
+          pluginKey: string,
+          version: string,
+        ) => WamNode)(audioContext, env, group, pluginKey, version);
+      } catch (error) {
+        if (!isConstructorInvocationError(error)) {
+          throw error;
         }
-      })()) as WamNode;
+
+        return new (defaultExport as new (...args: unknown[]) => WamNode)(audioContext, env, group, pluginKey, version);
+      }
+    };
   }
 
   if (defaultExport && typeof defaultExport === 'object') {
@@ -236,19 +230,20 @@ function resolveWamFactory(moduleExports: AnyRecord): WamModuleFactory | null {
 }
 
 async function invokeNodeMethod(node: WamNode, methodNames: string[], value: unknown) {
-  const candidate = methodNames.find((methodName) => typeof (node as AnyRecord)[methodName] === 'function');
+  const nodeRecord = node as unknown as AnyRecord;
+  const candidate = methodNames.find((methodName) => typeof nodeRecord[methodName] === 'function');
   if (!candidate) {
     return;
   }
 
-  const result = (node as AnyRecord)[candidate](value);
+  const result = (nodeRecord[candidate] as (value: unknown) => unknown)(value);
   if (isPromise(result)) {
     await result;
   }
 }
 
 function resolveNodeLatencyMs(node: WamNode, audioContext: AudioContext) {
-  const candidate = node as AnyRecord;
+  const candidate = node as unknown as AnyRecord;
   const rawLatency =
     typeof candidate.latency === 'number'
       ? candidate.latency

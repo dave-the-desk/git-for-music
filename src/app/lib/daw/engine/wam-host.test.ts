@@ -75,9 +75,9 @@ test('createInstance reuses one WamEnv and WamGroup per AudioContext', async () 
   const contextA = {} as AudioContext;
   const contextB = {} as AudioContext;
 
-  const nodeA1 = await createInstance(contextA, key, version);
-  const nodeA2 = await createInstance(contextA, key, version);
-  const nodeB = await createInstance(contextB, key, version);
+  const nodeA1 = (await createInstance(contextA, key, version)) as unknown as { env: unknown; group: unknown };
+  const nodeA2 = (await createInstance(contextA, key, version)) as unknown as { env: unknown; group: unknown };
+  const nodeB = (await createInstance(contextB, key, version)) as unknown as { env: unknown; group: unknown };
 
   seenEnvs.push((globalThis as Record<string, unknown>).__wamSeenEnvs as unknown);
   seenGroups.push((globalThis as Record<string, unknown>).__wamSeenGroups as unknown);

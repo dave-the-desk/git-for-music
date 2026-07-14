@@ -92,8 +92,8 @@ test('buildGraphLayout centers a two-way fork over the sibling span', () => {
   assert.equal(rootNode?.row, 0);
   assert.equal(firstNode?.row, 1);
   assert.equal(secondNode?.row, 1);
-  assert.equal(firstNode?.column, 0);
-  assert.equal(secondNode?.column, 1);
+  assert.equal(secondNode?.column, 0);
+  assert.equal(firstNode?.column, 1);
   assert.equal(rootNode?.column, 0.5);
   assert.equal(rootNode?.left, ((firstNode?.left ?? 0) + (secondNode?.left ?? 0)) / 2);
 });

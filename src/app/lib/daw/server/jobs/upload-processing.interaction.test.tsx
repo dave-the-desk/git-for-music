@@ -22,7 +22,7 @@ function createClient() {
           calls.push(input);
           return { id: `job-${calls.length}` };
         },
-      },
+      } as unknown as Parameters<typeof enqueueTrackUploadProcessingJobs>[0]['processingJob'],
     },
   };
 }

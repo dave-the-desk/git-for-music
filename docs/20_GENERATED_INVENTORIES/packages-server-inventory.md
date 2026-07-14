@@ -4,8 +4,11 @@ Generated from `rg --files packages/server | sort`.
 
 ```text
 packages/server/app/lib/auth/current-user.ts
+packages/server/app/lib/auth/current-user.test.ts
+packages/server/app/lib/auth/default-provider.ts
 packages/server/app/lib/auth/index.ts
 packages/server/app/lib/auth/password.ts
+packages/server/app/lib/auth/provider.ts
 packages/server/app/lib/auth/session.ts
 packages/server/app/lib/daw/protocol/command-api.ts
 packages/server/app/lib/daw/protocol/index.ts
@@ -48,6 +51,7 @@ packages/server/app/lib/daw/server/track-duplicate-cleanup.ts
 packages/server/app/lib/daw/server/versioning.test.ts
 packages/server/app/lib/daw/server/versioning.ts
 packages/server/app/lib/daw/server/versions/index.ts
+packages/server/app/lib/extensions/index.ts
 packages/server/app/lib/plugins/index.test.ts
 packages/server/app/lib/plugins/index.ts
 packages/server/app/lib/processing/index.ts

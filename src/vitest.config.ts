@@ -9,7 +9,11 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     setupFiles: ['./vitest.setup.ts'],
-    include: ['app/**/*.interaction.test.tsx'],
+    include: [
+      'app/**/*.interaction.test.tsx',
+      'app/api/versions/revert/route.test.ts',
+      'app/pages/api/plugins/[pluginId]/module/response-headers.test.ts',
+    ],
     restoreMocks: true,
     clearMocks: true,
   },

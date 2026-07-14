@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { FormEvent, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { branding } from '@/app/product/branding';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -41,8 +42,8 @@ export default function LoginPage() {
   return (
     <div className="flex min-h-screen items-center justify-center px-6 py-10">
       <div className="w-full max-w-md">
-        <h1 className="mb-2 text-2xl font-bold">Log in</h1>
-        <p className="mb-6 text-sm text-gray-400">Enter your email and password to access your account.</p>
+        <h1 className="mb-2 text-2xl font-bold">Log in to {branding.appName}</h1>
+        <p className="mb-6 text-sm text-gray-400">Enter your email and password to access your {branding.appName} account.</p>
 
         <form className="space-y-4" onSubmit={onSubmit}>
           <label className="block">

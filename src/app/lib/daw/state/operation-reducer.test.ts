@@ -22,6 +22,7 @@ function makeVersion(id: string, overrides: Partial<DawVersion> = {}): DawVersio
     branchName: overrides.branchName ?? overrides.label ?? id,
     operationSummary: overrides.operationSummary ?? null,
     createdBy: overrides.createdBy ?? 'user-a',
+    createdByName: overrides.createdByName ?? null,
     description: overrides.description ?? null,
     parentId: overrides.parentId ?? null,
     parentVersionId: overrides.parentVersionId ?? overrides.parentId ?? null,

@@ -14,4 +14,16 @@ describe('AccountPageClient', () => {
     const link = screen.getByRole('link', { name: 'Plugin Library' });
     expect(link.getAttribute('href')).toBe('/account/plugins');
   });
+
+  it('hides the plugin library link when disabled', () => {
+    render(
+      <AccountPageClient
+        userName="Ada"
+        userEmail="ada@example.com"
+        showPluginLibraryLink={false}
+      />,
+    );
+
+    expect(screen.queryByRole('link', { name: 'Plugin Library' })).toBeNull();
+  });
 });

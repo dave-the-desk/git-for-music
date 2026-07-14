@@ -79,6 +79,8 @@ export type ProcessingJobPayload =
 export * from './storage';
 export * from './queue';
 export * from './protocol';
+export * from './config';
+export * from './features';
 
 // ─── API request shapes ───────────────────────────────────────────────────────
 

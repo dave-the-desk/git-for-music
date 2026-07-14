@@ -107,11 +107,7 @@ const mockProjectSync = vi.hoisted(() => {
 });
 
 function normalizePlugins(
-  plugins: Array<{
-    instanceId: string;
-    position: number;
-    bypassed?: boolean;
-  }>,
+  plugins: Array<DawTrack['plugins'][number]>,
 ) {
   return plugins.map((plugin, index) => ({
     ...plugin,
@@ -184,7 +180,7 @@ function createDataTransfer() {
         data.clear();
       }
     },
-  } as DataTransfer;
+  } as unknown as DataTransfer;
 }
 
 const mockRecordingSave = vi.hoisted(() => ({

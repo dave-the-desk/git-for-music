@@ -32,20 +32,28 @@ function createFakeNode(id: string) {
 }
 
 function createFakeGainNode(id: string) {
-  const node = createFakeNode(id) as unknown as GainNode & { gain: { value: number; setValueAtTime: () => void } };
+  const node = createFakeNode(id) as unknown as GainNode & { gain: AudioParam };
   node.gain = {
     value: 1,
-    setValueAtTime() {},
-  };
+    setValueAtTime(value: number, startTime: number) {
+      void value;
+      void startTime;
+      return node.gain as unknown as AudioParam;
+    },
+  } as unknown as AudioParam;
   return node;
 }
 
 function createFakePannerNode(id: string) {
-  const node = createFakeNode(id) as unknown as StereoPannerNode & { pan: { value: number; setValueAtTime: () => void } };
+  const node = createFakeNode(id) as unknown as StereoPannerNode & { pan: AudioParam };
   node.pan = {
     value: 0,
-    setValueAtTime() {},
-  };
+    setValueAtTime(value: number, startTime: number) {
+      void value;
+      void startTime;
+      return node.pan as unknown as AudioParam;
+    },
+  } as unknown as AudioParam;
   return node;
 }
 
@@ -89,6 +97,8 @@ function createTrackPluginGraphFactory() {
     const graph: PlaybackPluginGraph = {
       outputNode: pluginNode,
       nodesByInstanceId: new Map([['plugin-1', pluginNode]]),
+      latencyByInstanceId: new Map(),
+      issues: [],
       teardown: () => {
         teardownCount += 1;
         inputNode.disconnect(pluginNode);

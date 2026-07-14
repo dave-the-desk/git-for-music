@@ -37,7 +37,7 @@ type ProjectSyncSnapshot = {
   isOnline: boolean;
   isSyncing: boolean;
   lastError: string | null;
-  versionTreeAttention: {
+  versionTreeAttention?: {
     versionId: string;
     createdAt: string;
   } | null;
@@ -305,7 +305,7 @@ function queueEntryToRebaseableRequest(
 ): DawOperationCommitRequest & { clientOperationId: string } {
   return {
     demoId,
-    operationType: entry.operationType,
+    operationType: entry.operationType as DawOperationCommitRequest['operationType'],
     payload: entry.payload as DawOperationCommitRequest['payload'],
     baseSnapshotId: entry.baseSnapshotId,
     baseOperationSeq: entry.baseOperationSeq,
@@ -314,7 +314,7 @@ function queueEntryToRebaseableRequest(
     affectedTimeRange: entry.affectedTimeRange,
     idempotencyKey: entry.idempotencyKey,
     clientOperationId: entry.clientOperationId,
-  };
+  } as DawOperationCommitRequest & { clientOperationId: string };
 }
 
 function toPersistedPendingStatus(status: LocalOperationQueueEntry['status']) {
@@ -626,10 +626,10 @@ export class ProjectSyncEngine {
       return;
     }
 
-    this.realtimeSilenceTimer = setTimeout(() => {
+    this.realtimeSilenceTimer = setTimeout(async () => {
       this.realtimeSilenceTimer = null;
       if (!this.realtimeSource) return;
-      void this.handleReconnect();
+      await this.handleReconnect();
     }, REALTIME_SILENCE_TIMEOUT_MS);
   }
 
@@ -716,16 +716,16 @@ export class ProjectSyncEngine {
       if (payload.projectId !== this.projectId || payload.demoId !== this.demoId) return;
       this.armRealtimeSilenceWatchdog();
       const attentionVersionId =
-        payload.type === 'version_created' ||
-        payload.type === 'branch_created' ||
-        payload.type === 'reverted'
+        payload.type === 'version_created' || payload.type === 'branch_created' || payload.type === 'reverted'
           ? payload.versionId
           : payload.type === 'head_moved'
             ? payload.currentVersionId
             : null;
       await this.rebootstrapFromServer();
-      if (attentionVersionId) {
-        this.flashVersionTreeAttention(attentionVersionId, payload.createdAt);
+      const nextAttentionVersionId =
+        payload.type === 'version_tree_changed' ? this.state.projectState?.currentVersionId ?? null : attentionVersionId;
+      if (nextAttentionVersionId) {
+        this.flashVersionTreeAttention(nextAttentionVersionId, payload.createdAt);
       }
     } catch {
       // Tree refresh is best-effort; accepted operations will still reconcile core edits.
@@ -939,9 +939,12 @@ export class ProjectSyncEngine {
     const previousIsFollowingHead = this.state.projectState?.isFollowingHead ?? false;
 
     if (!isDuplicateOrOlder && this.state.projectState) {
+      const nextProjectState = applyAcceptedProjectOperation(this.state.projectState, operation);
       this.setState({
         projectState: {
-          ...applyAcceptedProjectOperation(this.state.projectState, operation),
+          ...nextProjectState,
+          activeVersionId: previousActiveVersionId ?? nextProjectState.activeVersionId ?? null,
+          isFollowingHead: previousIsFollowingHead ?? nextProjectState.isFollowingHead ?? false,
           lastSeenOperationSeq: Math.max(lastSeenOperationSeq, operation.operationSeq),
         },
         lastSyncedOperationSeq: Math.max(this.state.lastSyncedOperationSeq, operation.operationSeq),
@@ -954,17 +957,6 @@ export class ProjectSyncEngine {
     await this.deletePendingOperation(operation.idempotencyKey);
     this.replayQueuedOperationsIntoProjectState();
     await this.persistProjectState();
-
-    const nextActiveVersionId = this.state.projectState?.activeVersionId ?? null;
-    const nextIsFollowingHead = this.state.projectState?.isFollowingHead ?? false;
-    if (
-      previousIsFollowingHead &&
-      nextIsFollowingHead &&
-      nextActiveVersionId &&
-      nextActiveVersionId !== previousActiveVersionId
-    ) {
-      await this.setActiveVersion(nextActiveVersionId, { isFollowingHead: true });
-    }
   }
 
   private async persistProjectState() {
@@ -1085,9 +1077,17 @@ export class ProjectSyncEngine {
     const bootstrapResponse = await this.fetchBootstrap();
     if (!bootstrapResponse) return;
 
-    this.bootstrapResponse = sanitizeBootstrapResponse(bootstrapResponse);
+    const sanitizedBootstrap = sanitizeBootstrapResponse(bootstrapResponse);
+    this.bootstrapResponse =
+      sanitizedBootstrap && this.state.projectState
+        ? {
+            ...sanitizedBootstrap,
+            activeVersionId: previousActiveVersionId,
+          }
+        : sanitizedBootstrap;
+
     let bootstrappedState = createLocalProjectStateFromBootstrap(this.bootstrapResponse ?? bootstrapResponse, {
-      fallbackActiveVersionId: this.state.projectState?.activeVersionId ?? null,
+      fallbackActiveVersionId: previousActiveVersionId,
       fallbackIsFollowingHead: this.state.projectState?.isFollowingHead ?? null,
     });
     if (bootstrappedState) {
@@ -1125,15 +1125,6 @@ export class ProjectSyncEngine {
     });
 
     await this.persistProjectState();
-
-    const nextActiveVersionId = this.state.projectState?.activeVersionId ?? null;
-    if (
-      this.state.projectState?.isFollowingHead !== false &&
-      nextActiveVersionId &&
-      nextActiveVersionId !== previousActiveVersionId
-    ) {
-      await this.setActiveVersion(nextActiveVersionId, { isFollowingHead: true });
-    }
   }
 
   private async refreshTimelineEditStateFromServer() {

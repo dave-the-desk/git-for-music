@@ -211,10 +211,6 @@ function shouldAutoAdvanceVersionOperation(
   versionParentId: string | null,
   branchMode?: 'continue' | 'fork',
 ) {
-  if (branchMode === 'fork') {
-    return false;
-  }
-
   return shouldAutoAdvanceActiveVersion(state, versionParentId);
 }
 
@@ -1241,6 +1237,7 @@ export function applyAcceptedProjectOperation(
         return state;
       }
       const versionParentId = getVersionParentId(version, payload);
+      const existingVersion = state.versions.find((candidate) => candidate.id === versionId);
       const versions = upsertVersionNode(
         state.versions,
         {
@@ -1253,8 +1250,9 @@ export function applyAcceptedProjectOperation(
           parentVersionId: version?.parentVersionId ?? payload.parentVersionId ?? payload.parentId ?? null,
           parentId: version?.parentId ?? payload.parentId ?? payload.parentVersionId ?? null,
           createdAt: version?.createdAt ?? payload.createdAt,
-          createdBy: version?.createdBy ?? payload.createdBy ?? null,
+          createdBy: existingVersion?.createdBy ?? version?.createdBy ?? payload.createdBy ?? null,
           createdByName:
+            existingVersion?.createdByName ??
             version?.createdByName ??
             state.userDisplayNamesById?.[version?.createdBy ?? payload.createdBy ?? ''] ??
             state.userDisplayNamesById?.[payload.createdBy ?? ''] ??
@@ -1351,6 +1349,8 @@ export function applyAcceptedProjectOperation(
         track?: DawTrack;
         operationSummary?: string | null;
         version?: VersionTreeNodeLike;
+        parentId?: string | null;
+        parentVersionId?: string | null;
       };
       const versionId = payload.versionId ?? payload.version?.id;
       if (!versionId) {

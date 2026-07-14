@@ -4,6 +4,12 @@
   "private": true,
   "main": "./index.ts",
   "types": "./index.ts",
+  "scripts": {
+    "test": "node --import tsx --test --test-concurrency=1 $(find app -name '*.test.ts')",
+    "test:integration": "node --import tsx --test --test-concurrency=1 $(find app -name '*.integration.test.ts')",
+    "lint": "pnpm --dir ../.. exec eslint --config eslint.config.mjs packages/server/app",
+    "typecheck": "tsc --noEmit"
+  },
   "dependencies": {
     "@git-for-music/db": "workspace:*",
     "@git-for-music/shared": "workspace:*",
@@ -11,6 +17,8 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "eslint": "^9.0.0",
+    "tsx": "^4.23.0",
     "typescript": "^5.0.0"
   }
 }

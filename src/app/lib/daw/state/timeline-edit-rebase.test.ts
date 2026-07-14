@@ -113,11 +113,18 @@ test('rebases a move onto the current clip placement', () => {
   });
 
   assert.ok(rebased);
-  assert.equal(rebased?.payload.fromTrackVersionId, 'track-version-a');
-  assert.equal(rebased?.payload.fromTimelineStartMs, 3500);
-  assert.equal(rebased?.payload.fromTimelineEndMs, 4300);
-  assert.equal(rebased?.payload.toTrackVersionId, 'track-version-c');
-  assert.equal(rebased?.payload.toTimelineStartMs, 4500);
+  const rebasedPayload = rebased.payload as {
+    fromTrackVersionId: string;
+    fromTimelineStartMs: number;
+    fromTimelineEndMs: number;
+    toTrackVersionId: string;
+    toTimelineStartMs: number;
+  };
+  assert.equal(rebasedPayload.fromTrackVersionId, 'track-version-a');
+  assert.equal(rebasedPayload.fromTimelineStartMs, 3500);
+  assert.equal(rebasedPayload.fromTimelineEndMs, 4300);
+  assert.equal(rebasedPayload.toTrackVersionId, 'track-version-c');
+  assert.equal(rebasedPayload.toTimelineStartMs, 4500);
 });
 
 test('rebases a trim by composing the delta onto the current source bounds', () => {
@@ -153,8 +160,12 @@ test('rebases a trim by composing the delta onto the current source bounds', () 
   });
 
   assert.ok(rebased);
-  assert.deepEqual(rebased?.payload.from, { startMs: 100, endMs: 900 });
-  assert.deepEqual(rebased?.payload.to, { startMs: 250, endMs: 750 });
+  const rebasedPayload = rebased.payload as {
+    from: { startMs: number; endMs: number };
+    to: { startMs: number; endMs: number };
+  };
+  assert.deepEqual(rebasedPayload.from, { startMs: 100, endMs: 900 });
+  assert.deepEqual(rebasedPayload.to, { startMs: 250, endMs: 750 });
 });
 
 test('rebases a split against the current clip bounds and split offset', () => {
@@ -191,9 +202,14 @@ test('rebases a split against the current clip bounds and split offset', () => {
   });
 
   assert.ok(rebased);
-  assert.equal(rebased?.payload.segmentStartMs, 100);
-  assert.equal(rebased?.payload.segmentEndMs, 900);
-  assert.equal(rebased?.payload.splitTimeMs, 600);
+  const rebasedPayload = rebased.payload as {
+    segmentStartMs: number;
+    segmentEndMs: number;
+    splitTimeMs: number;
+  };
+  assert.equal(rebasedPayload.segmentStartMs, 100);
+  assert.equal(rebasedPayload.segmentEndMs, 900);
+  assert.equal(rebasedPayload.splitTimeMs, 600);
 });
 
 test('rebases a merge using the current neighboring clips', () => {
@@ -243,9 +259,13 @@ test('rebases a merge using the current neighboring clips', () => {
   });
 
   assert.ok(rebased);
-  assert.equal(rebased?.payload.trackVersionId, 'track-version-a');
-  assert.equal(rebased?.payload.mergedSegment.timelineStartMs, 0);
-  assert.equal(rebased?.payload.mergedSegment.timelineEndMs, 2000);
+  const rebasedPayload = rebased.payload as {
+    trackVersionId: string;
+    mergedSegment: { timelineStartMs: number; timelineEndMs: number };
+  };
+  assert.equal(rebasedPayload.trackVersionId, 'track-version-a');
+  assert.equal(rebasedPayload.mergedSegment.timelineStartMs, 0);
+  assert.equal(rebasedPayload.mergedSegment.timelineEndMs, 2000);
 });
 
 test('rebases a crossfade only when both clips still share the same track', () => {
@@ -286,6 +306,10 @@ test('rebases a crossfade only when both clips still share the same track', () =
   });
 
   assert.ok(rebased);
-  assert.equal(rebased?.payload.trackVersionId, 'track-version-a');
-  assert.equal(rebased?.payload.leftSegmentId, 'segment-a');
+  const rebasedPayload = rebased.payload as {
+    trackVersionId: string;
+    leftSegmentId: string;
+  };
+  assert.equal(rebasedPayload.trackVersionId, 'track-version-a');
+  assert.equal(rebasedPayload.leftSegmentId, 'segment-a');
 });

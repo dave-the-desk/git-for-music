@@ -21,7 +21,7 @@ function createDropDataTransfer(file: File) {
       },
     ],
     types: ['Files'],
-  } as DataTransfer;
+  } as unknown as DataTransfer;
 }
 
 describe('AccountPluginsPageClient', () => {
@@ -72,7 +72,7 @@ describe('AccountPluginsPageClient', () => {
               manufacturer: null,
               parameterSchema: {},
               ownerId: 'user-1',
-              visibility: 'PRIVATE',
+              visibility: 'PRIVATE' as const,
               moduleObjectKey: '/plugins/user-1/plugin-1/plugin-1/delay.mjs',
               bundlePrefix: 'plugins/user-1/plugin-1/plugin-1',
               bundleKind: 'SINGLE_MODULE',
@@ -129,10 +129,10 @@ describe('AccountPluginsPageClient', () => {
       manufacturer: null,
       parameterSchema: {},
       ownerId: 'user-1',
-      visibility: 'PRIVATE',
+      visibility: 'PRIVATE' as const,
       moduleObjectKey: '/plugins/user-1/plugin-1/plugin-1/delay.mjs',
       bundlePrefix: 'plugins/user-1/plugin-1/plugin-1',
-      bundleKind: 'SINGLE_MODULE',
+      bundleKind: 'SINGLE_MODULE' as const,
       sizeBytes: '81',
       checksum: null,
       createdAt: '2026-07-08T12:00:00.000Z',

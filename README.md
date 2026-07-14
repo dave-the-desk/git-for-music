@@ -133,23 +133,44 @@ to delete local data, use Docker's volume removal options explicitly.
 
 The repo uses more than one test harness:
 
-- Web/UI/client tests use Vitest from the `src` package.
-- Several server/package tests use Node's test runner through `tsx`.
+- Web/UI/client tests use Vitest from the `src` package (`*.interaction.test.tsx`
+  plus a small set of Vitest-only `*.test.ts` files listed in `src/vitest.config.ts`).
+- All other `*.test.ts` files in `src/app` and `packages/server` run on Node's
+  built-in test runner through `tsx`.
 
-Examples:
+The `node:test` scripts discover files with POSIX `find` (no extra tooling
+required) and explicitly exclude the Vitest-only files, which fail if loaded
+outside the Vitest runner. If you add a Vitest-only `*.test.ts` file, add it to
+both the `test:unit` exclusion list in `src/package.json` and the `include`
+list in `src/vitest.config.ts`.
+
+The full process:
 
 ```bash
-# Web/client tests
-pnpm --filter @git-for-music/web test
-pnpm --filter @git-for-music/web test -- src/app/lib/daw/state/operation-reducer.test.ts
+# Everything (server node:test, web node:test, web Vitest)
+pnpm test
 
-# Server tests, run from packages/server
-cd packages/server
-pnpm exec tsx --test app/lib/daw/server/command-api.test.ts
+# Individual suites
+pnpm test:server    # packages/server node:test suite
+pnpm test:unit      # src/app node:test suite (excludes Vitest-only files)
+pnpm test:web       # src Vitest suite (interaction + Vitest-only files)
+
+# Integration suite (requires RUN_INTEGRATION_TESTS=1 and real service env vars)
+pnpm test:integration
+
+# Single files
+pnpm --filter @git-for-music/web test -- src/app/lib/daw/state/operation-reducer.test.ts
+cd packages/server && pnpm exec tsx --test app/lib/daw/server/command-api.test.ts
 ```
 
 For frontend interaction work, prefer the existing Vitest/jsdom harness in
 `src/` with Testing Library.
+
+## CI
+
+GitHub Actions runs `lint`, `typecheck`, `unit`, `integration`, and `build`
+for this repo. If you enable branch protection, require those checks before
+merging to `main`.
 
 ## Documentation Workflow
 
@@ -165,6 +186,10 @@ Start here:
 2. `docs/00_HOME.md`
 3. `docs/00_MAPS/git-for-music-context-index.md`
 4. `docs/01_PROTOCOLS/ai-start-here.md`
+
+If you are setting up a private downstream fork, start with
+[docs/downstream-private-repo-setup.md](docs/downstream-private-repo-setup.md)
+and keep customizations inside [docs/architecture/core-vs-product-boundaries.md](docs/architecture/core-vs-product-boundaries.md).
 
 For implementation work, trust order is:
 
