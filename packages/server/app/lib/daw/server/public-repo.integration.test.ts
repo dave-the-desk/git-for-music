@@ -149,17 +149,19 @@ integration('public repo integration flow covers signup, project creation, uploa
       processingJobIds: string[];
     }>(uploadResponse);
 
-    const uploadedAsset = await prisma.audioAssetMetadata.findFirst({
+    const uploadedTrackVersion = await prisma.trackVersion.findFirst({
       where: {
-        demoId,
-        trackVersionId: uploadBody.trackVersionId,
+        id: uploadBody.trackVersionId,
+        track: {
+          demoId,
+        },
       },
       select: {
         storageKey: true,
       },
     });
-    assert.ok(uploadedAsset);
-    uploadedStorageKey = uploadedAsset.storageKey;
+    assert.ok(uploadedTrackVersion);
+    uploadedStorageKey = uploadedTrackVersion.storageKey;
     assert.equal(await assetObjectExists(uploadedStorageKey), true);
 
     const uploadedSnapshot = await loadSnapshotStateForDemo(prisma, {
@@ -264,6 +266,28 @@ integration('public repo integration flow covers signup, project creation, uploa
     }
 
     if (groupId) {
+      // DemoVersion is referenced with ON DELETE RESTRICT from these tables,
+      // so remove them first or the group cascade cannot delete the versions.
+      await prisma.demoUserActiveVersion.deleteMany({
+        where: {
+          demo: {
+            project: {
+              groupId,
+            },
+          },
+        },
+      });
+      await prisma.trackVersion.deleteMany({
+        where: {
+          track: {
+            demo: {
+              project: {
+                groupId,
+              },
+            },
+          },
+        },
+      });
       await prisma.group.deleteMany({
         where: {
           id: groupId,
