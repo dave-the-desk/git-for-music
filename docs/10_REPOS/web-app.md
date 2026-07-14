@@ -21,6 +21,7 @@ This is the Next.js app in `src/`. It contains the browser UI, route handlers, a
 | `src/app/lib/daw/` | Client-side DAW engines, state, rendering, and utilities |
 | `src/app/groups/` | Route entrypoints for the groups area |
 | `src/app/home/` | Home route entrypoint |
+| `src/app/account/` | Account and private plugin-library route entrypoints |
 | `src/app/login/` and `src/app/signup/` | Auth route entrypoints |
 
 ## Practical Notes
@@ -33,4 +34,3 @@ This is the Next.js app in `src/`. It contains the browser UI, route handlers, a
 ## Inventory
 
 Use [docs/20_GENERATED_INVENTORIES/src-app-inventory.md](../20_GENERATED_INVENTORIES/src-app-inventory.md) for the current source-file map.
-

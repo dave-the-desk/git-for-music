@@ -107,11 +107,7 @@ const mockProjectSync = vi.hoisted(() => {
 });
 
 function normalizePlugins(
-  plugins: Array<{
-    instanceId: string;
-    position: number;
-    bypassed?: boolean;
-  }>,
+  plugins: Array<DawTrack['plugins'][number]>,
 ) {
   return plugins.map((plugin, index) => ({
     ...plugin,
@@ -129,12 +125,17 @@ const mockIngest = vi.hoisted(() => ({
   objectUrlCount: 0,
   revokeObjectUrl: vi.fn(),
   lastUploadAudioFileSourceVersionId: null as string | null,
+  lastUploadRecordedBlobSourceVersionId: null as string | null,
 }));
 
 const mockPlaybackEngine = vi.hoisted(() => ({
   lastConstructorOptions: null as { pluginGraphFactory?: unknown } | null,
   setProjectCount: 0,
   lastSetProject: null as unknown,
+}));
+
+const mockVersionHistoryTree = vi.hoisted(() => ({
+  lastProps: null as null | Record<string, unknown>,
 }));
 
 const mockPendingActiveVersionUpdates = vi.hoisted(() => ({
@@ -179,7 +180,7 @@ function createDataTransfer() {
         data.clear();
       }
     },
-  } as DataTransfer;
+  } as unknown as DataTransfer;
 }
 
 const mockRecordingSave = vi.hoisted(() => ({
@@ -411,7 +412,10 @@ vi.mock('./AudioInputSelector', () => ({
 }));
 
 vi.mock('./VersionHistoryTree', () => ({
-  VersionHistoryTree: () => createElement('div', { 'data-testid': 'version-history-tree' }),
+  VersionHistoryTree: (props: Record<string, unknown>) => {
+    mockVersionHistoryTree.lastProps = props;
+    return createElement('div', { 'data-testid': 'version-history-tree' });
+  },
 }));
 
 vi.mock('./TrackSegmentClip', () => ({
@@ -560,10 +564,16 @@ vi.mock('@/app/lib/daw/engine/ingest-engine', () => ({
         throw new Error('Source version missing');
       }
 
+      mockIngest.lastUploadRecordedBlobSourceVersionId = sourceVersion.id;
+
       await mockRecordingSave.deferred?.promise;
 
       const nextVersionId = `recorded-version-${mockIngest.recordUploadCount}`;
-      const nextVersion = cloneVersionWithTracks(sourceVersion, nextVersionId, ['Track 1']);
+      const nextVersion = cloneVersionWithTracks(
+        sourceVersion,
+        nextVersionId,
+        sourceVersion.tracks.map((track) => track.trackName),
+      );
       const nextProjectState: LocalProjectState = {
         ...currentState,
         versions: [...currentState.versions, nextVersion],
@@ -881,9 +891,11 @@ describe('DemoDawClient recording regression', () => {
     mockIngest.objectUrlCount = 0;
     mockIngest.revokeObjectUrl.mockReset();
     mockIngest.lastUploadAudioFileSourceVersionId = null;
+    mockIngest.lastUploadRecordedBlobSourceVersionId = null;
     mockPlaybackEngine.lastConstructorOptions = null;
     mockPlaybackEngine.setProjectCount = 0;
     mockPlaybackEngine.lastSetProject = null;
+    mockVersionHistoryTree.lastProps = null;
     mockPendingActiveVersionUpdates.pending = [];
     mockRecordingSave.deferred = createDeferred();
     mockProjectSync.reset();
@@ -905,6 +917,103 @@ describe('DemoDawClient recording regression', () => {
       }
       return new Response(JSON.stringify({}), { status: 200 });
     }) as typeof fetch;
+  });
+
+  it('sets the version history rail height on the first layout pass', () => {
+    const resizeObserver = class {
+      observe() {}
+      disconnect() {}
+      unobserve() {}
+    };
+    const rectSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(() => ({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 500,
+      width: 800,
+      height: 500,
+      toJSON: () => ({}),
+    } as DOMRect));
+
+    vi.stubGlobal('ResizeObserver', resizeObserver);
+
+    try {
+      const initialVersion = makeVersion('version-1', ['Track 1'], {
+        isCurrent: true,
+        operationSeq: 1,
+        createdAt: '2026-07-05T00:00:00.000Z',
+        tracks: [makeTrack('Track 1', 'version-1-track-1', { trackId: 'track-1', trackPosition: 0 })],
+      });
+
+      render(
+        <DemoDawClient
+          groupSlug="demo-group"
+          projectSlug="demo-project"
+          projectId="project-1"
+          demoId="demo-1"
+          currentUserId="user-1"
+          demoName="Demo"
+          demoDescription={null}
+          initialCurrentVersionId={initialVersion.id}
+          initialActiveVersionId={initialVersion.id}
+          initialIsFollowingHead={true}
+          initialVersions={[initialVersion]}
+        />,
+      );
+
+      expect(screen.getByTestId('version-tree-rail').style.height).toBe('545px');
+      expect(String(mockVersionHistoryTree.lastProps?.scrollResetSignal)).toMatch(/:500$/);
+    } finally {
+      rectSpy.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('does not auto-scroll the version history rail on the initial mount', () => {
+    const originalScrollIntoView = HTMLElement.prototype.scrollIntoView;
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: vi.fn(),
+    });
+    const scrollIntoViewSpy = HTMLElement.prototype.scrollIntoView as unknown as ReturnType<typeof vi.fn>;
+
+    try {
+      const initialVersion = makeVersion('version-1', ['Track 1'], {
+        isCurrent: true,
+        operationSeq: 1,
+        createdAt: '2026-07-05T00:00:00.000Z',
+        tracks: [makeTrack('Track 1', 'version-1-track-1', { trackId: 'track-1', trackPosition: 0 })],
+      });
+
+      render(
+        <DemoDawClient
+          groupSlug="demo-group"
+          projectSlug="demo-project"
+          projectId="project-1"
+          demoId="demo-1"
+          currentUserId="user-1"
+          demoName="Demo"
+          demoDescription={null}
+          initialCurrentVersionId={initialVersion.id}
+          initialActiveVersionId={initialVersion.id}
+          initialIsFollowingHead={true}
+          initialVersions={[initialVersion]}
+        />,
+      );
+
+      expect(scrollIntoViewSpy).not.toHaveBeenCalled();
+    } finally {
+      if (originalScrollIntoView) {
+        Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+          configurable: true,
+          value: originalScrollIntoView,
+        });
+      } else {
+        delete (HTMLElement.prototype as unknown as { scrollIntoView?: unknown }).scrollIntoView;
+      }
+    }
   });
 
   it('keeps only one Track 1 after recording and names the next added track Track 2', async () => {
@@ -965,9 +1074,180 @@ describe('DemoDawClient recording regression', () => {
     expect(container.querySelectorAll('[data-track-version-id]').length).toBe(2);
     expect(mockIngest.lastUploadAudioFileSourceVersionId).toBe('recorded-version-1');
 
+    mockRecordingSave.deferred = createDeferred();
+    const trackRows = container.querySelectorAll('[data-track-version-id]');
+    expect(trackRows.length).toBe(2);
+    await user.click(within(trackRows[1] as HTMLElement).getByTitle('Arm track for recording'));
+    await user.click(await screen.findByRole('button', { name: 'Start mock recording' }));
+    await user.click(screen.getByRole('button', { name: 'Stop mock recording' }));
+
+    await act(async () => {
+      mockRecordingSave.deferred?.resolve();
+    });
+
+    await waitFor(() => {
+      expect(container.querySelectorAll('[data-track-version-id]').length).toBe(2);
+    });
+
+    expect(mockIngest.lastUploadRecordedBlobSourceVersionId).toBe('uploaded-version-1');
+
     await act(async () => {
       await mockPendingActiveVersionUpdates.flush();
     });
+  });
+
+  it('checks out a selected version node as a pinned active version', async () => {
+    const initialVersion = makeVersion('version-1', ['Track 1'], {
+      isCurrent: true,
+      operationSeq: 1,
+      createdAt: '2026-07-05T00:00:00.000Z',
+      tracks: [makeTrack('Track 1', 'version-1-track-1', { trackId: 'track-1', trackPosition: 0 })],
+    });
+
+    render(
+      <DemoDawClient
+        groupSlug="demo-group"
+        projectSlug="demo-project"
+        projectId="project-1"
+        demoId="demo-1"
+        currentUserId="user-1"
+        demoName="Demo"
+        demoDescription={null}
+        initialCurrentVersionId={initialVersion.id}
+        initialActiveVersionId={initialVersion.id}
+        initialIsFollowingHead={true}
+        initialVersions={[initialVersion]}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(mockVersionHistoryTree.lastProps).toBeTruthy();
+    });
+
+    await act(async () => {
+      (mockVersionHistoryTree.lastProps?.onSelectVersion as ((id: string) => void) | undefined)?.(
+        initialVersion.id,
+      );
+    });
+
+    expect(mockPendingActiveVersionUpdates.pending.at(-1)).toMatchObject({
+      activeVersionId: initialVersion.id,
+      options: { isFollowingHead: true },
+    });
+
+    await act(async () => {
+      await mockPendingActiveVersionUpdates.flush();
+    });
+  });
+
+  it('keeps the selected checkout stable when another branch advances', async () => {
+    const rootVersion = makeVersion('version-root', ['Track 1'], {
+      isCurrent: false,
+      operationSeq: 1,
+      createdAt: '2026-07-05T00:00:00.000Z',
+      tracks: [makeTrack('Track 1', 'version-root-track-1', { trackId: 'track-1', trackPosition: 0 })],
+    });
+    const branchAVersion = makeVersion('version-branch-a', ['Track 1'], {
+      isCurrent: true,
+      operationSeq: 2,
+      createdAt: '2026-07-05T00:05:00.000Z',
+      parentId: rootVersion.id,
+      tracks: [makeTrack('Track 1', 'version-branch-a-track-1', { trackId: 'track-1', trackPosition: 0 })],
+    });
+    const branchBVersion = makeVersion('version-branch-b', ['Track 1'], {
+      isCurrent: true,
+      operationSeq: 3,
+      createdAt: '2026-07-05T00:10:00.000Z',
+      parentId: rootVersion.id,
+      tracks: [makeTrack('Track 1', 'version-branch-b-track-1', { trackId: 'track-1', trackPosition: 0 })],
+    });
+
+    render(
+      <DemoDawClient
+        groupSlug="demo-group"
+        projectSlug="demo-project"
+        projectId="project-1"
+        demoId="demo-1"
+        currentUserId="user-1"
+        demoName="Demo"
+        demoDescription={null}
+        initialCurrentVersionId={branchAVersion.id}
+        initialActiveVersionId={branchAVersion.id}
+        initialIsFollowingHead={true}
+        initialVersions={[rootVersion, branchAVersion]}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(mockVersionHistoryTree.lastProps).toBeTruthy();
+      expect(mockVersionHistoryTree.lastProps?.selectedVersionId).toBe(branchAVersion.id);
+    });
+
+    await act(async () => {
+      mockProjectSync.updateProjectState({
+        ...mockProjectSync.getState().projectState!,
+        versions: [rootVersion, branchAVersion, branchBVersion],
+        currentVersionId: branchBVersion.id,
+        activeVersionId: branchAVersion.id,
+        isFollowingHead: true,
+      });
+    });
+
+    expect(mockVersionHistoryTree.lastProps?.currentVersionId).toBe(branchBVersion.id);
+    expect(mockVersionHistoryTree.lastProps?.activeVersionId).toBe(branchAVersion.id);
+    expect(mockVersionHistoryTree.lastProps?.selectedVersionId).toBe(branchAVersion.id);
+  });
+
+  it('adds a track from the selected checkout instead of snapping back to the current head', async () => {
+    const rootVersion = makeVersion('version-root', ['Track 1'], {
+      isCurrent: false,
+      operationSeq: 1,
+      createdAt: '2026-07-04T00:00:00.000Z',
+      tracks: [makeTrack('Track 1', 'version-root-track-1', { trackId: 'track-1', trackPosition: 0 })],
+    });
+    const headVersion = makeVersion('version-head', ['Track 1', 'Track 2'], {
+      isCurrent: true,
+      operationSeq: 2,
+      createdAt: '2026-07-05T00:00:00.000Z',
+      parentId: rootVersion.id,
+      tracks: [
+        makeTrack('Track 1', 'version-head-track-1', { trackId: 'track-1', trackPosition: 0 }),
+        makeTrack('Track 2', 'version-head-track-2', { trackId: 'track-2', trackPosition: 1 }),
+      ],
+    });
+
+    const user = userEvent.setup();
+    const { container } = render(
+      <DemoDawClient
+        groupSlug="demo-group"
+        projectSlug="demo-project"
+        projectId="project-1"
+        demoId="demo-1"
+        currentUserId="user-1"
+        demoName="Demo"
+        demoDescription={null}
+        initialCurrentVersionId={headVersion.id}
+        initialActiveVersionId={headVersion.id}
+        initialIsFollowingHead={true}
+        initialVersions={[rootVersion, headVersion]}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(mockVersionHistoryTree.lastProps).toBeTruthy();
+    });
+
+    await act(async () => {
+      (mockVersionHistoryTree.lastProps?.onSelectVersion as ((id: string) => void) | undefined)?.(rootVersion.id);
+    });
+
+    await user.click(screen.getAllByRole('button', { name: '+ Add track' })[0]);
+
+    await waitFor(() => {
+      expect(mockIngest.lastUploadAudioFileSourceVersionId).toBe(rootVersion.id);
+    });
+
+    expect(container.querySelectorAll('[data-track-version-id]').length).toBe(2);
   });
 
   it('updates the docked rail when the viewport crosses the desktop breakpoint', async () => {
@@ -1008,6 +1288,51 @@ describe('DemoDawClient recording regression', () => {
 
     unmount();
     window.innerWidth = previousWidth;
+  });
+
+  it('zooms the version history rail from the header controls', async () => {
+    const initialVersion = makeVersion('version-1', ['Track 1'], {
+      isCurrent: true,
+      operationSeq: 1,
+      createdAt: '2026-07-05T00:00:00.000Z',
+      tracks: [makeTrack('Track 1', 'version-1-track-1', { trackId: 'track-1', trackPosition: 0 })],
+    });
+
+    const user = userEvent.setup();
+    render(
+      <DemoDawClient
+        groupSlug="demo-group"
+        projectSlug="demo-project"
+        projectId="project-1"
+        demoId="demo-1"
+        currentUserId="user-1"
+        demoName="Demo"
+        demoDescription={null}
+        initialCurrentVersionId={initialVersion.id}
+        initialActiveVersionId={initialVersion.id}
+        initialIsFollowingHead={true}
+        initialVersions={[initialVersion]}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(mockVersionHistoryTree.lastProps).toBeTruthy();
+      expect(mockVersionHistoryTree.lastProps?.zoomLevel).toBe(1);
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Zoom out version history' }));
+    await user.click(screen.getByRole('button', { name: 'Zoom out version history' }));
+    await user.click(screen.getByRole('button', { name: 'Zoom out version history' }));
+
+    await waitFor(() => {
+      expect(mockVersionHistoryTree.lastProps?.zoomLevel).toBeCloseTo(0.625, 3);
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Reset version history zoom' }));
+
+    await waitFor(() => {
+      expect(mockVersionHistoryTree.lastProps?.zoomLevel).toBe(1);
+    });
   });
 
   it('renders upload, plugin, and member controls in the left browser rail', async () => {
@@ -1141,6 +1466,110 @@ describe('DemoDawClient recording regression', () => {
     });
 
     expect(container.querySelectorAll('[data-track-version-id]').length).toBe(1);
+  });
+
+  it('logs detailed plugin module load failures when a plugin import fails', async () => {
+    const initialVersion = makeVersion('version-1', ['Track 1'], {
+      isCurrent: true,
+      operationSeq: 1,
+      createdAt: '2026-07-05T00:00:00.000Z',
+      tracks: [makeTrack('Track 1', 'version-1-track-1', { trackId: 'track-1', trackPosition: 0 })],
+    });
+
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/bootstrap?demoId=')) {
+        return new Response(
+          JSON.stringify({
+            pluginDefinitions: [
+              {
+                id: 'plugin-def-1',
+                pluginKey: 'com.example.broken',
+                name: 'Broken',
+                displayName: 'Broken',
+                description: null,
+                version: '1.0.0',
+                manufacturer: 'Example Audio',
+                parameterSchema: {},
+                ownerId: 'user-1',
+                visibility: 'PRIVATE',
+                descriptorUrl: 'data:text/javascript,throw%20new%20Error(%22boom%22)',
+                createdAt: '2026-07-05T00:00:00.000Z',
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.includes('/presence')) {
+        return new Response('', { status: 200 });
+      }
+      if (url.includes('/active-version')) {
+        return new Response(JSON.stringify({ activeVersionId: 'mock', isFollowingHead: true }), { status: 200 });
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    }) as typeof fetch;
+
+    const user = userEvent.setup();
+    render(
+      <DemoDawClient
+        groupSlug="demo-group"
+        projectSlug="demo-project"
+        projectId="project-1"
+        demoId="demo-1"
+        currentUserId="user-1"
+        demoName="Demo"
+        demoDescription={null}
+        initialCurrentVersionId={initialVersion.id}
+        initialActiveVersionId={initialVersion.id}
+        initialIsFollowingHead={true}
+        initialVersions={[initialVersion]}
+      />,
+    );
+
+    const browserRail = screen.getByTestId('browser-rail');
+    const browser = within(browserRail);
+    await user.click(browser.getByRole('button', { name: 'Plugins' }));
+
+    const addButton = await screen.findByRole('button', { name: 'Add Broken to selected track' });
+    await user.click(addButton);
+
+    await waitFor(() => {
+      expect(screen.getByText('Plugin chain error')).toBeTruthy();
+    });
+
+    await waitFor(() => {
+      const failureCall = consoleErrorSpy.mock.calls.find((call) => call[0] === '[daw][wam] plugin module load failed');
+      expect(failureCall).toBeTruthy();
+      const payload = JSON.parse(String(failureCall?.[1] ?? '{}')) as {
+        source?: string;
+        projectId?: string;
+        demoId?: string;
+        trackVersionId?: string | null;
+        trackId?: string | null;
+        trackName?: string | null;
+        pluginKey?: string;
+        version?: string;
+        descriptorUrl?: string | null;
+      };
+      expect(payload).toEqual(
+        expect.objectContaining({
+          source: 'manual-add',
+          projectId: 'project-1',
+          demoId: 'demo-1',
+          trackVersionId: 'version-1-track-1',
+          trackId: 'track-1',
+          trackName: 'Track 1',
+          pluginKey: 'com.example.broken',
+          version: '1.0.0',
+          descriptorUrl: 'data:text/javascript,throw%20new%20Error(%22boom%22)',
+        }),
+      );
+    });
+
+    consoleErrorSpy.mockRestore();
   });
 
   it('adds a plugin, changes a param, reorders it, removes another plugin, and emits the expected ops from the Plugins tab', async () => {
@@ -1328,6 +1757,45 @@ describe('DemoDawClient recording regression', () => {
     ).toEqual([delayInstanceId, 'plugin-c']);
   });
 
+  it('keeps track insert chains collapsed by default and reveals them on demand', async () => {
+    const initialVersion = makeVersion('version-1', ['Track 1'], {
+      isCurrent: true,
+      operationSeq: 1,
+      createdAt: '2026-07-05T00:00:00.000Z',
+      tracks: [
+        makeTrack('Track 1', 'version-1-track-1', {
+          trackId: 'track-1',
+          trackPosition: 0,
+          plugins: [makePlugin('plugin-a')],
+        }),
+      ],
+    });
+
+    render(
+      <DemoDawClient
+        groupSlug="demo-group"
+        projectSlug="demo-project"
+        projectId="project-1"
+        demoId="demo-1"
+        currentUserId="user-1"
+        demoName="Demo"
+        demoDescription={null}
+        initialCurrentVersionId={initialVersion.id}
+        initialActiveVersionId={initialVersion.id}
+        initialIsFollowingHead={true}
+        initialVersions={[initialVersion]}
+      />,
+    );
+
+    expect(screen.queryByTestId('track-plugin-chain-version-1-track-1')).toBeNull();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Show plugins on Track 1' }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('track-plugin-chain-version-1-track-1')).toBeTruthy();
+    });
+  });
+
   it('reflects collaborator plugin edits through the reducer and playback engine', async () => {
     const initialVersion = makeVersion('version-1', ['Track 1'], {
       isCurrent: true,
@@ -1417,7 +1885,12 @@ describe('DemoDawClient recording regression', () => {
       />,
     );
 
-    await screen.findByRole('slider', { name: 'Delay Mix' });
+    await userEvent.click(screen.getByRole('button', { name: 'Show plugins on Track 1' }));
+
+    const trackPluginChain = await screen.findByTestId('track-plugin-chain-version-1-track-1');
+    const trackPluginChainView = within(trackPluginChain);
+
+    await trackPluginChainView.findByRole('slider', { name: 'Delay Mix' });
     await waitFor(() => {
       expect(mockPlaybackEngine.setProjectCount).toBeGreaterThan(0);
     });
@@ -1457,9 +1930,9 @@ describe('DemoDawClient recording regression', () => {
     await waitFor(() => {
       expect(mockPlaybackEngine.setProjectCount).toBeGreaterThan(initialSetProjectCount);
     });
-    expect((screen.getByRole('slider', { name: 'Delay Mix' }) as HTMLInputElement).value).toBe('0.8');
-    expect((screen.getByRole('checkbox', { name: 'Delay On toggle' }) as HTMLInputElement).checked).toBe(false);
-    expect(screen.getByText('Bypassed')).toBeTruthy();
+    expect((trackPluginChainView.getByRole('slider', { name: 'Delay Mix' }) as HTMLInputElement).value).toBe('0.8');
+    expect((trackPluginChainView.getByRole('checkbox', { name: 'Delay On toggle' }) as HTMLInputElement).checked).toBe(false);
+    expect(trackPluginChainView.getByText('Bypassed')).toBeTruthy();
   });
 
   it('collapses and restores the timing and recording row', async () => {
@@ -1620,18 +2093,15 @@ describe('DemoDawClient recording regression', () => {
       mockProjectSync.updateProjectState({
         ...makeProjectState([initialVersion, remoteVersion]),
         currentVersionId: remoteVersion.id,
-        activeVersionId: initialVersion.id,
-        isFollowingHead: false,
+        activeVersionId: remoteVersion.id,
+        isFollowingHead: true,
         lastVersionOperationSeq: 2,
         lastSeenOperationSeq: 2,
       });
     });
 
-    await waitFor(() => {
-      expect(container.querySelector('[data-track-version-id]')?.textContent).toContain('Remote Update Track');
-    });
+    await screen.findAllByText('Remote Update Track');
 
-    await user.click((await screen.findAllByRole('button', { name: 'Enable mock mic' }))[0]);
     expect(container.querySelector('[data-track-version-id]')?.textContent).toContain('Remote Update Track');
   });
 

@@ -1,9 +1,8 @@
 import { prisma } from '@git-for-music/db';
 import { NextRequest, NextResponse } from 'next/server';
 import type { ApiError } from '@git-for-music/shared';
+import { getConfig } from '@git-for-music/shared';
 import { emitDawAssetProcessingStatus } from '@git-for-music/server/app/lib/daw/server/realtime-gateway';
-
-const WORKER_SECRET = process.env.DAW_WORKER_CALLBACK_SECRET?.trim() ?? '';
 
 type WorkerAssetStatus = 'queued' | 'processing' | 'complete' | 'failed';
 
@@ -40,6 +39,7 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ jobId: string }> },
 ) {
+  const WORKER_SECRET = getConfig().secrets.dawWorkerCallbackSecret;
   if (!WORKER_SECRET) {
     return NextResponse.json<ApiError>({ error: 'Worker callbacks are not configured' }, { status: 503 });
   }

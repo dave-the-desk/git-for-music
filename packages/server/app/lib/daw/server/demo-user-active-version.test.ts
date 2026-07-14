@@ -13,7 +13,7 @@ function makeDemoVersionFindFirst(versionLabels: Record<string, string>) {
   };
 }
 
-test('loadOrCreateDemoUserActiveVersionState advances an older per-user checkout to the branch head on reload when following head is enabled', async () => {
+test('loadOrCreateDemoUserActiveVersionState preserves an existing per-user checkout on reload when following head is enabled', async () => {
   let upsertArgs: unknown = null;
 
   const client = {
@@ -51,7 +51,7 @@ test('loadOrCreateDemoUserActiveVersionState advances an older per-user checkout
       upsert: async (args: unknown) => {
         upsertArgs = args;
         return {
-          activeVersionId: 'version-branch-head',
+          activeVersionId: 'version-branch-old',
           isFollowingHead: true,
           activeVersion: {
             label: 'Branch label',
@@ -74,14 +74,10 @@ test('loadOrCreateDemoUserActiveVersionState advances an older per-user checkout
     userId: 'user-1',
   });
 
-  assert.ok(upsertArgs);
-  assert.equal(result.activeVersionId, 'version-branch-head');
+  assert.equal(upsertArgs, null);
+  assert.equal(result.activeVersionId, 'version-branch-old');
   assert.equal(result.isFollowingHead, true);
   assert.equal(result.activeBranchName, 'Branch label');
-  assert.deepEqual((upsertArgs as { update: Record<string, unknown> }).update, {
-    activeVersionId: 'version-branch-head',
-    isFollowingHead: true,
-  });
 });
 
 test('loadOrCreateDemoUserActiveVersionState preserves a pinned checkout on reload', async () => {
@@ -413,5 +409,71 @@ test('loadOrCreateDemoUserActiveVersionState repairs an invalid row to the demo 
   assert.deepEqual((upsertArgs as { update: Record<string, unknown> }).update, {
     activeVersionId: 'version-root',
     isFollowingHead: false,
+  });
+});
+
+test('loadOrCreateDemoUserActiveVersionState honors an explicit checkout request even when a row already exists', async () => {
+  let upsertArgs: unknown = null;
+
+  const client = {
+    demo: {
+      findFirst: async () => ({
+        id: 'demo-1',
+        currentVersionId: 'version-root',
+        versions: [
+          {
+            id: 'version-root',
+            label: 'Root',
+            parentId: null,
+            createdAt: '2025-01-01T00:00:00.000Z',
+          },
+          {
+            id: 'version-branch',
+            label: 'Branch',
+            parentId: 'version-root',
+            createdAt: '2025-01-02T00:00:00.000Z',
+          },
+        ],
+      }),
+    },
+    demoUserActiveVersion: {
+      findFirst: async () => ({
+        activeVersionId: 'version-root',
+        isFollowingHead: true,
+      }),
+      upsert: async (args: unknown) => {
+        upsertArgs = args;
+        return {
+          activeVersionId: 'version-branch',
+          isFollowingHead: true,
+          activeVersion: {
+            label: 'Branch',
+          },
+        };
+      },
+    },
+    demoVersion: {
+      findFirst: makeDemoVersionFindFirst({
+        'version-root': 'Root',
+        'version-branch': 'Branch',
+      }),
+    },
+  } as const;
+
+  const result = await loadOrCreateDemoUserActiveVersionState(client as never, {
+    projectId: 'project-1',
+    demoId: 'demo-1',
+    userId: 'user-1',
+    currentActiveVersionId: 'version-branch',
+    isFollowingHead: true,
+  });
+
+  assert.equal(result.activeVersionId, 'version-branch');
+  assert.equal(result.isFollowingHead, true);
+  assert.equal(result.activeBranchName, 'Branch');
+  assert.ok(upsertArgs);
+  assert.deepEqual((upsertArgs as { update: Record<string, unknown> }).update, {
+    activeVersionId: 'version-branch',
+    isFollowingHead: true,
   });
 });

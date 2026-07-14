@@ -16,96 +16,25 @@ the visible checkout.
 
 ## Root cause
 
-This is a **stale `sourceVersionId` race**. The "Add track" upload forks from
-the version that was active *before* the recording was saved, because the active
-version is updated asynchronously and is not awaited.
+This was a **stale `sourceVersionId` race** in the older implementation. The
+"Add track" upload forked from the version that was active *before* the
+recording was saved, because the active version was updated asynchronously and
+was not awaited.
 
-Sequence:
+The current implementation fixes the behavior in three layers:
 
-- Saving a recording runs `handleSaveRecording` in
-  `@/Users/davidriede/PROJECTS/git-for-music/src/app/pages/groups/demo/components/daw/DemoDawClient.tsx:2939-3047`.
-  It uploads the blob, then sets the new branch as the view:
-  ```@/Users/davidriede/PROJECTS/git-for-music/src/app/pages/groups/demo/components/daw/DemoDawClient.tsx:3020-3021
-      setSelectedVersionId(data.demoVersionId);
-      void projectSyncEngine.setActiveVersion(data.demoVersionId, { isFollowingHead: true });
-  ```
-  `setActiveVersion` is fired with `void` (not awaited).
-
-- `ProjectSyncEngine.setActiveVersion` only updates
-  `projectState.activeVersionId` **after** its server round-trip resolves:
-  ```@/Users/davidriede/PROJECTS/git-for-music/src/app/lib/daw/engine/project-sync-engine.ts:409-417
-        this.setState({
-          projectState: {
-            ...this.state.projectState,
-            activeVersionId: nextActiveVersionId,
-            isFollowingHead: nextIsFollowingHead,
-          },
-  ```
-  Until that resolves, `liveActiveVersionId` still points at the **pre-recording**
-  version:
-  ```@/Users/davidriede/PROJECTS/git-for-music/src/app/pages/groups/demo/components/daw/DemoDawClient.tsx:418-419
-    const liveActiveVersionId =
-      liveProjectState?.activeVersionId ?? initialActiveVersionId ?? liveBranchHeadVersionId;
-  ```
-
-- Clicking Add track runs `handleAddTrack` → `performUpload`, which always forks
-  from `liveActiveVersionId`:
-  ```@/Users/davidriede/PROJECTS/git-for-music/src/app/pages/groups/demo/components/daw/DemoDawClient.tsx:2781-2792
-    async function handleAddTrack() {
-      await performUpload(
-        createBlankTrackFile(),
-        getNextUploadTrackName({ ... }),
-        'uploadUnchanged',
-      );
-    }
-  ```
-  ```@/Users/davidriede/PROJECTS/git-for-music/src/app/pages/groups/demo/components/daw/DemoDawClient.tsx:3055-3064
-        const data = (await ingestEngine.uploadAudioFile({
-          demoId,
-          projectId,
-          name,
-          sourceVersionId: liveActiveVersionId,
-          ...
-  ```
-
-- On the server, `uploadTrackCommand` forks a new branch **by copying the tracks
-  of `sourceVersionId`** and then appends the new blank track:
-  ```@/Users/davidriede/PROJECTS/git-for-music/packages/server/app/lib/daw/server/commands/upload-track.ts:166-173
-      const branchVersion = await createDemoVersionWithCopiedTracks(tx, {
-        demoId: demo.id,
-        sourceVersionId: sourceVersion.id,
-        parentId: sourceVersion.id,
-        kind: 'BRANCH',
-        ...
-  ```
-  Because `sourceVersionId` is the stale pre-recording version, the copied tracks
-  contain the **blank Track 1** (no recording). The command then adds Track 2.
-  The result is a branch with `[blank Track 1, Track 2]`, which is set as the new
-  active version — orphaning the recording branch. Visually: an extra blank
-  Track 1 plus Track 2.
-
-The naming path is not the cause: `getNextUploadTrackName`
-(`@/Users/davidriede/PROJECTS/git-for-music/src/app/lib/daw/utils/track-names.ts:19-27`)
-still returns `Track 2`. The duplication comes from forking off the wrong
-(stale) base version.
-
-### Why it is intermittent
-
-If the async `setActiveVersion` round-trip finishes before the user clicks
-Add track, `liveActiveVersionId` already points at the recording branch, the
-fork copies `Track 1` *with* the recording, and only `Track 2` is added. The bug
-only reproduces when Add track is clicked during the window before the active
-version update resolves.
-
-## Resolution
-
-The fix is now applied in two layers:
-
+- The client resolves the source version for both upload and recording from the
+  selected checkout, which is the authoritative source for edit-producing
+  actions.
 - The client reducer normalizes version state and removes blank duplicate track
   entries whenever a version is created or bootstrap state is replayed.
 - The server upload flows do the same cleanup after `TRACK_VERSION_CREATED` is
   committed, so the branch state sent back to clients cannot keep a blank copy
   around.
+
+That means the old duplicate-track symptom is a historical bug note, not the
+current behavior. The rendered branch now stays anchored to the latest
+committed state after back-to-back record and add-track actions.
 
 Cleanup rule:
 
@@ -135,5 +64,3 @@ They verify that:
 - [[40_FEATURES/versioning-mental-model]]
 - [[40_FEATURES/branching-and-revert-rules]]
 - [[40_FEATURES/active-problems]]
-</CodeContent>
-<parameter name="EmptyFile">false

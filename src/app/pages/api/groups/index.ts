@@ -1,6 +1,6 @@
 import { Prisma, prisma } from '@git-for-music/db';
 import { NextRequest, NextResponse } from 'next/server';
-import { SESSION_COOKIE_NAME } from '@git-for-music/server/app/lib/auth/session';
+import { getAuthenticatedUserFromRequest } from '@git-for-music/server/app/lib/auth';
 import { emitWorkspaceRealtimeChanged } from '@git-for-music/server/app/lib/workspace-realtime';
 
 const MAX_NAME_LENGTH = 80;
@@ -22,16 +22,7 @@ function isUniqueConstraintError(error: unknown) {
 }
 
 export async function POST(req: NextRequest) {
-  const sessionCookie = req.cookies.get(SESSION_COOKIE_NAME);
-  if (!sessionCookie?.value) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  const user = await prisma.user.findUnique({
-    where: { id: sessionCookie.value },
-    select: { id: true },
-  });
-
+  const user = await getAuthenticatedUserFromRequest(req);
   if (!user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }

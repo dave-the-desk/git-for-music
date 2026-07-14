@@ -94,11 +94,7 @@ services:
       - pnpm
       - --filter
       - "@git-for-music/db"
-      - exec
-      - prisma
-      - db
-      - push
-      - --accept-data-loss
+      - migrate:deploy
     environment:
       DATABASE_URL: *daw_db_url
     depends_on:

@@ -11,7 +11,10 @@ import { setDemoUserActiveVersion } from '@/app/lib/daw/server/demo-user-active-
 import { isValidTempoBpm } from '@/app/lib/daw/utils/timing';
 import { emitAcceptedDawOperation } from '@/app/lib/daw/server/realtime-gateway';
 import { emitWorkspaceRealtimeChanged } from '../../../workspace-realtime';
-import { serializeCreatedDemoVersionTreeNode } from '@/app/lib/daw/server/versioning';
+import {
+  loadUserDisplayName,
+  serializeCreatedDemoVersionTreeNode,
+} from '@/app/lib/daw/server/versioning';
 
 const MAX_NAME_LENGTH = 80;
 const MAX_DESCRIPTION_LENGTH = 500;
@@ -82,6 +85,7 @@ export async function createDemoCommand(input: {
     | null = null;
 
   const demo = await prisma.$transaction(async (tx) => {
+    const createdByName = await loadUserDisplayName(tx, input.userId);
     const createdDemo = await tx.demo.create({
       data: {
         projectId: project.id,
@@ -159,6 +163,7 @@ export async function createDemoCommand(input: {
             id: initialVersion.id,
             label: initialVersion.label,
             description: initialVersion.description,
+            createdByName,
             parentId: initialVersion.parentId,
             createdAt: initialVersion.createdAt,
             branchMode: 'continue',

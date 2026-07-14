@@ -84,18 +84,19 @@ export type BuildDawVisualProjectionInput = {
 };
 
 export function buildDawVisualProjection(input: BuildDawVisualProjectionInput): DawVisualProjection {
+  const roundPx = (value: number) => Math.round(value);
   const trackLanesByTrackVersionId: Record<string, TrackLaneVisualProjection> = {};
   const splitHoverLeftPxByTrackVersionId: Record<string, number> = {};
   const recordingTrackEndPx = input.temporaryRecordingTrack
-    ? msToPx(input.temporaryRecordingTrack.startOffsetMs + input.temporaryRecordingTrack.durationMs)
+    ? roundPx(msToPx(input.temporaryRecordingTrack.startOffsetMs + input.temporaryRecordingTrack.durationMs))
     : null;
   const recordingProjection: RecordingPreviewVisualProjection | null = input.temporaryRecordingTrack
     ? {
         ...input.temporaryRecordingTrack,
-        leftPx: msToPx(input.temporaryRecordingTrack.startOffsetMs),
-        widthPx: Math.max(msToPx(input.temporaryRecordingTrack.durationMs), 8),
-        hitAreaWidthPx: Math.max(msToPx(input.temporaryRecordingTrack.durationMs), 120),
-        waveformWidthPx: Math.max(msToPx(input.temporaryRecordingTrack.durationMs), 8),
+        leftPx: roundPx(msToPx(input.temporaryRecordingTrack.startOffsetMs)),
+        widthPx: Math.max(roundPx(msToPx(input.temporaryRecordingTrack.durationMs)), 8),
+        hitAreaWidthPx: Math.max(roundPx(msToPx(input.temporaryRecordingTrack.durationMs)), 120),
+        waveformWidthPx: Math.max(roundPx(msToPx(input.temporaryRecordingTrack.durationMs)), 8),
       }
     : null;
 
@@ -117,10 +118,10 @@ export function buildDawVisualProjection(input: BuildDawVisualProjectionInput): 
     });
 
     const segments: TrackLaneVisualSegment[] = renderableSegments.map((segment) => {
-      const leftPx = msToPx(segment.timelineStartMs);
-      const widthPx = Math.max(12, msToPx(segment.durationMs));
-      const sourceOffsetPx = msToPx(segment.sourceStartMs);
-      const sourceWidthPx = Math.max(0, msToPx(segment.sourceEndMs - segment.sourceStartMs));
+      const leftPx = roundPx(msToPx(segment.timelineStartMs));
+      const widthPx = Math.max(12, roundPx(msToPx(segment.durationMs)));
+      const sourceOffsetPx = roundPx(msToPx(segment.sourceStartMs));
+      const sourceWidthPx = Math.max(0, roundPx(msToPx(segment.sourceEndMs - segment.sourceStartMs)));
       const waveform = waveformCache.get(segment.id) ?? waveformCache.get(track.trackVersionId) ?? null;
 
       return {
@@ -129,17 +130,17 @@ export function buildDawVisualProjection(input: BuildDawVisualProjectionInput): 
         widthPx,
         sourceOffsetPx,
         sourceWidthPx,
-        fadeInWidthPx: msToPx(segment.fadeInMs),
-        fadeOutWidthPx: msToPx(segment.fadeOutMs),
-        crossfadeInWidthPx: segment.crossfadeInMs ? msToPx(segment.crossfadeInMs) : 0,
-        crossfadeOutWidthPx: segment.crossfadeOutMs ? msToPx(segment.crossfadeOutMs) : 0,
+        fadeInWidthPx: roundPx(msToPx(segment.fadeInMs)),
+        fadeOutWidthPx: roundPx(msToPx(segment.fadeOutMs)),
+        crossfadeInWidthPx: segment.crossfadeInMs ? roundPx(msToPx(segment.crossfadeInMs)) : 0,
+        crossfadeOutWidthPx: segment.crossfadeOutMs ? roundPx(msToPx(segment.crossfadeOutMs)) : 0,
         waveform,
       };
     });
 
-    const leftPx = msToPx(trackStartOffsetMs);
+    const leftPx = roundPx(msToPx(trackStartOffsetMs));
     const lastSegmentEnd = segments.reduce((max, segment) => Math.max(max, segment.leftPx + segment.widthPx), leftPx);
-    const widthPx = Math.max(msToPx(durationMs), lastSegmentEnd - leftPx);
+    const widthPx = Math.max(roundPx(msToPx(durationMs)), lastSegmentEnd - leftPx);
 
     maxEndPx = Math.max(maxEndPx, lastSegmentEnd);
 
@@ -161,7 +162,7 @@ export function buildDawVisualProjection(input: BuildDawVisualProjectionInput): 
     };
 
     if (input.splitHover?.trackVersionId === track.trackVersionId) {
-      splitHoverLeftPxByTrackVersionId[track.trackVersionId] = msToPx(input.splitHover.timeMs);
+      splitHoverLeftPxByTrackVersionId[track.trackVersionId] = roundPx(msToPx(input.splitHover.timeMs));
     }
   }
 
@@ -169,7 +170,7 @@ export function buildDawVisualProjection(input: BuildDawVisualProjectionInput): 
     pixelsPerSecond: PX_PER_SECOND,
     pixelsPerMs: PX_PER_MS,
     totalTimelineWidthPx: Math.max(maxEndPx, recordingTrackEndPx ?? 0, input.minimumWidthPx ?? 400),
-    currentTimeLeftPx: msToPx(input.currentTimeMs),
+    currentTimeLeftPx: roundPx(msToPx(input.currentTimeMs)),
     splitHoverLeftPxByTrackVersionId,
     recordingTrackEndPx,
     trackLanesByTrackVersionId,

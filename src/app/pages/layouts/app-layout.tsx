@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { branding } from '@/app/product/branding';
 import { NotificationBell } from './components/NotificationBell';
 
 export default function AppLayout({
@@ -26,7 +27,7 @@ export default function AppLayout({
       <nav className="border-b border-gray-800 bg-gray-900 px-6 py-3">
         <div className="mx-auto flex max-w-7xl items-center gap-6">
           <Link href="/groups" className="text-lg font-semibold tracking-tight text-white">
-            git-for-music
+            {branding.appName}
           </Link>
           <div className="ml-auto flex items-center gap-3">
             <NotificationBell />

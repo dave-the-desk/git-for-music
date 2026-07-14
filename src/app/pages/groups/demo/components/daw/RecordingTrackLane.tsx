@@ -223,7 +223,7 @@ export function RecordingTrackLane({
       if (!container) return;
       if (!isRecording || !stream) return;
 
-      const playheadX = (currentTimeMsRef.current / 1000) * PX_PER_SECOND;
+      const playheadX = Math.round((currentTimeMsRef.current / 1000) * PX_PER_SECOND);
       const rightVisiblePx = container.scrollLeft + container.clientWidth;
 
       if (!autoFollowArmedRef.current && playheadX >= rightVisiblePx - triggerThresholdPx) {
@@ -231,9 +231,11 @@ export function RecordingTrackLane({
       }
 
       if (autoFollowArmedRef.current) {
-        const targetLeft = Math.max(
-          autoFollowLeftRef.current,
-          playheadX - container.clientWidth + rightEdgePaddingPx,
+        const targetLeft = Math.round(
+          Math.max(
+            autoFollowLeftRef.current,
+            playheadX - container.clientWidth + rightEdgePaddingPx,
+          ),
         );
         autoFollowLeftRef.current = targetLeft;
         if (Math.abs(container.scrollLeft - targetLeft) > 1) {

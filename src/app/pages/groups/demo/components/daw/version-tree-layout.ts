@@ -101,18 +101,6 @@ function getColumnColor(column: number): GraphColor {
   };
 }
 
-function isFiniteColumn(column: number | undefined): column is number {
-  return typeof column === 'number' && Number.isFinite(column);
-}
-
-function findFirstFreeColumn(startColumn: number, occupiedColumns: Set<number>) {
-  let column = Math.max(0, startColumn);
-  while (occupiedColumns.has(column)) {
-    column += 1;
-  }
-  return column;
-}
-
 export function buildTree(versions: DawVersion[]): TreeNode[] {
   const childrenMap = new Map<string | null, VersionWithParents[]>();
   for (const version of versions as VersionWithParents[]) {
@@ -140,17 +128,20 @@ export function buildTree(versions: DawVersion[]): TreeNode[] {
 
 export function buildGraphLayout(versions: DawVersion[]): GraphLayout {
   const sortedVersions = [...versions].sort(compareVersions);
+  const versionById = new Map(sortedVersions.map((version) => [version.id, version] as const));
   const childrenMap = new Map<string, VersionWithParents[]>();
   const parentsMap = new Map<string, string[]>();
+  const primaryParentById = new Map<string, string | null>();
 
   for (const version of versions as VersionWithParents[]) {
     const parentIds = Array.from(new Set(getParentIds(version)));
     parentsMap.set(version.id, parentIds.filter((parentId): parentId is string => parentId !== null));
+    const primaryParentId = parentIds.find((parentId): parentId is string => parentId !== null) ?? null;
+    primaryParentById.set(version.id, primaryParentId);
 
-    for (const parentId of parentIds) {
-      if (parentId === null) continue;
-      if (!childrenMap.has(parentId)) childrenMap.set(parentId, []);
-      childrenMap.get(parentId)!.push(version);
+    if (primaryParentId !== null) {
+      if (!childrenMap.has(primaryParentId)) childrenMap.set(primaryParentId, []);
+      childrenMap.get(primaryParentId)!.push(version);
     }
   }
 
@@ -158,59 +149,100 @@ export function buildGraphLayout(versions: DawVersion[]): GraphLayout {
     siblings.sort(compareVersions);
   }
 
+  const widthById = new Map<string, number>();
   const columnById = new Map<string, number>();
-  const occupiedColumns = new Set<number>();
-  let nextColumn = 0;
+  const rowById = new Map<string, number>();
+  const recursionStack = new Set<string>();
 
-  for (const version of [...sortedVersions].reverse()) {
-    const children = childrenMap.get(version.id) ?? [];
-    const childColumns = children.map((child) => columnById.get(child.id)).filter(isFiniteColumn).sort((a, b) => a - b);
-    const branchChildColumns = children
-      .filter((child) => (parentsMap.get(child.id)?.length ?? 0) <= 1)
-      .map((child) => columnById.get(child.id))
-      .filter(isFiniteColumn)
-      .sort((a, b) => a - b);
-
-    let column: number;
-    if (childColumns.length === 0) {
-      column = findFirstFreeColumn(nextColumn, occupiedColumns);
-      nextColumn = column + 1;
-    } else if (branchChildColumns.length > 0) {
-      column = branchChildColumns[0] ?? childColumns[0];
-    } else {
-      const leftmostChildColumn = childColumns[0] ?? nextColumn;
-      column = findFirstFreeColumn(leftmostChildColumn + 1, occupiedColumns);
-      nextColumn = Math.max(nextColumn, column + 1);
+  function measureSubtreeWidth(version: VersionWithParents): number {
+    const cachedWidth = widthById.get(version.id);
+    if (cachedWidth !== undefined) {
+      return cachedWidth;
     }
 
-    columnById.set(version.id, column);
-    occupiedColumns.add(column);
+    if (recursionStack.has(version.id)) {
+      return 1;
+    }
+
+    recursionStack.add(version.id);
+    const children = childrenMap.get(version.id) ?? [];
+    const width =
+      children.length === 0
+        ? 1
+        : children.reduce((sum, child) => sum + measureSubtreeWidth(child), 0);
+    recursionStack.delete(version.id);
+    widthById.set(version.id, width);
+    return width;
   }
 
-  const rowCount = Math.max(1, sortedVersions.length);
-  const columnCount = Math.max(1, occupiedColumns.size);
+  function assignSubtree(version: VersionWithParents, startColumn: number, row: number) {
+    if (columnById.has(version.id)) {
+      return;
+    }
+
+    const width = measureSubtreeWidth(version);
+    const children = childrenMap.get(version.id) ?? [];
+    rowById.set(version.id, row);
+    columnById.set(version.id, startColumn + (width - 1) / 2);
+
+    let childStartColumn = startColumn;
+    for (const child of children) {
+      assignSubtree(child, childStartColumn, row + 1);
+      childStartColumn += measureSubtreeWidth(child);
+    }
+  }
+
+  const rootVersions = sortedVersions.filter((version) => {
+    const primaryParentId = primaryParentById.get(version.id);
+    return primaryParentId == null || !versionById.has(primaryParentId);
+  });
+
+  let nextRootColumn = 0;
+  for (const rootVersion of rootVersions) {
+    if (columnById.has(rootVersion.id)) continue;
+    assignSubtree(rootVersion, nextRootColumn, 0);
+    nextRootColumn += measureSubtreeWidth(rootVersion);
+  }
+
+  for (const version of sortedVersions) {
+    if (columnById.has(version.id)) continue;
+    assignSubtree(version, nextRootColumn, 0);
+    nextRootColumn += measureSubtreeWidth(version);
+  }
+
+  const rowValues = Array.from(rowById.values());
+  const maxRow = rowValues.length > 0 ? Math.max(...rowValues) : 0;
+  const rowCount = Math.max(1, maxRow + 1);
+  const columnValues = Array.from(columnById.values());
+  const minColumn = columnValues.length > 0 ? Math.min(...columnValues) : 0;
+  const maxColumn = columnValues.length > 0 ? Math.max(...columnValues) : 0;
+  const columnCount = Math.max(1, Math.ceil(maxColumn - minColumn + 1));
   const density = Math.max(0.62, Math.min(1, 1 - Math.max(0, rowCount - 4) * 0.1 - Math.max(0, columnCount - 4) * 0.04));
   const scale = 0.66 * density;
-  const baseNodeSize = Math.round(136 * scale);
-  const labelFontSize = Math.round(13 * scale);
-  const metaFontSize = Math.round(10.5 * scale);
+  const baseNodeSize = Math.round(300 * scale);
+  const labelFontSize = Math.round(11 * scale + 2);
+  const metaFontSize = Math.round(10 * scale + 2);
   const summaryFontSize = Math.round(10 * scale);
   const lineHeight = Number((1.15 + scale * 0.05).toFixed(2));
   const nodeWidth = baseNodeSize;
   const nodeHeight = nodeWidth;
-  const xGap = Math.max(Math.round(176 * scale), Math.round(nodeWidth * 1.24));
-  const yGap = Math.max(Math.round(126 * scale), Math.round(nodeHeight * 1.08));
-  const paddingX = Math.max(Math.round(22 * scale), Math.round(nodeWidth * 0.18));
-  const paddingY = Math.max(Math.round(18 * scale), Math.round(nodeHeight * 0.16));
+  const xGap = Math.max(Math.round(260 * scale), Math.round(nodeWidth * 1.34));
+  const yGap = Math.max(Math.round(228 * scale), Math.round(nodeHeight * 1.26));
+  const paddingX = Math.max(Math.round(30 * scale), Math.round(nodeWidth * 0.2));
+  const paddingY = Math.max(Math.round(30 * scale), Math.round(nodeHeight * 0.18));
 
-  const nodes = sortedVersions.map((version, row) => {
+  const width = paddingX * 2 + (columnCount - 1) * xGap + nodeWidth;
+  const height = paddingY * 2 + rowCount * yGap + nodeHeight;
+
+  const nodes = sortedVersions.map((version, index) => {
     const column = columnById.get(version.id) ?? 0;
+    const row = rowById.get(version.id) ?? index;
     return {
       id: version.id,
       version,
       row,
       column,
-      left: paddingX + column * xGap,
+      left: paddingX + (column - minColumn) * xGap,
       top: paddingY + row * yGap,
       parentIds: parentsMap.get(version.id) ?? [],
       color: getColumnColor(column),
@@ -226,9 +258,6 @@ export function buildGraphLayout(versions: DawVersion[]): GraphLayout {
       edges.push({ fromId: parent.id, toId: node.id, color: parent.color.line });
     }
   }
-
-  const width = paddingX * 2 + (columnCount + 1) * xGap + nodeWidth;
-  const height = paddingY * 2 + rowCount * yGap + nodeHeight;
 
   return {
     nodes,

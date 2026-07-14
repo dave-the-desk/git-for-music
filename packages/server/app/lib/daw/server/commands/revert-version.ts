@@ -16,7 +16,10 @@ import {
   emitAcceptedDawOperation,
   emitDawReverted,
 } from '@/app/lib/daw/server/realtime-gateway';
-import { serializeCreatedDemoVersionTreeNode } from '@/app/lib/daw/server/versioning';
+import {
+  loadUserDisplayName,
+  serializeCreatedDemoVersionTreeNode,
+} from '@/app/lib/daw/server/versioning';
 
 const MAX_LABEL_LENGTH = 120;
 const MAX_DESCRIPTION_LENGTH = 500;
@@ -182,6 +185,7 @@ export async function revertToVersionCommand(
   let versionCreatedOperation: Awaited<ReturnType<typeof recordDemoDawOperation>> | null = null;
 
   const createdVersion = await db.$transaction(async (tx) => {
+    const createdByName = await loadUserDisplayName(tx, input.userId);
     const version = await createVersion(tx, {
       demoId: demo.id,
       sourceVersionId: sourceVersion.id,
@@ -189,6 +193,7 @@ export async function revertToVersionCommand(
       kind: 'REVERT',
       label: label || `Revert to ${sourceVersion.label}`,
       description: description || null,
+      createdByName,
     });
 
     if (shouldFollowHead) {
@@ -222,6 +227,7 @@ export async function revertToVersionCommand(
             id: version.id,
             label: version.label,
             description: version.description,
+            createdByName: version.createdByName,
             parentId: version.parentId,
             createdAt: version.createdAt,
             branchMode: 'continue',

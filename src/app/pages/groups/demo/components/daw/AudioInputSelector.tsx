@@ -273,7 +273,7 @@ export function AudioInputSelector({
       {isOpen ? (
         <div
           ref={panelRef}
-          className="w-full max-w-[20rem] rounded-md border border-gray-700 bg-gray-950 p-3 shadow-2xl shadow-black/40"
+          className="w-full max-w-[22rem] rounded-md border border-gray-700 bg-gray-950 p-3 shadow-2xl shadow-black/40"
           role="dialog"
           aria-label="Audio input selector"
         >
@@ -292,6 +292,29 @@ export function AudioInputSelector({
           </div>
 
           <div className="mt-3 space-y-3">
+            <div className="rounded-md border border-gray-800 bg-gray-900/70 px-3 py-2">
+              {selectedDeviceUnavailable ? (
+                <p className="text-sm text-red-300">Selected device unavailable</p>
+              ) : selectedAudioInputDeviceId && selectedDevice ? (
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm text-emerald-300">
+                    Selected: {selectedDevice.label.trim() || fallbackDeviceLabel(audioInputs.indexOf(selectedDevice))}
+                  </p>
+                  <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-200">
+                    Ready
+                  </span>
+                </div>
+              ) : hasAnyDevices && !hasPermission ? (
+                <p className="text-sm text-amber-200">Microphone permission needed</p>
+              ) : hasAnyDevices && !selectedAudioInputDeviceId ? (
+                <p className="text-sm text-gray-300">Choose a microphone to enable recording.</p>
+              ) : !hasAnyDevices ? (
+                <p className="text-sm text-red-300">No microphone found</p>
+              ) : (
+                <p className="text-sm text-gray-400">The selector is ready.</p>
+              )}
+            </div>
+
             {!hasPermission && hasAnyDevices ? (
               <button
                 type="button"
@@ -321,22 +344,6 @@ export function AudioInputSelector({
                 ))}
               </select>
             </label>
-
-            <div className="rounded-md border border-gray-800 bg-gray-900/80 px-3 py-2 text-xs text-gray-300">
-              {selectedDeviceUnavailable ? (
-                <p className="text-red-300">Selected device unavailable</p>
-              ) : selectedAudioInputDeviceId && selectedDevice ? (
-                <p className="text-emerald-300">Selected: {selectedDevice.label.trim() || fallbackDeviceLabel(audioInputs.indexOf(selectedDevice))}</p>
-              ) : hasAnyDevices && !hasPermission ? (
-                <p className="text-amber-200">Microphone permission needed</p>
-              ) : hasAnyDevices && !selectedAudioInputDeviceId ? (
-                <p>Choose a microphone to enable recording.</p>
-              ) : !hasAnyDevices ? (
-                <p className="text-red-300">No microphone found</p>
-              ) : (
-                <p className="text-gray-400">The selector is ready.</p>
-              )}
-            </div>
           </div>
         </div>
       ) : null}

@@ -5,10 +5,10 @@ Generated from the current workspace layout.
 ## Summary
 
 - Monorepo root with a Next.js app in `src/`
-- `packages/db/`: 7 tracked source files
-- `packages/server/`: 45 tracked source files
-- `packages/shared/`: 6 tracked source files
-- `src/app/`: 142 tracked source files
+- `packages/db/`: 10 tracked files from `rg --files packages/db`
+- `packages/server/`: 53 tracked files from `rg --files packages/server`
+- `packages/shared/`: 6 tracked files from `rg --files packages/shared`
+- `src/app/`: 198 tracked files from `rg --files src/app`
 
 ## Use This For
 
@@ -22,4 +22,3 @@ Generated from the current workspace layout.
 - [[packages-server-inventory]]
 - [[packages-db-inventory]]
 - [[packages-shared-inventory]]
-

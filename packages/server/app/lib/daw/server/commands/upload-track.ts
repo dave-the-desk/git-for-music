@@ -3,7 +3,7 @@ import path from 'node:path';
 import { prisma } from '@git-for-music/db';
 import { NextResponse } from 'next/server';
 import type { ApiError, UploadTimingChoice, UploadTrackResponse } from '@git-for-music/shared';
-import type { DawProjectOperationRecord } from '@/app/lib/daw/protocol';
+import type { DawProjectOperationRecord, DawVersionTreeTrackSnapshot } from '@/app/lib/daw/protocol';
 import {
   checkpointDemoDawSnapshot,
   recordDemoDawOperation,
@@ -18,6 +18,7 @@ import {
 } from '@/app/lib/daw/server/realtime-gateway';
 import {
   createDemoVersionWithCopiedTracks,
+  loadUserDisplayName,
   serializeCreatedDemoTrackVersionTreeTrack,
   serializeCreatedDemoVersionTreeNode,
 } from '@/app/lib/daw/server/versioning';
@@ -26,6 +27,40 @@ import { getDuplicateBlankTrackVersionIds } from '@/app/lib/daw/server/track-dup
 function fileNameWithoutExtension(fileName: string) {
   const extension = path.extname(fileName);
   return fileName.slice(0, fileName.length - extension.length) || fileName;
+}
+
+export function buildUploadedTrackBranchTracks(input: {
+  sourceTracks: DawVersionTreeTrackSnapshot[];
+  trackId: string;
+  trackName: string;
+  trackPosition: number;
+  trackVersionId: string;
+  storageKey: string;
+  mimeType: string;
+  createdAt: Date;
+  existingTrackId: string | null;
+}) {
+  const createdTrack = serializeCreatedDemoTrackVersionTreeTrack({
+    trackId: input.trackId,
+    trackName: input.trackName,
+    trackPosition: input.trackPosition,
+    trackVersionId: input.trackVersionId,
+    storageKey: input.storageKey,
+    mimeType: input.mimeType,
+    durationMs: null,
+    startOffsetMs: 0,
+    createdAt: input.createdAt,
+    isDerived: false,
+    operationType: 'ORIGINAL',
+    parentTrackVersionId: null,
+    segments: [],
+  });
+
+  if (input.existingTrackId) {
+    return input.sourceTracks.map((track) => (track.trackId === input.existingTrackId ? createdTrack : track));
+  }
+
+  return [...input.sourceTracks, createdTrack].sort((left, right) => left.trackPosition - right.trackPosition);
 }
 
 export async function uploadTrackCommand(input: {
@@ -159,6 +194,7 @@ export async function uploadTrackCommand(input: {
     | null = null;
 
   const createdTrackVersion = await prisma.$transaction(async (tx) => {
+    const createdByName = await loadUserDisplayName(tx, input.userId);
     let effectiveTargetVersionId = currentVersionId;
     const branchMode =
       sourceVersion.id === activeVersionState.activeVersionId ? 'continue' : 'fork';
@@ -171,6 +207,7 @@ export async function uploadTrackCommand(input: {
       kind: 'BRANCH',
       label: branchLabel,
       description: branchDescription,
+      createdByName,
     });
 
     await setDemoUserActiveVersion(tx, {
@@ -180,47 +217,6 @@ export async function uploadTrackCommand(input: {
       versionId: branchVersion.id,
       isFollowingHead: true,
     });
-
-    versionBranchCreatedOperation = await recordDemoDawOperation(
-      tx,
-      {
-        projectId: demo.project.id,
-        demoId: demo.id,
-        actorUserId: input.userId,
-        operationType: 'VERSION_BRANCH_CREATED',
-        payload: {
-          versionId: branchVersion.id,
-          parentVersionId: branchVersion.parentId,
-          branchName: branchVersion.label,
-          branchMode,
-          label: branchVersion.label,
-          createdAt: branchVersion.createdAt.toISOString(),
-          createdBy: input.userId,
-          operationSummary: branchVersion.description,
-          sourceVersionId: sourceVersion.id,
-          version: serializeCreatedDemoVersionTreeNode({
-            id: branchVersion.id,
-            label: branchVersion.label,
-            description: branchVersion.description,
-            parentId: branchVersion.parentId,
-            createdAt: branchVersion.createdAt,
-            branchMode,
-            tempoBpm: branchVersion.tempoBpm,
-            timeSignatureNum: branchVersion.timeSignatureNum,
-            timeSignatureDen: branchVersion.timeSignatureDen,
-            musicalKey: branchVersion.musicalKey,
-            tempoSource: branchVersion.tempoSource,
-            keySource: branchVersion.keySource,
-            kind: branchVersion.kind,
-            isCurrent: true,
-            tracks: branchVersion.tracks,
-          }),
-        },
-      },
-      {
-        checkpointCreatedById: input.userId,
-      },
-    );
 
     effectiveTargetVersionId = branchVersion.id;
 
@@ -284,6 +280,18 @@ export async function uploadTrackCommand(input: {
       },
     });
 
+    const branchTracks = buildUploadedTrackBranchTracks({
+      sourceTracks: branchVersion.tracks,
+      trackId,
+      trackName: existingTrackName ?? trackName,
+      trackPosition: existingTrackPosition ?? 0,
+      trackVersionId: trackVersion.id,
+      storageKey: uploadedAsset.storageKey,
+      mimeType: contentType,
+      createdAt: trackVersion.createdAt,
+      existingTrackId,
+    });
+
     if (contentType !== 'application/x-git-for-music-empty-track') {
       const duplicateTrackVersions = await tx.trackVersion.findMany({
         where: {
@@ -336,6 +344,7 @@ export async function uploadTrackCommand(input: {
             id: branchVersion.id,
             label: branchVersion.label,
             description: branchVersion.description,
+            createdByName: branchVersion.createdByName,
             parentId: branchVersion.parentId,
             createdAt: branchVersion.createdAt,
             branchMode,
@@ -347,7 +356,7 @@ export async function uploadTrackCommand(input: {
             keySource: branchVersion.keySource,
             kind: branchVersion.kind,
             isCurrent: true,
-            tracks: branchVersion.tracks,
+            tracks: branchTracks,
           }),
           track: serializeCreatedDemoTrackVersionTreeTrack({
             trackId,
@@ -363,6 +372,48 @@ export async function uploadTrackCommand(input: {
             operationType: 'ORIGINAL',
             parentTrackVersionId: null,
             segments: [],
+          }),
+        },
+      },
+      {
+        checkpointCreatedById: input.userId,
+      },
+    );
+
+    versionBranchCreatedOperation = await recordDemoDawOperation(
+      tx,
+      {
+        projectId: demo.project.id,
+        demoId: demo.id,
+        actorUserId: input.userId,
+        operationType: 'VERSION_BRANCH_CREATED',
+        payload: {
+          versionId: branchVersion.id,
+          parentVersionId: branchVersion.parentId,
+          branchName: branchVersion.label,
+          branchMode,
+          label: branchVersion.label,
+          createdAt: branchVersion.createdAt.toISOString(),
+          createdBy: input.userId,
+          operationSummary: branchVersion.description,
+          sourceVersionId: sourceVersion.id,
+          version: serializeCreatedDemoVersionTreeNode({
+            id: branchVersion.id,
+            label: branchVersion.label,
+            description: branchVersion.description,
+            createdByName: branchVersion.createdByName,
+            parentId: branchVersion.parentId,
+            createdAt: branchVersion.createdAt,
+            branchMode,
+            tempoBpm: branchVersion.tempoBpm,
+            timeSignatureNum: branchVersion.timeSignatureNum,
+            timeSignatureDen: branchVersion.timeSignatureDen,
+            musicalKey: branchVersion.musicalKey,
+            tempoSource: branchVersion.tempoSource,
+            keySource: branchVersion.keySource,
+            kind: branchVersion.kind,
+            isCurrent: true,
+            tracks: branchTracks,
           }),
         },
       },

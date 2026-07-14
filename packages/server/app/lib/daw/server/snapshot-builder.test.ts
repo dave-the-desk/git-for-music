@@ -13,6 +13,9 @@ function makeClient(latestSnapshot: unknown, operations: unknown[]) {
     projectOperationLog: {
       findMany: async () => operations,
     },
+    user: {
+      findMany: async () => [],
+    },
   };
 }
 
@@ -158,6 +161,350 @@ test('loadSnapshotStateForDemo materializes TRACK_VERSION_CREATED into a normal 
   ]);
   assert.equal(snapshot.operationHistory.length, 1);
   assert.equal(snapshot.operationHistory[0]?.summary, 'Created track version for Recorded track');
+});
+
+test('loadSnapshotStateForDemo hydrates tracks omitted from a persisted version snapshot', async () => {
+  const latestSnapshot = {
+    id: 'snapshot-1',
+    projectId: 'project-1',
+    demoId: 'demo-1',
+    operationSeq: 1,
+    snapshot: {
+      id: 'demo-1',
+      name: 'Demo',
+      description: null,
+      currentVersionId: 'version-root',
+      project: {
+        id: 'project-1',
+        slug: 'project-1',
+        group: {
+          id: 'group-1',
+          slug: 'group',
+        },
+      },
+      versions: [
+        {
+          id: 'version-root',
+          label: 'Root',
+          description: null,
+          tempoBpm: 120,
+          timeSignatureNum: 4,
+          timeSignatureDen: 4,
+          musicalKey: null,
+          tempoSource: 'MANUAL',
+          keySource: 'MANUAL',
+          parentId: null,
+          createdAt: '2025-01-01T00:00:00.000Z',
+          tracks: [],
+        },
+      ],
+      comments: [],
+      annotations: [],
+    },
+    createdById: 'user-a',
+    createdAt: '2025-01-01T00:00:00.000Z',
+  };
+
+  const snapshot = await loadSnapshotStateForDemo(
+    {
+      ...makeClient(latestSnapshot, []),
+      demo: {
+        findFirst: async () => ({
+          id: 'demo-1',
+          name: 'Demo',
+          description: null,
+          currentVersionId: 'version-root',
+          project: {
+            id: 'project-1',
+            slug: 'project-1',
+            group: {
+              id: 'group-1',
+              slug: 'group',
+            },
+          },
+          versions: [
+            {
+              id: 'version-root',
+              label: 'Root',
+              description: null,
+              tempoBpm: 120,
+              timeSignatureNum: 4,
+              timeSignatureDen: 4,
+              musicalKey: null,
+              tempoSource: 'MANUAL',
+              keySource: 'MANUAL',
+              parentId: null,
+              createdAt: new Date('2025-01-01T00:00:00.000Z'),
+              trackVersions: [
+                {
+                  id: 'track-version-1',
+                  storageKey: '/tracks/track-version-1.wav',
+                  mimeType: 'audio/wav',
+                  durationMs: 2000,
+                  startOffsetMs: 0,
+                  createdAt: new Date('2025-01-01T00:00:00.000Z'),
+                  isDerived: false,
+                  operationType: 'ORIGINAL',
+                  parentTrackVersionId: null,
+                  track: {
+                    id: 'track-1',
+                    name: 'Track 1',
+                    position: 0,
+                  },
+                  segments: [],
+                },
+              ],
+            },
+          ],
+        }),
+      },
+    } as never,
+    {
+      projectId: 'project-1',
+      demoId: 'demo-1',
+    },
+  );
+
+  assert.equal(snapshot.versions[0]?.tracks[0]?.trackVersionId, 'track-version-1');
+  assert.equal(snapshot.versions[0]?.tracks[0]?.trackId, 'track-1');
+  assert.equal(snapshot.versions[0]?.tracks[0]?.storageKey, '/api/daw/track-versions/track-version-1/audio');
+});
+
+test('loadSnapshotStateForDemo keeps the original creator on the initial version node', async () => {
+  const latestSnapshot = {
+    id: 'snapshot-1',
+    projectId: 'project-1',
+    demoId: 'demo-1',
+    operationSeq: 2,
+    snapshot: {
+      id: 'demo-1',
+      name: 'Demo',
+      description: null,
+      currentVersionId: 'version-root',
+      project: {
+        id: 'project-1',
+        slug: 'project-1',
+        group: {
+          id: 'group-1',
+          slug: 'group',
+        },
+      },
+      versions: [
+        {
+          id: 'version-root',
+          label: 'Root',
+          description: null,
+          tempoBpm: 120,
+          timeSignatureNum: 4,
+          timeSignatureDen: 4,
+          musicalKey: null,
+          tempoSource: 'MANUAL',
+          keySource: 'MANUAL',
+          parentId: null,
+          createdAt: '2025-01-01T00:00:00.000Z',
+          tracks: [],
+        },
+      ],
+      comments: [],
+      annotations: [],
+      operationHistory: [
+        {
+          operationId: 'op-1',
+          operationSeq: 1,
+          operationType: 'VERSION_CREATED',
+          versionId: 'version-root',
+          currentVersionId: 'version-root',
+          trackId: null,
+          segmentId: null,
+          summary: 'Created demo',
+          actorUserId: 'user-a',
+          createdAt: '2025-01-01T00:00:00.000Z',
+        },
+        {
+          operationId: 'op-2',
+          operationSeq: 2,
+          operationType: 'TRACK_VERSION_CREATED',
+          versionId: 'version-root',
+          currentVersionId: 'version-root',
+          trackId: 'track-1',
+          segmentId: null,
+          summary: 'Created track version',
+          actorUserId: 'user-b',
+          createdAt: '2025-01-02T00:00:00.000Z',
+        },
+      ],
+    },
+    createdById: 'user-a',
+    createdAt: '2025-01-01T00:00:00.000Z',
+  };
+
+  const snapshot = await loadSnapshotStateForDemo(
+    {
+      projectSnapshot: {
+        findFirst: async () => latestSnapshot,
+      },
+      projectOperationLog: {
+        findMany: async () => [],
+      },
+      user: {
+        findMany: async () => [
+          { id: 'user-a', name: 'Avery Fox' },
+          { id: 'user-b', name: 'Bea Moss' },
+        ],
+      },
+    } as never,
+    {
+      projectId: 'project-1',
+      demoId: 'demo-1',
+    },
+  );
+
+  assert.equal(snapshot.versions[0]?.createdByName, 'Avery Fox');
+});
+
+test('loadSnapshotStateForDemo replays plugin add and update operations', async () => {
+  const latestSnapshot = {
+    id: 'snapshot-1',
+    projectId: 'project-1',
+    demoId: 'demo-1',
+    operationSeq: 1,
+    snapshot: {
+      id: 'demo-1',
+      name: 'Demo',
+      description: null,
+      currentVersionId: 'version-root',
+      project: {
+        id: 'project-1',
+        slug: 'project-1',
+        group: {
+          id: 'group-1',
+          slug: 'group',
+        },
+      },
+      versions: [
+        {
+          id: 'version-root',
+          label: 'Root',
+          description: null,
+          tempoBpm: 120,
+          timeSignatureNum: 4,
+          timeSignatureDen: 4,
+          musicalKey: null,
+          tempoSource: 'MANUAL',
+          keySource: 'MANUAL',
+          parentId: null,
+          createdAt: '2025-01-01T00:00:00.000Z',
+          tracks: [
+            {
+              trackId: 'track-1',
+              trackName: 'Track',
+              trackPosition: 0,
+              trackVersionId: 'track-version-1',
+              storageKey: '/assets/track-1.wav',
+              mimeType: 'audio/wav',
+              durationMs: 2000,
+              startOffsetMs: 0,
+              createdAt: '2025-01-01T00:00:00.000Z',
+              isDerived: false,
+              operationType: 'ORIGINAL',
+              parentTrackVersionId: null,
+              segments: [],
+              plugins: [],
+            },
+          ],
+        },
+      ],
+      comments: [],
+      annotations: [],
+    },
+    createdById: 'user-a',
+    createdAt: '2025-01-01T00:00:00.000Z',
+  };
+
+  const snapshot = await loadSnapshotStateForDemo(
+    makeClient(latestSnapshot, [
+      {
+        id: 'op-2',
+        projectId: 'project-1',
+        demoId: 'demo-1',
+        operationType: 'PLUGIN_ADDED',
+        createdAt: '2025-01-02T00:00:00.000Z',
+        actorUserId: 'user-b',
+        baseSnapshotId: 'snapshot-1',
+        baseOperationSeq: 1,
+        operationSeq: 2,
+        payload: {
+          trackVersionId: 'track-version-1',
+          instanceId: 'plugin-1',
+          pluginKey: 'com.example.delay',
+          version: '1.0.0',
+          backend: 'wam',
+          position: 0,
+          bypassed: false,
+          params: {
+            mix: 0.25,
+          },
+          state: {
+            mode: 'wide',
+          },
+          stateBlobKey: null,
+        },
+        idempotencyKey: 'idempotency-2',
+        clientOperationId: 'client-2',
+      },
+      {
+        id: 'op-3',
+        projectId: 'project-1',
+        demoId: 'demo-1',
+        operationType: 'PLUGIN_REORDERED',
+        createdAt: '2025-01-02T00:00:01.000Z',
+        actorUserId: 'user-b',
+        baseSnapshotId: 'snapshot-1',
+        baseOperationSeq: 1,
+        operationSeq: 3,
+        payload: {
+          trackVersionId: 'track-version-1',
+          instanceId: 'plugin-1',
+          position: 1,
+        },
+        idempotencyKey: 'idempotency-3',
+        clientOperationId: 'client-3',
+      },
+      {
+        id: 'op-4',
+        projectId: 'project-1',
+        demoId: 'demo-1',
+        operationType: 'PLUGIN_STATE_SET',
+        createdAt: '2025-01-02T00:00:02.000Z',
+        actorUserId: 'user-b',
+        baseSnapshotId: 'snapshot-1',
+        baseOperationSeq: 1,
+        operationSeq: 4,
+        payload: {
+          trackVersionId: 'track-version-1',
+          instanceId: 'plugin-1',
+          state: {
+            mode: 'narrow',
+          },
+          stateBlobKey: 'blob-1',
+        },
+        idempotencyKey: 'idempotency-4',
+        clientOperationId: 'client-4',
+      },
+    ]) as never,
+    {
+      projectId: 'project-1',
+      demoId: 'demo-1',
+    },
+  );
+
+  const plugin = snapshot.versions[0]?.tracks[0]?.plugins[0];
+  assert.ok(plugin);
+  assert.equal(plugin?.instanceId, 'plugin-1');
+  assert.equal(plugin?.position, 1);
+  assert.deepEqual(plugin?.params, { mix: 0.25 });
+  assert.deepEqual(plugin?.state, { mode: 'narrow' });
+  assert.equal(plugin?.stateBlobKey, 'blob-1');
 });
 
 test('loadSnapshotStateForDemo can stop at a historical operation sequence without replaying later activity', async () => {

@@ -2,6 +2,7 @@
 
 import { FormEvent, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { branding } from '@/app/product/branding';
 
 export default function SignupPage() {
   const router = useRouter();
@@ -42,8 +43,8 @@ export default function SignupPage() {
   return (
     <div className="flex min-h-screen items-center justify-center px-6 py-10">
       <div className="w-full max-w-md">
-        <h1 className="mb-2 text-2xl font-bold">Create an account</h1>
-        <p className="mb-6 text-sm text-gray-400">Enter your details to create your git-for-music account.</p>
+        <h1 className="mb-2 text-2xl font-bold">Create a {branding.appName} account</h1>
+        <p className="mb-6 text-sm text-gray-400">Enter your details to create your {branding.appName} account.</p>
 
         <form className="space-y-4" onSubmit={onSubmit}>
           <label className="block">

@@ -1,7 +1,7 @@
 import { prisma } from '@git-for-music/db';
-import { cookies } from 'next/headers';
 import { notFound, redirect } from 'next/navigation';
-import { SESSION_COOKIE_NAME } from '@git-for-music/server/app/lib/auth/session';
+import { cookies } from 'next/headers';
+import { getAuthenticatedUserFromCookies } from '@git-for-music/server/app/lib/auth';
 import { ProjectPageClient } from './project-page-client';
 
 export default async function ProjectPage({
@@ -11,16 +11,7 @@ export default async function ProjectPage({
 }) {
   const { groupId, projectId } = await params;
   const cookieStore = await cookies();
-  const sessionCookie = cookieStore.get(SESSION_COOKIE_NAME);
-
-  if (!sessionCookie?.value) {
-    redirect('/login');
-  }
-
-  const user = await prisma.user.findUnique({
-    where: { id: sessionCookie.value },
-    select: { id: true },
-  });
+  const user = await getAuthenticatedUserFromCookies(cookieStore);
 
   if (!user) {
     redirect('/login');

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { getConfig } from '@git-for-music/shared';
 import type {
   DawProjectOperationRecord,
   DawRealtimeAcceptedOperationPayload,
@@ -428,7 +429,7 @@ export function emitDawProjectRebootstrapRequired(input: {
   actorUserId: string;
   reason: string;
 }) {
-  if (process.env.NODE_ENV !== 'production') {
+  if (!getConfig().environment.isProduction) {
     console.warn(
       `[daw] project_rebootstrap_required for ${input.projectId}/${input.demoId}: ${input.reason}`,
     );

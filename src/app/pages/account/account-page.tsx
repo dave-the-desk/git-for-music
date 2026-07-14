@@ -1,25 +1,25 @@
-import { prisma } from '@git-for-music/db';
-import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
-import { SESSION_COOKIE_NAME } from '@git-for-music/server/app/lib/auth/session';
+import { cookies } from 'next/headers';
+import { getAuthenticatedUserFromCookies } from '@git-for-music/server/app/lib/auth';
+import { getConfig, isFeatureEnabled } from '@git-for-music/shared';
 import AccountPageClient from './account-page-client';
+import '@/app/product/register-features';
 
 export default async function AccountPage() {
   const cookieStore = await cookies();
-  const sessionCookie = cookieStore.get(SESSION_COOKIE_NAME);
-
-  if (!sessionCookie?.value) {
-    redirect('/login');
-  }
-
-  const user = await prisma.user.findUnique({
-    where: { id: sessionCookie.value },
-    select: { id: true, name: true, email: true },
-  });
+  const user = await getAuthenticatedUserFromCookies(cookieStore);
 
   if (!user) {
     redirect('/login');
   }
 
-  return <AccountPageClient userName={user.name} userEmail={user.email} />;
+  const showPluginLibraryLink = isFeatureEnabled('plugins', getConfig());
+
+  return (
+    <AccountPageClient
+      userName={user.name}
+      userEmail={user.email}
+      showPluginLibraryLink={showPluginLibraryLink}
+    />
+  );
 }

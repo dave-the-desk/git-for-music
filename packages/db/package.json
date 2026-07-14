@@ -1,6 +1,6 @@
 {
   "name": "@git-for-music/db",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "private": true,
   "main": "./src/index.ts",
   "types": "./src/index.ts",
@@ -8,13 +8,18 @@
     "generate": "prisma generate",
     "db:push": "set -a; . ../../.env; set +a; prisma db push",
     "migrate": "set -a; . ../../.env; set +a; prisma migrate dev",
-    "studio": "set -a; . ../../.env; set +a; prisma studio"
+    "migrate:deploy": "if [ -z \"$DATABASE_URL\" ] && [ -f ../../.env ]; then set -a; . ../../.env; set +a; fi; prisma migrate deploy",
+    "studio": "set -a; . ../../.env; set +a; prisma studio",
+    "lint": "pnpm --dir ../.. exec eslint --config eslint.config.mjs packages/db/src",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@git-for-music/shared": "workspace:*",
     "@prisma/client": "^6.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "eslint": "^9.0.0",
     "prisma": "^6.0.0",
     "typescript": "^5.0.0"
   }

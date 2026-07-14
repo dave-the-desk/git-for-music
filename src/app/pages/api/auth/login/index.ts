@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@git-for-music/db';
-import { verifyPassword } from '@git-for-music/server/app/lib/auth/password';
-import { SESSION_COOKIE_NAME, SESSION_MAX_AGE_SECONDS } from '@git-for-music/server/app/lib/auth/session';
+import {
+  createSessionCookie,
+  verifyPassword,
+} from '@git-for-music/server/app/lib/auth';
+import {
+  identifyAnalyticsUser,
+  trackAnalyticsEvent,
+} from '@git-for-music/server/app/lib/extensions';
 
 function isValidEmail(email: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
@@ -52,14 +58,13 @@ export async function POST(req: NextRequest) {
     { status: 200 },
   );
 
-  response.cookies.set({
-    name: SESSION_COOKIE_NAME,
-    value: user.id,
-    httpOnly: true,
-    sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
-    path: '/',
-    maxAge: SESSION_MAX_AGE_SECONDS,
+  response.cookies.set(createSessionCookie(user.id));
+  await identifyAnalyticsUser(user.id, {
+    email: user.email,
+    name: user.name,
+  });
+  await trackAnalyticsEvent('login', {
+    userId: user.id,
   });
 
   return response;

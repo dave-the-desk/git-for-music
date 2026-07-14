@@ -1,0 +1,277 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/git_for_music
+  REDIS_URL: redis://127.0.0.1:6379
+  OBJECT_STORAGE_BUCKET_NAME: git-for-music
+  OBJECT_STORAGE_ACCESS_KEY_ID: minioadmin
+  OBJECT_STORAGE_SECRET_ACCESS_KEY: minioadmin123
+  OBJECT_STORAGE_REGION: us-east-1
+  OBJECT_STORAGE_PUBLIC_URL: http://127.0.0.1:9000
+  OBJECT_STORAGE_INTERNAL_URL: http://127.0.0.1:9000
+  DAW_ASSET_UPLOAD_TOKEN_SECRET: dev-only-daw-asset-token-secret
+  DAW_PLUGIN_UPLOAD_TOKEN_SECRET: dev-only-daw-plugin-token-secret
+  DAW_WORKER_CALLBACK_SECRET: dev-only-daw-worker-callback-secret
+  NEXTAUTH_SECRET: dev-only-nextauth-secret
+  FEATURE_PLUGINS: "true"
+  NEXT_PUBLIC_APP_URL: http://localhost:3000
+  DAW_ENABLE_ORDINARY_EDIT_HEAD_ADVANCE: "false"
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Run lint
+        run: pnpm lint
+
+  typecheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Generate Prisma client
+        run: pnpm db:generate
+
+      - name: Run typecheck
+        run: pnpm typecheck
+
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: git_for_music
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d git_for_music"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      NODE_ENV: test
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Generate Prisma client
+        run: pnpm db:generate
+
+      - name: Run unit suites
+        run: pnpm test
+
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: git_for_music
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d git_for_music"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      NODE_ENV: test
+      RUN_INTEGRATION_TESTS: "1"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Generate Prisma client
+        run: pnpm db:generate
+
+      - name: Apply database migrations
+        run: pnpm db:migrate:deploy
+
+      - name: Start MinIO
+        run: |
+          docker run --detach --name gfm-ci-minio \
+            --env MINIO_ROOT_USER=minioadmin \
+            --env MINIO_ROOT_PASSWORD=minioadmin123 \
+            --publish 9000:9000 \
+            --publish 9001:9001 \
+            minio/minio:RELEASE.2025-06-13T11-33-47Z \
+            server /data --console-address ":9001"
+
+      - name: Wait for MinIO and create the bucket
+        run: |
+          for attempt in {1..60}; do
+            if curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null; then
+              break
+            fi
+
+            if ! docker inspect --format '{{.State.Running}}' gfm-ci-minio 2>/dev/null | grep -qx true; then
+              docker logs gfm-ci-minio
+              exit 1
+            fi
+
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null
+
+          docker run --rm --network host --entrypoint /bin/sh minio/mc:latest -lc '
+            until mc alias set local http://127.0.0.1:9000 minioadmin minioadmin123; do
+              sleep 1
+            done
+            mc mb --ignore-existing local/git-for-music
+            cat <<'"'"'EOF'"'"' >/tmp/minio-cors.xml
+            <CORSConfiguration>
+              <CORSRule>
+                <AllowedOrigin>http://localhost:3000</AllowedOrigin>
+                <AllowedOrigin>http://127.0.0.1:3000</AllowedOrigin>
+                <AllowedMethod>GET</AllowedMethod>
+                <AllowedMethod>PUT</AllowedMethod>
+                <AllowedMethod>HEAD</AllowedMethod>
+                <AllowedHeader>*</AllowedHeader>
+                <ExposeHeader>ETag</ExposeHeader>
+                <MaxAgeSeconds>3600</MaxAgeSeconds>
+              </CORSRule>
+            </CORSConfiguration>
+            EOF
+            mc cors set local/git-for-music /tmp/minio-cors.xml
+          '
+
+      - name: Run integration suite
+        run: pnpm test:integration
+
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      NODE_ENV: production
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Generate Prisma client
+        run: pnpm db:generate
+
+      - name: Build the web app
+        run: pnpm build

@@ -44,13 +44,13 @@ function makeTrack(overrides: Partial<DawExportTrack> = {}): DawExportTrack {
   };
 }
 
-function makeBuffer(channelData: Float32Array[], sampleRate = 1000) {
+function makeBuffer(channelData: Float32Array<ArrayBuffer>[], sampleRate = 1000) {
   return {
     sampleRate,
     numberOfChannels: channelData.length,
     length: channelData[0]?.length ?? 0,
-    getChannelData(index: number) {
-      return channelData[index] ?? channelData[0] ?? new Float32Array();
+    getChannelData(index: number): Float32Array<ArrayBuffer> {
+      return channelData[index] ?? channelData[0] ?? (new Float32Array() as Float32Array<ArrayBuffer>);
     },
   } satisfies Pick<AudioBuffer, 'sampleRate' | 'numberOfChannels' | 'length' | 'getChannelData'>;
 }
@@ -62,7 +62,7 @@ test('renderDawAudioMix applies gain, pan, and fades to the exported mix', () =>
     segments: [makeSegment({ fadeInMs: 100 })],
   });
   const buffers = new Map([
-    ['track-version-1', makeBuffer([Float32Array.from({ length: 1000 }, () => 1)])],
+    ['track-version-1', makeBuffer([Float32Array.from({ length: 1000 }, () => 1) as Float32Array<ArrayBuffer>])],
   ]);
 
   const rendered = renderDawAudioMix({

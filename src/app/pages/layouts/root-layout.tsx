@@ -1,8 +1,11 @@
 import type { Metadata } from 'next';
 import AppLayout from './app-layout';
+import '@/app/product/providers';
+import '@/app/product/register-features';
+import { branding } from '@/app/product/branding';
 
 export const metadata: Metadata = {
-  title: 'Git for Music',
+  title: branding.appName,
   description: 'Music collaboration and versioning',
 };
 

@@ -4,45 +4,20 @@ This is a living file for confirmed implementation issues and investigation note
 
 Use it for problems that future agents should know about immediately.
 
-## Example Entries
+## Current Status
 
-### Moving creates a new track
+No confirmed active problems are recorded here as of 2026-07-11.
 
-Expected:
-Moving a segment should preserve track identity unless the user explicitly moves it to another existing track.
+Previously listed items have source-backed fixes:
 
-Problem:
-Current behavior creates a new track unexpectedly.
+- Segment moves preserve track/source identity through `applySegmentMove(...)`, with reducer coverage in `src/app/lib/daw/state/operation-reducer.test.ts`.
+- Follow-head checkout behavior is covered by `DemoUserActiveVersion` and reducer tests for branch/head advancement.
+- The blank duplicate-track-after-recording issue is resolved and documented in [[40_FEATURES/daw-add-track-duplicate-after-recording]].
 
-Relevant concepts:
-
-- Track vs TrackVersion
-- Segment move operation
-- Operation reducer
-- Shared realtime operation
-
-### Users should follow branch head
-
-Expected:
-A user should automatically follow the head of their selected branch unless they intentionally check out a detached version.
-
-Problem:
-Refresh or collaboration state can move users away from the intended branch head.
-
-### Remote edit reducer crash
-
-Error:
-Cannot read properties of undefined reading id.
-
-Likely area:
-`operation-reducer.ts`
-
-Investigation:
-Check whether remote operations assume local-only segment or track structures that are not present after sync.
+When adding a new entry, include the expected behavior, observed behavior, likely source area, and a verification path.
 
 ## Related Context
 
 - [[40_FEATURES/versioning-mental-model]]
 - [[40_FEATURES/merge-and-conflict-guide]]
 - [[01_PROTOCOLS/agent-implementation-guide]]
-

@@ -22,6 +22,7 @@ function makeVersion(id: string, overrides: Partial<DawVersion> = {}): DawVersio
     branchName: overrides.branchName ?? overrides.label ?? id,
     operationSummary: overrides.operationSummary ?? null,
     createdBy: overrides.createdBy ?? 'user-a',
+    createdByName: overrides.createdByName ?? null,
     description: overrides.description ?? null,
     parentId: overrides.parentId ?? null,
     parentVersionId: overrides.parentVersionId ?? overrides.parentId ?? null,
@@ -160,7 +161,27 @@ function makeOperation(
 
 test('VERSION_CREATED from the active head advances the active checkout when following head is enabled', () => {
   const root = makeVersion('version-root', { isCurrent: true });
-  const initial = createLocalProjectStateFromBootstrap(makeBootstrap([root], root.id));
+  const initial = createLocalProjectStateFromBootstrap({
+    ...makeBootstrap([root], root.id),
+    latestSnapshot: {
+      id: 'snapshot-1',
+      projectId: 'project-1',
+      demoId: 'demo-1',
+      operationSeq: 1,
+      snapshot: {
+        versions: [root],
+        currentVersionId: root.id,
+        userDisplayNamesById: {
+          'user-b': 'Avery Fox',
+        },
+        comments: [],
+        annotations: [],
+        tempoMetadataByTrackVersionId: {},
+      },
+      createdById: 'user-b',
+      createdAt: '2025-01-01T00:00:00.000Z',
+    },
+  });
   assert.equal(initial.activeVersionId, root.id);
   assert.equal(initial.isFollowingHead, true);
 
@@ -196,6 +217,7 @@ test('VERSION_CREATED from the active head advances the active checkout when fol
   assert.equal(created.activeVersionId, childVersion.id);
   assert.equal(created.versions[1]?.id, childVersion.id);
   assert.equal(created.versions[1]?.parentId, root.id);
+  assert.equal(created.versions[1]?.createdByName, 'Avery Fox');
   assert.equal(created.versions.find((version) => version.id === root.id)?.isCurrent, false);
   assert.equal(created.versions.find((version) => version.id === childVersion.id)?.isCurrent, true);
 });
@@ -236,6 +258,33 @@ test('createLocalProjectStateFromBootstrap defaults to the newest version when t
   assert.equal(state.versions.find((version) => version.id === newestVersion.id)?.isCurrent, true);
 });
 
+test('createLocalProjectStateFromBootstrap preserves resolved actor display names', () => {
+  const root = makeVersion('version-root', { isCurrent: true });
+  const state = createLocalProjectStateFromBootstrap({
+    ...makeBootstrap([root], root.id),
+    latestSnapshot: {
+      id: 'snapshot-1',
+      projectId: 'project-1',
+      demoId: 'demo-1',
+      operationSeq: 1,
+      snapshot: {
+        versions: [root],
+        currentVersionId: root.id,
+        userDisplayNamesById: {
+          'user-a': 'Avery Fox',
+        },
+        comments: [],
+        annotations: [],
+        tempoMetadataByTrackVersionId: {},
+      },
+      createdById: 'user-a',
+      createdAt: '2025-01-01T00:00:00.000Z',
+    },
+  });
+
+  assert.equal(state.userDisplayNamesById?.['user-a'], 'Avery Fox');
+});
+
 test('createLocalProjectStateFromBootstrap removes a blank duplicate track when the version already has audio for the same name', () => {
   const root = makeVersion('version-root', {
     isCurrent: true,
@@ -261,7 +310,7 @@ test('createLocalProjectStateFromBootstrap removes a blank duplicate track when 
   assert.equal(version?.tracks[0]?.trackVersionId, 'track-version-audio');
 });
 
-test('VERSION_BRANCH_CREATED from the active head adds the branch without moving the active checkout', () => {
+test('VERSION_BRANCH_CREATED from the active head advances the active checkout when following head is enabled', () => {
   const root = makeVersion('version-root', { isCurrent: true });
   const initial = createLocalProjectStateFromBootstrap(makeBootstrap([root], root.id));
 
@@ -294,14 +343,14 @@ test('VERSION_BRANCH_CREATED from the active head adds the branch without moving
 
   assert.equal(created.versions.length, 2);
   assert.equal(created.currentVersionId, branchVersion.id);
-  assert.equal(created.activeVersionId, root.id);
+  assert.equal(created.activeVersionId, branchVersion.id);
   assert.equal(created.versions[1]?.id, branchVersion.id);
   assert.equal(created.versions[1]?.parentId, root.id);
   assert.equal(created.versions.find((version) => version.id === root.id)?.isCurrent, false);
   assert.equal(created.versions.find((version) => version.id === branchVersion.id)?.isCurrent, true);
 });
 
-test('VERSION_BRANCH_CREATED from the active head advances the active checkout when branchMode is continue', () => {
+test('VERSION_BRANCH_CREATED from the active head advances the active checkout when following head is enabled for continue mode', () => {
   const root = makeVersion('version-root', { isCurrent: true });
   const initial = createLocalProjectStateFromBootstrap(makeBootstrap([root], root.id));
 
@@ -339,6 +388,38 @@ test('VERSION_BRANCH_CREATED from the active head advances the active checkout w
   assert.equal(created.versions[1]?.parentId, root.id);
   assert.equal(created.versions.find((version) => version.id === root.id)?.isCurrent, false);
   assert.equal(created.versions.find((version) => version.id === branchVersion.id)?.isCurrent, true);
+});
+
+test('later version tree updates do not overwrite an existing creator', () => {
+  const root = makeVersion('version-root', {
+    isCurrent: true,
+    createdBy: 'user-a',
+    createdByName: 'Avery Fox',
+  });
+  const initial = createLocalProjectStateFromBootstrap(makeBootstrap([root], root.id));
+
+  const rewritten = applyAcceptedProjectOperation(
+    initial,
+    makeOperation('VERSION_BRANCH_CREATED', 2, {
+      versionId: root.id,
+      parentVersionId: null,
+      branchMode: 'continue',
+      branchName: root.branchName,
+      label: root.label,
+      createdAt: root.createdAt,
+      createdBy: 'user-b',
+      operationSummary: 'Added audio track',
+      version: {
+        ...root,
+        createdBy: 'user-b',
+        createdByName: 'Bea Moss',
+      },
+      sourceVersionId: root.id,
+    }),
+  );
+
+  assert.equal(rewritten.versions.find((version) => version.id === root.id)?.createdBy, 'user-a');
+  assert.equal(rewritten.versions.find((version) => version.id === root.id)?.createdByName, 'Avery Fox');
 });
 
 test('CURRENT_VERSION_CHANGED updates shared head metadata without moving the active checkout', () => {
@@ -688,7 +769,7 @@ test('track versions remain attached when the version is created before the trac
   assert.equal(applied.currentVersionId, branchVersion.id);
 });
 
-test('TRACK_VERSION_CREATED advances follow-head clients to the new version head', () => {
+test('TRACK_VERSION_CREATED advances the active checkout when following head is enabled', () => {
   const root = makeVersion('version-root', { isCurrent: true });
   const initial = createLocalProjectStateFromBootstrap(makeBootstrap([root], root.id));
 

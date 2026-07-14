@@ -84,8 +84,55 @@ function getModuleCacheKey(pluginKey: string, version: string) {
   return `${pluginKey}::${version}`;
 }
 
+async function nativeImportModule(descriptorUrl: string) {
+  if (descriptorUrl.startsWith('data:')) {
+    return import(/* webpackIgnore: true, @vite-ignore */ descriptorUrl);
+  }
+
+  const response = await fetch(descriptorUrl);
+  const source = await response.text();
+  const importUrl =
+    typeof URL.createObjectURL === 'function'
+      ? URL.createObjectURL(new Blob([source], { type: 'text/javascript;charset=utf-8' }))
+      : `data:text/javascript;charset=utf-8,${encodeURIComponent(source)}`;
+  const importUrlKind = importUrl.startsWith('blob:') ? 'blob' : 'data';
+
+  console.log('[wam-host] nativeImportModule fetch', JSON.stringify({
+    descriptorUrl,
+    importUrlKind,
+    ok: response.ok,
+    status: response.status,
+    statusText: response.statusText,
+    responseUrl: response.url,
+    contentType: response.headers.get('content-type'),
+    sourceLength: source.length,
+    sourcePreview: source.slice(0, 200),
+  }));
+
+  try {
+    return await import(/* webpackIgnore: true, @vite-ignore */ importUrl);
+  } catch (error) {
+    console.log('[wam-host] nativeImportModule import failed', JSON.stringify({
+      descriptorUrl,
+      importUrlKind,
+      status: response.status,
+      statusText: response.statusText,
+      responseUrl: response.url,
+      contentType: response.headers.get('content-type'),
+      sourcePreview: source.slice(0, 200),
+      error: error instanceof Error ? { name: error.name, message: error.message } : error,
+    }));
+    throw error;
+  } finally {
+    if (importUrlKind === 'blob' && typeof URL.revokeObjectURL === 'function') {
+      URL.revokeObjectURL(importUrl);
+    }
+  }
+}
+
 function assertMainThreadWamHost() {
-  if (typeof AudioWorkletProcessor !== 'undefined') {
+  const globalScope = globalThis as typeof globalThis & { AudioWorkletProcessor?: unknown };
+  if (typeof globalScope.AudioWorkletProcessor !== 'undefined') {
     throw new Error('WAM host operations must run on the main thread, not inside an AudioWorklet render context.');
   }
 }
@@ -141,36 +188,29 @@ function isConstructorInvocationError(error: unknown) {
 function resolveWamFactory(moduleExports: AnyRecord): WamModuleFactory | null {
   const directFactory = moduleExports.createInstance ?? moduleExports.createNode;
   if (typeof directFactory === 'function') {
-    return async (audioContext, env, group, pluginKey, version) =>
-      (await directFactory(audioContext, env, group, pluginKey, version)) as WamNode;
+    return (audioContext, env, group, pluginKey, version) =>
+      directFactory(audioContext, env, group, pluginKey, version) as WamNode;
   }
 
   const defaultExport = moduleExports.default;
   if (typeof defaultExport === 'function') {
-    return async (audioContext, env, group, pluginKey, version) =>
-      (await (async () => {
-        try {
-          return await (defaultExport as (
-            audioContext: AudioContext,
-            env: WamEnv,
-            group: WamGroup,
-            pluginKey: string,
-            version: string,
-          ) => WamNode)(audioContext, env, group, pluginKey, version);
-        } catch (error) {
-          if (!isConstructorInvocationError(error)) {
-            throw error;
-          }
-
-          return await new (defaultExport as new (...args: unknown[]) => WamNode)(
-            audioContext,
-            env,
-            group,
-            pluginKey,
-            version,
-          );
+    return (audioContext, env, group, pluginKey, version) => {
+      try {
+        return (defaultExport as (
+          audioContext: AudioContext,
+          env: WamEnv,
+          group: WamGroup,
+          pluginKey: string,
+          version: string,
+        ) => WamNode)(audioContext, env, group, pluginKey, version);
+      } catch (error) {
+        if (!isConstructorInvocationError(error)) {
+          throw error;
         }
-      })()) as WamNode;
+
+        return new (defaultExport as new (...args: unknown[]) => WamNode)(audioContext, env, group, pluginKey, version);
+      }
+    };
   }
 
   if (defaultExport && typeof defaultExport === 'object') {
@@ -190,19 +230,20 @@ function resolveWamFactory(moduleExports: AnyRecord): WamModuleFactory | null {
 }
 
 async function invokeNodeMethod(node: WamNode, methodNames: string[], value: unknown) {
-  const candidate = methodNames.find((methodName) => typeof (node as AnyRecord)[methodName] === 'function');
+  const nodeRecord = node as unknown as AnyRecord;
+  const candidate = methodNames.find((methodName) => typeof nodeRecord[methodName] === 'function');
   if (!candidate) {
     return;
   }
 
-  const result = (node as AnyRecord)[candidate](value);
+  const result = (nodeRecord[candidate] as (value: unknown) => unknown)(value);
   if (isPromise(result)) {
     await result;
   }
 }
 
 function resolveNodeLatencyMs(node: WamNode, audioContext: AudioContext) {
-  const candidate = node as AnyRecord;
+  const candidate = node as unknown as AnyRecord;
   const rawLatency =
     typeof candidate.latency === 'number'
       ? candidate.latency
@@ -237,11 +278,19 @@ export async function loadWamModule(pluginKey: string, version: string, descript
   const cacheKey = getModuleCacheKey(pluginKey, version);
   const cached = wamModuleCache.get(cacheKey);
   if (cached) {
+    console.log('[wam-host] loadWamModule cache hit', JSON.stringify({ pluginKey, version, descriptorUrl }));
     return cached;
   }
 
   const loadPromise = (async () => {
-    const moduleExports = normalizeModuleExports(await import(/* webpackIgnore: true, @vite-ignore */ descriptorUrl));
+    console.log('[wam-host] loadWamModule start', JSON.stringify({ pluginKey, version, descriptorUrl }));
+    const moduleExports = normalizeModuleExports(await nativeImportModule(descriptorUrl));
+    console.log('[wam-host] loadWamModule success', JSON.stringify({
+      pluginKey,
+      version,
+      descriptorUrl,
+      exportKeys: Object.keys(moduleExports),
+    }));
     return {
       pluginKey,
       version,
@@ -257,6 +306,12 @@ export async function loadWamModule(pluginKey: string, version: string, descript
     wamModuleCache.set(cacheKey, loaded);
     return loaded;
   } catch (error) {
+    console.log('[wam-host] loadWamModule error', JSON.stringify({
+      pluginKey,
+      version,
+      descriptorUrl,
+      error: error instanceof Error ? { name: error.name, message: error.message } : error,
+    }));
     wamModuleCache.delete(cacheKey);
     throw error;
   }

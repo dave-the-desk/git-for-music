@@ -14,4 +14,4 @@ git-like versioning and a commit-graph Tree tab.
   concurrently with `main`.
 - Move the live editing loop toward the OT/Jupiter model from `docs/papers/`.
 - Visually represent the version DAG under the DAW **Tree** tab using the
-  DoltHub commit-graph row/column layout.
+  DoltHub commit-graph row/column layout with centered forks.

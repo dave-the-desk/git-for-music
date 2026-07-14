@@ -198,6 +198,7 @@ export interface DawVersionTreeNodeSnapshot {
   id: string;
   label: string;
   description: string | null;
+  createdByName?: string | null;
   parentId: string | null;
   createdAt: string;
   isCurrent: boolean;

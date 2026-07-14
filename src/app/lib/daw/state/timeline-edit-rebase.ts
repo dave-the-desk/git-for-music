@@ -8,6 +8,12 @@ import { selectLatestVersionOrNull } from './selectors';
 
 export type RebaseableTimelineEditRequest = DawOperationCommitRequest & {
   clientOperationId: string;
+  id?: string;
+  projectId?: string;
+  type?: string;
+  createdAt?: string;
+  actorUserId?: string;
+  operationSeq?: number;
 };
 
 type TrackLookupResult = {
@@ -290,10 +296,10 @@ function rebaseMergeRequest(
   };
 }
 
-export function rebaseTimelineEditRequest(
+export function rebaseTimelineEditRequest<T extends RebaseableTimelineEditRequest>(
   state: Pick<LocalProjectState, 'versions' | 'currentVersionId'>,
-  request: RebaseableTimelineEditRequest,
-): RebaseableTimelineEditRequest | null {
+  request: T,
+): T | null {
   switch (request.operationType) {
     case 'TRACK_RENAMED': {
       const lookup = findTrackByTrackId(state, request.payload.trackId);
@@ -308,21 +314,21 @@ export function rebaseTimelineEditRequest(
       return lookup ? request : null;
     }
     case 'SEGMENT_MOVED':
-      return rebaseMoveRequest(state, request);
+      return rebaseMoveRequest(state, request) as T | null;
     case 'SEGMENT_TRIMMED':
-      return rebaseTrimRequest(state, request);
+      return rebaseTrimRequest(state, request) as T | null;
     case 'SEGMENT_SPLIT':
-      return rebaseSplitRequest(state, request);
+      return rebaseSplitRequest(state, request) as T | null;
     case 'SEGMENT_DELETED': {
       const lookup = findSegmentById(state, request.payload.segmentId);
       return lookup ? request : null;
     }
     case 'SEGMENT_FADE_SET':
-      return rebaseFadeRequest(state, request);
+      return rebaseFadeRequest(state, request) as T | null;
     case 'SEGMENT_MERGED':
-      return rebaseMergeRequest(state, request);
+      return rebaseMergeRequest(state, request) as T | null;
     case 'CROSSFADE_SET':
-      return rebaseCrossfadeRequest(state, request);
+      return rebaseCrossfadeRequest(state, request) as T | null;
     default:
       return request;
   }

@@ -1,9 +1,8 @@
 import { cookies } from 'next/headers';
 import { notFound, redirect } from 'next/navigation';
-import { SESSION_COOKIE_NAME } from '@git-for-music/server/app/lib/auth/session';
-import { prisma } from '@git-for-music/db';
 import { buildTrackVersionAudioUrl } from '@git-for-music/shared';
 import { DemoDawClient } from './components/daw/DemoDawClient';
+import { getAuthenticatedUserFromCookies } from '@git-for-music/server/app/lib/auth';
 import { getDemoDawPageData } from '@git-for-music/server/app/lib/daw/server/demo-page-data';
 
 export default async function DemoPage({
@@ -13,20 +12,7 @@ export default async function DemoPage({
 }) {
   const { groupId, projectId, demoId } = await params;
   const cookieStore = await cookies();
-  const sessionCookie = cookieStore.get(SESSION_COOKIE_NAME);
-
-  if (!sessionCookie?.value) {
-    redirect('/login');
-  }
-
-  const user = await prisma.user.findUnique({
-    where: {
-      id: sessionCookie.value,
-    },
-    select: {
-      id: true,
-    },
-  });
+  const user = await getAuthenticatedUserFromCookies(cookieStore);
 
   if (!user) {
     redirect('/login');

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Prisma, PrismaClient, prisma } from '@git-for-music/db';
 import { buildTrackVersionAudioUrl } from '@git-for-music/shared';
+import type { JsonValue } from '@git-for-music/shared';
 import { loadOrCreateDemoUserActiveVersionState } from '@/app/lib/daw/server/demo-user-active-version';
 import type { HostedPluginInstanceState } from '@/app/lib/daw/protocol';
 
@@ -44,6 +45,7 @@ export interface DemoDawSnapshotVersion {
   id: string;
   label: string;
   description: string | null;
+  createdByName?: string | null;
   tempoBpm: number | null;
   timeSignatureNum: number;
   timeSignatureDen: number;
@@ -69,6 +71,7 @@ export interface DemoDawSnapshotData {
     };
   };
   versions: DemoDawSnapshotVersion[];
+  userDisplayNamesById?: Record<string, string | null>;
   comments: DemoDawSnapshotComment[];
   annotations: DemoDawSnapshotAnnotation[];
   operationHistory: DemoDawSnapshotOperationHistoryItem[];
@@ -675,6 +678,7 @@ function serializeDemoSourceData(demo: DemoSourceData): DemoDawSnapshotData {
       },
     },
     versions: demo.versions.map((version) => serializeVersion(version)),
+    userDisplayNamesById: {},
     comments: demo.comments,
     annotations: demo.annotations,
     operationHistory: [],
@@ -693,9 +697,112 @@ function normalizeSnapshotTrackAudioUrls(snapshot: DemoDawSnapshotData) {
   }
 }
 
+async function hydrateEmptySnapshotVersionTracks(
+  client: DemoDawDatabaseClient,
+  scope: DemoScope,
+  snapshot: DemoDawSnapshotData,
+) {
+  if (
+    !snapshot.versions.some((version) => version.tracks.length === 0) ||
+    typeof client.demo?.findFirst !== 'function'
+  ) {
+    return snapshot;
+  }
+
+  // Older checkpoints can contain the version node without the immutable track rows.
+  // Rehydrate only versions already present in the checkpoint; do not add future nodes.
+  const source = await loadDemoSourceData(client, scope);
+  const sourceVersionsById = new Map(source.versions.map((version) => [version.id, version]));
+
+  for (const version of snapshot.versions) {
+    if (version.tracks.length > 0) continue;
+
+    const sourceVersion = sourceVersionsById.get(version.id);
+    if (!sourceVersion || sourceVersion.trackVersions.length === 0) continue;
+
+    version.tracks = sourceVersion.trackVersions
+      .map((trackVersion) => serializeTrackVersion(trackVersion))
+      .sort((left, right) => left.trackPosition - right.trackPosition);
+  }
+
+  return snapshot;
+}
+
 function ensureOperationHistory(snapshot: DemoDawSnapshotData) {
   snapshot.operationHistory ??= [];
   return snapshot.operationHistory;
+}
+
+async function hydrateOperationActorNames(
+  client: DemoDawDatabaseClient,
+  snapshot: DemoDawSnapshotData,
+) {
+  const actorUserIds = Array.from(
+    new Set(
+      snapshot.operationHistory
+        .map((entry) => entry.actorUserId.trim())
+        .filter((actorUserId) => actorUserId.length > 0),
+    ),
+  );
+
+  if (actorUserIds.length === 0) {
+    snapshot.userDisplayNamesById = { ...(snapshot.userDisplayNamesById ?? {}) };
+    return snapshot;
+  }
+
+  const users = await client.user.findMany({
+    where: {
+      id: {
+        in: actorUserIds,
+      },
+    },
+    select: {
+      id: true,
+      name: true,
+    },
+  });
+
+  const userDisplayNamesById = {
+    ...(snapshot.userDisplayNamesById ?? {}),
+    ...Object.fromEntries(
+      users.map((user) => [
+        user.id,
+        user.name?.trim().length ? user.name.trim() : null,
+      ]),
+    ),
+  };
+
+  snapshot.userDisplayNamesById = userDisplayNamesById;
+  return snapshot;
+}
+
+function hydrateVersionCreatorNames(snapshot: DemoDawSnapshotData) {
+  const userDisplayNamesById = snapshot.userDisplayNamesById ?? {};
+  const historyByVersionId = new Map<string, string>();
+
+  for (const historyItem of snapshot.operationHistory) {
+    if (!historyItem.versionId) continue;
+    if (historyByVersionId.has(historyItem.versionId)) continue;
+    if (
+      historyItem.operationType === 'VERSION_CREATED' ||
+      historyItem.operationType === 'VERSION_BRANCH_CREATED' ||
+      historyItem.operationType === 'VERSION_REVERTED_FROM' ||
+      historyItem.operationType === 'TRACK_VERSION_CREATED'
+    ) {
+      historyByVersionId.set(historyItem.versionId, historyItem.actorUserId);
+    }
+  }
+
+  snapshot.versions = snapshot.versions.map((version) => {
+    const creatorId = version.createdByName?.trim() || historyByVersionId.get(version.id)?.trim() || '';
+    const creatorName = creatorId ? userDisplayNamesById[creatorId]?.trim() ?? '' : '';
+    return {
+      ...version,
+      createdByName: creatorName || (version.createdByName ?? null),
+    };
+  });
+
+  return snapshot;
 }
 
 function upsertOperationHistory(
@@ -817,6 +924,21 @@ function upsertVersionTrack(snapshot: DemoDawSnapshotData, versionId: string, tr
     candidate.trackVersionId === track.trackVersionId || candidate.trackId === track.trackId
       ? { ...candidate, ...cloneSnapshot(track) }
       : candidate,
+  );
+}
+
+function updateTrackPlugins(
+  tracks: DemoDawSnapshotTrack[],
+  trackVersionId: string,
+  updater: (plugins: HostedPluginInstanceState[]) => HostedPluginInstanceState[],
+) {
+  return tracks.map((track) =>
+    track.trackVersionId === trackVersionId
+      ? {
+          ...track,
+          plugins: updater([...track.plugins]),
+        }
+      : track,
   );
 }
 
@@ -1212,6 +1334,177 @@ function applyDemoOperation(snapshot: DemoDawSnapshotData, operation: DemoDawSna
         updateTrackOffset(snapshot, payload.trackVersionId, payload.startOffsetMs);
       }
       return snapshot;
+    case 'PLUGIN_ADDED':
+      {
+        const payload = operation.payload as Extract<
+          DemoDawOperationPayload,
+          {
+            trackVersionId: string;
+            instanceId: string;
+            pluginKey: string;
+            version: string;
+            backend: 'wam' | 'remote';
+            position: number;
+            bypassed: boolean;
+            params: Record<string, number>;
+            state?: unknown;
+            stateBlobKey?: string | null;
+          }
+        >;
+        for (const version of snapshot.versions) {
+          version.tracks = updateTrackPlugins(version.tracks, payload.trackVersionId, (plugins) => {
+            const nextPlugin = {
+              instanceId: payload.instanceId,
+              pluginKey: payload.pluginKey,
+              version: payload.version,
+              backend: payload.backend,
+              position: payload.position,
+              bypassed: payload.bypassed,
+              params: { ...payload.params },
+              state: payload.state,
+              stateBlobKey: payload.stateBlobKey ?? null,
+            };
+            const existingIndex = plugins.findIndex((plugin) => plugin.instanceId === payload.instanceId);
+            const nextPlugins =
+              existingIndex === -1
+                ? [...plugins]
+                : plugins.filter((plugin) => plugin.instanceId !== payload.instanceId);
+            const insertionIndex = Math.max(0, Math.min(payload.position, nextPlugins.length));
+            nextPlugins.splice(insertionIndex, 0, nextPlugin);
+            return nextPlugins;
+          });
+        }
+        const historyItem = buildOperationHistoryItem(snapshot, operation);
+        if (historyItem) {
+          upsertOperationHistory(snapshot, historyItem);
+        }
+      }
+      return snapshot;
+    case 'PLUGIN_REMOVED':
+      {
+        const payload = operation.payload as Extract<
+          DemoDawOperationPayload,
+          { trackVersionId: string; instanceId: string }
+        >;
+        for (const version of snapshot.versions) {
+          version.tracks = updateTrackPlugins(version.tracks, payload.trackVersionId, (plugins) =>
+            plugins.filter((plugin) => plugin.instanceId !== payload.instanceId),
+          );
+        }
+        const historyItem = buildOperationHistoryItem(snapshot, operation);
+        if (historyItem) {
+          upsertOperationHistory(snapshot, historyItem);
+        }
+      }
+      return snapshot;
+    case 'PLUGIN_REORDERED':
+      {
+        const payload = operation.payload as Extract<
+          DemoDawOperationPayload,
+          { trackVersionId: string; instanceId: string; position: number }
+        >;
+        for (const version of snapshot.versions) {
+          version.tracks = updateTrackPlugins(version.tracks, payload.trackVersionId, (plugins) => {
+            const sourceIndex = plugins.findIndex((plugin) => plugin.instanceId === payload.instanceId);
+            if (sourceIndex === -1) {
+              return plugins;
+            }
+
+            const nextPlugins = plugins.filter((plugin) => plugin.instanceId !== payload.instanceId);
+            const nextPlugin = {
+              ...plugins[sourceIndex]!,
+              position: payload.position,
+            };
+            const insertionIndex = Math.max(0, Math.min(payload.position, nextPlugins.length));
+            return [
+              ...nextPlugins.slice(0, insertionIndex),
+              nextPlugin,
+              ...nextPlugins.slice(insertionIndex),
+            ];
+          });
+        }
+        const historyItem = buildOperationHistoryItem(snapshot, operation);
+        if (historyItem) {
+          upsertOperationHistory(snapshot, historyItem);
+        }
+      }
+      return snapshot;
+    case 'PLUGIN_PARAM_SET':
+      {
+        const payload = operation.payload as Extract<
+          DemoDawOperationPayload,
+          { trackVersionId: string; instanceId: string; paramId: string; value: number }
+        >;
+        for (const version of snapshot.versions) {
+          version.tracks = updateTrackPlugins(version.tracks, payload.trackVersionId, (plugins) =>
+            plugins.map((plugin) =>
+              plugin.instanceId === payload.instanceId
+                ? {
+                    ...plugin,
+                    params: {
+                      ...plugin.params,
+                      [payload.paramId]: payload.value,
+                    },
+                  }
+                : plugin,
+            ),
+          );
+        }
+        const historyItem = buildOperationHistoryItem(snapshot, operation);
+        if (historyItem) {
+          upsertOperationHistory(snapshot, historyItem);
+        }
+      }
+      return snapshot;
+    case 'PLUGIN_BYPASS_SET':
+      {
+        const payload = operation.payload as Extract<
+          DemoDawOperationPayload,
+          { trackVersionId: string; instanceId: string; bypassed: boolean }
+        >;
+        for (const version of snapshot.versions) {
+          version.tracks = updateTrackPlugins(version.tracks, payload.trackVersionId, (plugins) =>
+            plugins.map((plugin) =>
+              plugin.instanceId === payload.instanceId
+                ? {
+                    ...plugin,
+                    bypassed: payload.bypassed,
+                  }
+                : plugin,
+            ),
+          );
+        }
+        const historyItem = buildOperationHistoryItem(snapshot, operation);
+        if (historyItem) {
+          upsertOperationHistory(snapshot, historyItem);
+        }
+      }
+      return snapshot;
+    case 'PLUGIN_STATE_SET':
+      {
+        const payload = operation.payload as Extract<
+          DemoDawOperationPayload,
+          { trackVersionId: string; instanceId: string; state: unknown; stateBlobKey?: string | null }
+        >;
+        for (const version of snapshot.versions) {
+          version.tracks = updateTrackPlugins(version.tracks, payload.trackVersionId, (plugins) =>
+            plugins.map((plugin) =>
+              plugin.instanceId === payload.instanceId
+                ? {
+                    ...plugin,
+                    state: payload.state,
+                    stateBlobKey: payload.stateBlobKey ?? plugin.stateBlobKey ?? null,
+                  }
+                : plugin,
+            ),
+          );
+        }
+        const historyItem = buildOperationHistoryItem(snapshot, operation);
+        if (historyItem) {
+          upsertOperationHistory(snapshot, historyItem);
+        }
+      }
+      return snapshot;
     case 'SEGMENT_SPLIT':
       {
         upsertSplitSegments(
@@ -1347,9 +1640,9 @@ function applyDemoOperation(snapshot: DemoDawSnapshotData, operation: DemoDawSna
           DemoDawOperationPayload,
           { version?: DemoDawSnapshotVersion; versionId?: string; currentVersionId?: string }
         >;
-        if (payload.version) {
+        if ('version' in payload && payload.version) {
           upsertVersion(snapshot, payload.version);
-        } else if (payload.currentVersionId) {
+        } else if ('currentVersionId' in payload && payload.currentVersionId) {
           setCurrentVersion(snapshot, payload.currentVersionId);
         }
       }
@@ -2149,6 +2442,8 @@ export async function loadSnapshotStateForDemo(
       }
       ensureOperationHistory(result);
       reconcileCurrentVersion(result);
+      await hydrateOperationActorNames(client, result);
+      hydrateVersionCreatorNames(result);
       return result;
     }
 
@@ -2171,6 +2466,8 @@ export async function loadSnapshotStateForDemo(
     }
 
     reconcileCurrentVersion(result);
+    await hydrateOperationActorNames(client, result);
+    hydrateVersionCreatorNames(result);
     normalizeSnapshotTrackAudioUrls(result);
     return result;
   }
@@ -2184,6 +2481,8 @@ export async function loadSnapshotStateForDemo(
       applyDemoOperation(result, operation);
     }
     reconcileCurrentVersion(result);
+    await hydrateOperationActorNames(client, result);
+    hydrateVersionCreatorNames(result);
     normalizeSnapshotTrackAudioUrls(result);
     return result;
   }
@@ -2203,7 +2502,10 @@ export async function loadSnapshotStateForDemo(
     applyDemoOperation(result, operation);
   }
 
+  await hydrateEmptySnapshotVersionTracks(client, scope, result);
   reconcileCurrentVersion(result);
+  await hydrateOperationActorNames(client, result);
+  hydrateVersionCreatorNames(result);
   normalizeSnapshotTrackAudioUrls(result);
 
   return result;

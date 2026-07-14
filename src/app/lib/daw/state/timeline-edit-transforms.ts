@@ -1,9 +1,23 @@
-import type { AcceptedDawProjectOperation, DawSegmentSnapshot } from '@git-for-music/server/app/lib/daw/protocol';
+import type {
+  AcceptedDawProjectOperation,
+  DawOperationPayloadCrossfadeSet,
+  DawOperationPayloadSegmentDeleted,
+  DawOperationPayloadSegmentFadeSet,
+  DawOperationPayloadSegmentMerged,
+  DawOperationPayloadSegmentMoved,
+  DawOperationPayloadSegmentSplit,
+  DawOperationPayloadSegmentTrimmed,
+  DawOperationPayloadTrackOffsetUpdated,
+  DawOperationPayloadTrackRemoved,
+  DawOperationPayloadTrackRenamed,
+  DawSegmentSnapshot,
+} from '@git-for-music/server/app/lib/daw/protocol';
 import type { DawTrack, TrackTimelineSegment } from './local-project-state';
 
 type TimelineSegmentSnapshot = Pick<
   DawSegmentSnapshot,
   | 'id'
+  | 'trackVersionId'
   | 'startMs'
   | 'endMs'
   | 'timelineStartMs'
@@ -18,19 +32,25 @@ type TimelineSegmentSnapshot = Pick<
   | 'crossfadeCurve'
 >;
 
-export type TimelineEditOperation = Extract<
-  AcceptedDawProjectOperation,
-  | { type: 'TRACK_RENAMED' }
-  | { type: 'TRACK_REMOVED' }
-  | { type: 'TRACK_OFFSET_UPDATED' }
-  | { type: 'SEGMENT_SPLIT' }
-  | { type: 'SEGMENT_MOVED' }
-  | { type: 'SEGMENT_DELETED' }
-  | { type: 'SEGMENT_TRIMMED' }
-  | { type: 'SEGMENT_MERGED' }
-  | { type: 'SEGMENT_FADE_SET' }
-  | { type: 'CROSSFADE_SET' }
->;
+export type TimelineEditOperation =
+  | (AcceptedDawProjectOperation & { type: 'TRACK_RENAMED'; payload: DawOperationPayloadTrackRenamed })
+  | (AcceptedDawProjectOperation & { type: 'TRACK_REMOVED'; payload: DawOperationPayloadTrackRemoved })
+  | (AcceptedDawProjectOperation & { type: 'TRACK_OFFSET_UPDATED'; payload: DawOperationPayloadTrackOffsetUpdated })
+  | (AcceptedDawProjectOperation & {
+      type: 'SEGMENT_SPLIT';
+      payload: {
+        trackVersionId: string;
+        sourceSegmentId: string | null;
+        leftSegment: TimelineSegmentSnapshot;
+        rightSegment: TimelineSegmentSnapshot;
+      };
+    })
+  | (AcceptedDawProjectOperation & { type: 'SEGMENT_MOVED'; payload: DawOperationPayloadSegmentMoved })
+  | (AcceptedDawProjectOperation & { type: 'SEGMENT_DELETED'; payload: DawOperationPayloadSegmentDeleted })
+  | (AcceptedDawProjectOperation & { type: 'SEGMENT_TRIMMED'; payload: DawOperationPayloadSegmentTrimmed })
+  | (AcceptedDawProjectOperation & { type: 'SEGMENT_MERGED'; payload: DawOperationPayloadSegmentMerged })
+  | (AcceptedDawProjectOperation & { type: 'SEGMENT_FADE_SET'; payload: DawOperationPayloadSegmentFadeSet })
+  | (AcceptedDawProjectOperation & { type: 'CROSSFADE_SET'; payload: DawOperationPayloadCrossfadeSet });
 
 function updateSegments(
   track: DawTrack,
@@ -412,4 +432,5 @@ export function applyTimelineEditOperation(tracks: DawTrack[], operation: Timeli
         operation.payload.curve,
       );
   }
+  return tracks;
 }

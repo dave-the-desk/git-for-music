@@ -22,6 +22,13 @@ export function getNextUploadTrackName(input: {
   liveActiveTracks: TrackNameLike[];
   selectedTracks: TrackNameLike[];
 }) {
-  const shouldUseLiveCheckout = input.liveActiveVersionId !== null && input.selectedVersionId !== input.liveActiveVersionId;
-  return getNextEmptyTrackName(shouldUseLiveCheckout ? input.liveActiveTracks : input.selectedTracks);
+  if (input.selectedVersionId) {
+    return getNextEmptyTrackName(input.selectedTracks);
+  }
+
+  if (input.liveActiveVersionId) {
+    return getNextEmptyTrackName(input.liveActiveTracks);
+  }
+
+  return getNextEmptyTrackName(input.selectedTracks);
 }

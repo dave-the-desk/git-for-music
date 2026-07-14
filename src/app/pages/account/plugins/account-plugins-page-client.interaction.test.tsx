@@ -21,7 +21,7 @@ function createDropDataTransfer(file: File) {
       },
     ],
     types: ['Files'],
-  } as DataTransfer;
+  } as unknown as DataTransfer;
 }
 
 describe('AccountPluginsPageClient', () => {
@@ -72,7 +72,7 @@ describe('AccountPluginsPageClient', () => {
               manufacturer: null,
               parameterSchema: {},
               ownerId: 'user-1',
-              visibility: 'PRIVATE',
+              visibility: 'PRIVATE' as const,
               moduleObjectKey: '/plugins/user-1/plugin-1/plugin-1/delay.mjs',
               bundlePrefix: 'plugins/user-1/plugin-1/plugin-1',
               bundleKind: 'SINGLE_MODULE',
@@ -114,6 +114,66 @@ describe('AccountPluginsPageClient', () => {
       });
       expect(mockRouter.refresh).toHaveBeenCalled();
     } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it('deletes an owned plugin from the library after confirmation', async () => {
+    const plugin = {
+      id: 'plugin-1',
+      pluginKey: 'user:user-1:plugin-1',
+      name: 'delay',
+      displayName: 'delay',
+      description: null,
+      version: 'plugin-1',
+      manufacturer: null,
+      parameterSchema: {},
+      ownerId: 'user-1',
+      visibility: 'PRIVATE' as const,
+      moduleObjectKey: '/plugins/user-1/plugin-1/plugin-1/delay.mjs',
+      bundlePrefix: 'plugins/user-1/plugin-1/plugin-1',
+      bundleKind: 'SINGLE_MODULE' as const,
+      sizeBytes: '81',
+      checksum: null,
+      createdAt: '2026-07-08T12:00:00.000Z',
+      updatedAt: '2026-07-08T12:00:00.000Z',
+    };
+
+    const originalFetch = global.fetch;
+    global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+
+      if (url.includes('/api/plugins/plugin-1') && init?.method === 'DELETE') {
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }
+
+      return new Response(JSON.stringify({}), { status: 200 });
+    }) as typeof fetch;
+
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    try {
+      render(
+        <AccountPluginsPageClient
+          initialPlugins={[plugin]}
+        />,
+      );
+
+      expect(screen.getByText('delay')).toBeTruthy();
+
+      await screen.findByRole('button', { name: 'Delete delay' });
+      const deleteButton = screen.getByRole('button', { name: 'Delete delay' });
+      fireEvent.click(deleteButton);
+
+      await waitFor(() => {
+        expect(screen.queryByText('delay')).toBeNull();
+      });
+      await waitFor(() => {
+        expect(mockRouter.refresh).toHaveBeenCalled();
+      });
+      expect(confirmSpy).toHaveBeenCalled();
+    } finally {
+      confirmSpy.mockRestore();
       global.fetch = originalFetch;
     }
   });

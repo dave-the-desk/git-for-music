@@ -38,7 +38,12 @@ import {
   emitDawVersionTreeChanged,
 } from '@/app/lib/daw/server/realtime-gateway';
 import { createDemoVersionWithCopiedTracks } from '@/app/lib/daw/server/versions';
-import { createAutoDemoVersion, serializeCreatedDemoVersionTreeNode } from '@/app/lib/daw/server/versioning';
+import {
+  createAutoDemoVersion,
+  loadUserDisplayName,
+  serializeCreatedDemoVersionTreeNode,
+} from '@/app/lib/daw/server/versioning';
+import type { DawDatabaseClient } from '@/app/lib/daw/server/demo-user-active-version';
 import { listPluginsForDemo } from '@/app/lib/plugins';
 import { rebaseTimelineEditRequest } from '@/app/lib/daw/state/timeline-edit-rebase';
 import type { LocalProjectState } from '@/app/lib/daw/state/local-project-state';
@@ -62,10 +67,15 @@ import type {
   DawOperationPayloadAnnotationDeleted,
   DawOperationPayloadVersionRenamed,
   DawOperationPayloadVersionTimingUpdated,
+  DawOperationPayloadPluginAdded,
+  DawOperationPayloadPluginRemoved,
+  DawOperationPayloadPluginReordered,
+  DawOperationPayloadPluginParamSet,
+  DawOperationPayloadPluginBypassSet,
+  DawOperationPayloadPluginStateSet,
 } from '@/app/lib/daw/protocol';
 import type { JsonValue, TimingSource } from '@git-for-music/shared';
-
-export type DawDatabaseClient = PrismaClient | Prisma.TransactionClient;
+import { getConfig } from '@git-for-music/shared';
 
 interface DawProjectWorkspace {
   project: {
@@ -112,8 +122,6 @@ const BRANCH_CREATING_OPERATION_TYPES = new Set<DawOperationType>([
   'TRACK_RENAMED',
   'SEGMENT_TRIMMED',
 ]);
-const ENABLE_ORDINARY_EDIT_HEAD_ADVANCE =
-  process.env.DAW_ENABLE_ORDINARY_EDIT_HEAD_ADVANCE === 'true';
 const VERSION_TREE_MUTATION_OPERATION_TYPES = new Set<DawOperationType>([
   'VERSION_CREATED',
   'VERSION_BRANCH_CREATED',
@@ -175,7 +183,7 @@ export function shouldCreateBranchForOperation(operationType: DawOperationType) 
 
 export function shouldCreatePerEditBranchForOperation(
   operationType: DawOperationType,
-  enableOrdinaryEditHeadAdvance = ENABLE_ORDINARY_EDIT_HEAD_ADVANCE,
+  enableOrdinaryEditHeadAdvance = getConfig().toggles.enableOrdinaryEditHeadAdvance,
 ) {
   return shouldCreateBranchForOperation(operationType) && !enableOrdinaryEditHeadAdvance;
 }
@@ -306,7 +314,7 @@ export async function maybeCreateAutoDemoVersionAfterAcceptedOperation(
   }
 
   const shouldCreate = shouldCreateAutoVersion({
-    latestOperationType: currentOperation.operationType,
+    latestOperationType: currentOperation.operationType as DawOperationType,
     latestOperationCreatedAt: previousOperation?.createdAt ?? currentOperation.createdAt,
     latestOperationSeq: currentOperation.operationSeq,
     latestVersionOperationSeq: sourceVersion.operationSeq ?? currentOperation.operationSeq,
@@ -321,7 +329,7 @@ export async function maybeCreateAutoDemoVersionAfterAcceptedOperation(
     demoId: input.demoId,
     sourceVersionId: sourceVersion.id,
     operationSeq: currentOperation.operationSeq,
-    kind: isSemanticAutoVersionOperation(currentOperation.operationType) ? 'SEMANTIC' : 'AUTO',
+    kind: isSemanticAutoVersionOperation(currentOperation.operationType as DawOperationType) ? 'SEMANTIC' : 'AUTO',
   });
 
   await setDemoUserActiveVersion(tx, {
@@ -1126,6 +1134,151 @@ async function executeOperationMutation(
         logPayload: {
           trackVersionId: trackVersion.id,
           startOffsetMs,
+        },
+      };
+    }
+
+    case 'PLUGIN_ADDED': {
+      const payload = request.payload as DawOperationPayloadPluginAdded;
+      if (typeof payload.trackVersionId !== 'string' || payload.trackVersionId.trim().length === 0) {
+        throw new Error('trackVersionId is required');
+      }
+      if (typeof payload.instanceId !== 'string' || payload.instanceId.trim().length === 0) {
+        throw new Error('instanceId is required');
+      }
+      if (typeof payload.pluginKey !== 'string' || payload.pluginKey.trim().length === 0) {
+        throw new Error('pluginKey is required');
+      }
+      if (typeof payload.version !== 'string' || payload.version.trim().length === 0) {
+        throw new Error('version is required');
+      }
+      if (payload.backend !== 'wam' && payload.backend !== 'remote') {
+        throw new Error('backend must be wam or remote');
+      }
+      if (typeof payload.position !== 'number' || !Number.isFinite(payload.position) || payload.position < 0) {
+        throw new Error('position must be a non-negative number');
+      }
+      if (typeof payload.bypassed !== 'boolean') {
+        throw new Error('bypassed is required');
+      }
+
+      return {
+        logPayload: {
+          trackVersionId: payload.trackVersionId,
+          instanceId: payload.instanceId,
+          pluginKey: payload.pluginKey,
+          version: payload.version,
+          backend: payload.backend,
+          position: payload.position,
+          bypassed: payload.bypassed,
+          params: payload.params ?? {},
+          state: payload.state,
+          stateBlobKey: payload.stateBlobKey ?? null,
+        },
+      };
+    }
+
+    case 'PLUGIN_REMOVED': {
+      const payload = request.payload as DawOperationPayloadPluginRemoved;
+      if (typeof payload.trackVersionId !== 'string' || payload.trackVersionId.trim().length === 0) {
+        throw new Error('trackVersionId is required');
+      }
+      if (typeof payload.instanceId !== 'string' || payload.instanceId.trim().length === 0) {
+        throw new Error('instanceId is required');
+      }
+
+      return {
+        logPayload: {
+          trackVersionId: payload.trackVersionId,
+          instanceId: payload.instanceId,
+        },
+      };
+    }
+
+    case 'PLUGIN_REORDERED': {
+      const payload = request.payload as DawOperationPayloadPluginReordered;
+      if (typeof payload.trackVersionId !== 'string' || payload.trackVersionId.trim().length === 0) {
+        throw new Error('trackVersionId is required');
+      }
+      if (typeof payload.instanceId !== 'string' || payload.instanceId.trim().length === 0) {
+        throw new Error('instanceId is required');
+      }
+      if (typeof payload.position !== 'number' || !Number.isFinite(payload.position) || payload.position < 0) {
+        throw new Error('position must be a non-negative number');
+      }
+
+      return {
+        logPayload: {
+          trackVersionId: payload.trackVersionId,
+          instanceId: payload.instanceId,
+          position: Math.floor(payload.position),
+        },
+      };
+    }
+
+    case 'PLUGIN_PARAM_SET': {
+      const payload = request.payload as DawOperationPayloadPluginParamSet;
+      if (typeof payload.trackVersionId !== 'string' || payload.trackVersionId.trim().length === 0) {
+        throw new Error('trackVersionId is required');
+      }
+      if (typeof payload.instanceId !== 'string' || payload.instanceId.trim().length === 0) {
+        throw new Error('instanceId is required');
+      }
+      if (typeof payload.paramId !== 'string' || payload.paramId.trim().length === 0) {
+        throw new Error('paramId is required');
+      }
+      if (typeof payload.value !== 'number' || !Number.isFinite(payload.value)) {
+        throw new Error('value must be a finite number');
+      }
+
+      return {
+        logPayload: {
+          trackVersionId: payload.trackVersionId,
+          instanceId: payload.instanceId,
+          paramId: payload.paramId,
+          value: payload.value,
+          previousValue: payload.previousValue,
+        },
+      };
+    }
+
+    case 'PLUGIN_BYPASS_SET': {
+      const payload = request.payload as DawOperationPayloadPluginBypassSet;
+      if (typeof payload.trackVersionId !== 'string' || payload.trackVersionId.trim().length === 0) {
+        throw new Error('trackVersionId is required');
+      }
+      if (typeof payload.instanceId !== 'string' || payload.instanceId.trim().length === 0) {
+        throw new Error('instanceId is required');
+      }
+      if (typeof payload.bypassed !== 'boolean') {
+        throw new Error('bypassed is required');
+      }
+
+      return {
+        logPayload: {
+          trackVersionId: payload.trackVersionId,
+          instanceId: payload.instanceId,
+          bypassed: payload.bypassed,
+          previousBypassed: payload.previousBypassed,
+        },
+      };
+    }
+
+    case 'PLUGIN_STATE_SET': {
+      const payload = request.payload as DawOperationPayloadPluginStateSet;
+      if (typeof payload.trackVersionId !== 'string' || payload.trackVersionId.trim().length === 0) {
+        throw new Error('trackVersionId is required');
+      }
+      if (typeof payload.instanceId !== 'string' || payload.instanceId.trim().length === 0) {
+        throw new Error('instanceId is required');
+      }
+
+      return {
+        logPayload: {
+          trackVersionId: payload.trackVersionId,
+          instanceId: payload.instanceId,
+          state: payload.state,
+          stateBlobKey: payload.stateBlobKey ?? null,
         },
       };
     }
@@ -2592,7 +2745,7 @@ export async function commitDawProjectOperation(
       const projectState = (await loadSnapshotStateForDemo(tx, {
         projectId: workspace.project.id,
         demoId: workspace.demo.id,
-      })) as LocalProjectState;
+      })) as unknown as LocalProjectState;
       const rebasedRequest = isTimelineEditOperation(request.operationType)
         ? rebaseTimelineEditRequest(projectState, request)
         : request;
@@ -2619,6 +2772,7 @@ export async function commitDawProjectOperation(
         });
 
         if (sourceVersion) {
+          const createdByName = await loadUserDisplayName(tx, input.userId);
           const branchVersion = await createDemoVersionWithCopiedTracks(tx, {
             demoId: workspace.demo.id,
             sourceVersionId: sourceVersion.id,
@@ -2626,6 +2780,7 @@ export async function commitDawProjectOperation(
             kind: 'BRANCH',
             label: `${sourceVersion.label} branch`,
             description: `Branch created from ${sourceVersion.label}.`,
+            createdByName,
           });
 
           await setDemoUserActiveVersion(tx, {
@@ -2673,6 +2828,7 @@ export async function commitDawProjectOperation(
             });
 
             if (currentVersion) {
+              const createdByName = await loadUserDisplayName(tx, input.userId);
               const createdBranch = await createDemoVersionWithCopiedTracks(tx, {
                 demoId: workspace.demo.id,
                 sourceVersionId: currentVersion.id,
@@ -2680,6 +2836,7 @@ export async function commitDawProjectOperation(
                 kind: 'BRANCH',
                 label: `${currentVersion.label} conflict`,
                 description: `Conflict branch created while applying ${effectiveRequest.operationType}.`,
+                createdByName,
               });
 
               branchVersion = {
@@ -2735,6 +2892,7 @@ export async function commitDawProjectOperation(
         if (!branchLabel) {
           throw new Error(`No branch label available for ${effectiveRequest.operationType}`);
         }
+        const createdByName = await loadUserDisplayName(tx, input.userId);
         const branchVersion = await createDemoVersionWithCopiedTracks(tx, {
           demoId: workspace.demo.id,
           sourceVersionId: branchSourceVersion.id,
@@ -2742,6 +2900,7 @@ export async function commitDawProjectOperation(
           kind: 'BRANCH',
           label: branchLabel,
           description: `${branchLabel} from ${branchSourceVersion.label}`,
+          createdByName,
         });
 
         await setDemoUserActiveVersion(tx, {
@@ -2774,6 +2933,7 @@ export async function commitDawProjectOperation(
                 id: branchVersion.id,
                 label: branchVersion.label,
                 description: branchVersion.description,
+                createdByName: branchVersion.createdByName,
                 parentId: branchVersion.parentId,
                 createdAt: branchVersion.createdAt,
                 branchMode: 'continue',
@@ -2894,26 +3054,28 @@ export async function commitDawProjectOperation(
   }
 
   if (createdAutoVersion) {
+    const autoVersion = createdAutoVersion as any;
     await emitDawVersionCreated({
       projectId: workspace.project.id,
       demoId: workspace.demo.id,
       actorUserId: input.userId,
-      versionId: createdAutoVersion.id,
-      parentVersionId: createdAutoVersion.parentId,
-      kind: createdAutoVersion.kind,
-      operationSeq: createdAutoVersion.operationSeq ?? null,
+      versionId: autoVersion.id,
+      parentVersionId: autoVersion.parentId,
+      kind: autoVersion.kind,
+      operationSeq: autoVersion.operationSeq ?? null,
     });
   }
 
   if (branchCreatedEvent) {
+    const branchEvent = branchCreatedEvent as any;
     await emitDawBranchCreated({
       projectId: workspace.project.id,
       demoId: workspace.demo.id,
       actorUserId: input.userId,
-      versionId: branchCreatedEvent.versionId,
-      parentVersionId: branchCreatedEvent.parentVersionId,
-      branchMode: branchCreatedEvent.branchMode,
-      operationSeq: branchCreatedEvent.operationSeq,
+      versionId: branchEvent.versionId,
+      parentVersionId: branchEvent.parentVersionId,
+      branchMode: branchEvent.branchMode,
+      operationSeq: branchEvent.operationSeq,
     });
   } else if (versionTreeChanged && !createdAutoVersion) {
     await emitDawVersionTreeChanged({

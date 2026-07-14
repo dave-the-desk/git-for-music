@@ -14,20 +14,24 @@ processing is Phase 6 and can be built independently.
 tests, run the relevant checks until green, then refresh the vault docs. Never
 weaken existing tests. Keep edits minimal and upstream.
 
-Legend: `[ ]` todo · files are linked relative to this note.
+Status as of 2026-07-11: realtime WAM insert v1 is implemented. Remaining
+unchecked work in this file is for remote/async render plugins or future
+hardening, not for the shipped browser insert chain.
+
+Legend: `[ ]` todo · `[x]` source-verified shipped · files are linked relative to this note.
 
 ---
 
 ## Phase 0 — Confirm the seams (no code)
 
-- [ ] Confirm the unused `pluginGraphFactory` hook still exists and is
-  bare-constructed:
+- [x] Confirm the `pluginGraphFactory` hook exists and is wired into
+  `DemoDawClient`:
   - [`playback-engine.ts`](../../../src/app/lib/daw/engine/playback-engine.ts)
     (`PlaybackEnginePluginGraphFactory`, `ensureTrackBus`).
-  - `new AudioPlaybackEngine()` in
+  - `new AudioPlaybackEngine({ pluginGraphFactory })` in
     [`DemoDawClient.tsx`](../../../src/app/pages/groups/demo/components/daw/DemoDawClient.tsx)
-    (no factory passed today).
-- [ ] Confirm the plugin catalog path still round-trips end to end:
+    (factory passed today).
+- [x] Confirm the plugin catalog path round-trips end to end:
   - `PluginMetadata` in
     [`schema.prisma`](../../../packages/db/prisma/schema.prisma).
   - `DawProjectBootstrapPluginDefinition` + `pluginDefinitions[]` in
@@ -35,7 +39,7 @@ Legend: `[ ]` todo · files are linked relative to this note.
   - `pluginDefinitions` store in
     [`daw-local-cache.ts`](../../../src/app/lib/daw/engine/daw-local-cache.ts).
   - Read-only **Plugins** tab in `DemoDawClient`.
-- [ ] Decide the initial WAM SDK dependency (host runtime + a couple of reference
+- [x] Decide the initial WAM SDK dependency (host runtime + a couple of reference
   effect plugins) and record the decision in
   [`docs/01_PROTOCOLS/architecture-decision-log.md`](../../01_PROTOCOLS/architecture-decision-log.md).
 
@@ -86,7 +90,7 @@ Goal: turn a `HostedPluginInstanceState` into a live `AudioNode` chain.
 - [x] Implement a `PlaybackEnginePluginGraphFactory` that, for a `trackVersionId`:
   - [x] reads the ordered insert chain from current project state,
   - [x] builds `input -> wam1 -> wam2 -> ... -> return`,
-  - [ ] returns the tail node (or `input` if the chain is empty or all bypassed),
+  - [x] returns the tail node (or `input` if the chain is empty or all bypassed),
   - [x] respects `bypassed` (route around the node).
 - [x] Guard rails from the overview Section 2.1 / 3.3:
   - [x] Instantiate/configure nodes on the main thread only — never in the render
@@ -128,9 +132,9 @@ Goal: let users add, order, tweak, and bypass plugins.
   plugin can be **added to the selected track** (button or drag), emitting
   `PLUGIN_ADDED`.
 - [x] Add a per-track **insert-chain panel** (rack) showing ordered instances with:
-  - [ ] reorder (drag) -> `PLUGIN_REORDERED`,
-  - [ ] remove -> `PLUGIN_REMOVED`,
-  - [ ] bypass toggle -> `PLUGIN_BYPASS_SET`.
+  - [x] reorder (drag) -> `PLUGIN_REORDERED`,
+  - [x] remove -> `PLUGIN_REMOVED`,
+  - [x] bypass toggle -> `PLUGIN_BYPASS_SET`.
 - [x] Render a **generic parameter editor** driven by `parameterSchema`
   (sliders/toggles from id/label/range/unit/default) that emits `PLUGIN_PARAM_SET`
   on change. (Custom per-plugin GUIs are out of scope for v1 — overview Section
@@ -178,20 +182,20 @@ separately from Phases 1–5.
 
 ## Cross-cutting: tests to keep green
 
-- [ ] `pnpm` Vitest suites touching:
+- [x] `pnpm` Vitest suites touching:
   - [`operation-reducer.test.ts`](../../../src/app/lib/daw/state/operation-reducer.test.ts)
   - [`project-sync-engine.test.ts`](../../../src/app/lib/daw/engine/project-sync-engine.test.ts)
   - [`DemoDawClient.interaction.test.tsx`](../../../src/app/pages/groups/demo/components/daw/DemoDawClient.interaction.test.tsx)
-  - new `wam-host` / factory tests
-- [ ] Server command / snapshot-builder tests for the new operation types.
+  - `wam-host` / factory tests
+- [x] Server command / snapshot-builder tests for the new operation types.
 
 ## Definition of done (v1)
 
-- [ ] A user can add a WAM effect to a track, tweak its parameters, reorder,
+- [x] A user can add a WAM effect to a track, tweak its parameters, reorder,
   bypass, and remove it — and **hear** the effect during playback.
-- [ ] Every action is broadcast to collaborators in realtime and applies to their
+- [x] Every action is broadcast to collaborators in realtime and applies to their
   playback graph.
-- [ ] Plugin chains + parameters survive reload and travel correctly across
+- [x] Plugin chains + parameters survive reload and travel correctly across
   branches/versions.
-- [ ] All existing and new tests pass; vault docs (this note + the design note)
+- [x] All existing and new tests pass; vault docs (this note + the design note)
   are refreshed to match what shipped.

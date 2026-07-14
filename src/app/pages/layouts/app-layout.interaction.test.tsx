@@ -1,6 +1,7 @@
 import { createElement } from 'react';
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+import { branding } from '@/app/product/branding';
 import AppLayout from './app-layout';
 
 const mockPathname = vi.hoisted(() => ({
@@ -20,9 +21,10 @@ describe('AppLayout header links', () => {
     render(createElement(AppLayout, null, <div>Content</div>));
 
     const notificationsButton = screen.getByRole('button', { name: 'Notifications' });
+    const appLink = screen.getByRole('link', { name: branding.appName });
     const accountLink = screen.getByRole('link', { name: 'Account' });
 
-    expect(accountLink).toBeTruthy();
+    expect(appLink).toBeTruthy();
     expect(notificationsButton.compareDocumentPosition(accountLink) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(accountLink.getAttribute('href')).toBe('/account');
   });

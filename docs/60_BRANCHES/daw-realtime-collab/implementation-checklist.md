@@ -31,16 +31,14 @@ What already exists (do not rebuild):
   replay through `operation-reducer.ts`, with timeline edits replayed through
   the same transform/rebase helpers used on the server.
 - **Tree tab:** `VersionHistoryTree.tsx` + `version-tree-layout.ts` render the
-  live `LocalProjectState.versions` graph with commit-graph row/column layout.
+  live `LocalProjectState.versions` graph with a centered commit-graph layout.
 - **Realtime events:** `accepted_operation`, `version_tree_changed`,
-  `version_created`, presence, transport, asset, comment
-  (`realtime-gateway.ts`). Semantic `head_moved` / `reverted` events are still
-  part of the later sync-event phase.
+  `version_created`, `branch_created`, `head_moved`, `reverted`, presence,
+  transport, asset, and comment (`realtime-gateway.ts`).
 
 Key gaps vs the design doc:
 
-- Realtime semantic sync events are still narrower than the final event model.
-- Processing-jobs alignment still needs the explicit phase-G audit.
+- Merge behavior is still future work; storage/layout are merge-ready but no branch merge command has shipped.
 
 ---
 
@@ -86,23 +84,25 @@ preserved.
 - [x] Add an API route (e.g. `POST /api/versions/revert`) mirroring `create-version.ts` auth + validation.
 - [x] Record a `VERSION_REVERTED_FROM` operation whose payload carries the new version node (like `VERSION_BRANCH_CREATED` does), and update the reducer case in `src/app/lib/daw/state/operation-reducer.ts` to upsert the new version node instead of only moving `currentVersionId`.
 - [x] In a live session, commit the revert like any accepted operation so all clients converge; move the branch head and let followers follow, without yanking pinned checkouts (respect `isFollowingHead`).
-- [x] Add `revertToVersion(...)` to `ProjectSyncEngine` and wire a "Revert to this version" action in `VersionHistoryTree.tsx` (reuse the existing history-lane / branch-from-point surface).
+- [x] Add `revertToVersion(...)` to `ProjectSyncEngine`; the tree no longer exposes a separate revert control and now relies on checkout selection.
 - [x] Tests: revert produces a new node whose content equals the ancestor; older nodes remain; follow-head vs pinned checkout behavior is correct.
 
 ## Phase D - Tree Tab Commit-Graph (DoltHub layout)
 
-Goal: render the version DAG as a real commit graph with topological rows and
-column-assigned branches/merges, colored per branch.
+Goal: render the version DAG as a real commit graph with topological rows,
+centered forks, column-assigned branches/merges, colored per branch.
 
 - [x] Rework `src/app/pages/groups/demo/components/daw/version-tree-layout.ts`:
   - [x] Build a `childrenMap` from `parentId` (extend `buildTree`); support multiple parents for future merges.
   - [x] Rows = topological order (reuse `compareVersions`: `createdAt`, `operationSeq`, `id`); row index -> y.
-  - [x] Columns via a head->root pass: branch head -> new column; branch children -> leftmost child column; merge-only children -> first free column to the right so merge edges point right-to-left.
+  - [x] Columns via a head->root pass: branch head -> new column; multiple branch children -> center the parent between those branch children; a single branch child -> keep that column; merge-only children -> first free column to the right so merge edges point right-to-left.
   - [x] Assign a stable per-branch/column color.
 - [x] Update `VersionHistoryTree.tsx` to consume the new layout:
   - [x] Draw dots + parent->child edges from the new node/column positions.
-  - [x] Keep existing badges (branch head, my active version, selected, following/pinned) and the per-version history lane.
-  - [x] Add "Revert to this version" (Phase C) and keep branch-from-point.
+  - [x] Keep the semantic badge set aligned to the graph palette (current branch head, current branch, other branch nodes, other branch heads) and the simplified node details pop-up.
+  - [x] Keep the rail-header zoom controls as the standard zoom affordance for the graph.
+  - [x] Keep branch color semantic: current branch blue, current branch head lighter blue, other-branch nodes lighter yellow, other-branch heads darker yellow.
+  - [x] Keep node details in a pop-up with the checkout action at the bottom; branch/revert controls are not exposed inline on the node.
   - [x] Preserve pan/scroll and expand/minimize.
 - [x] Ensure the tree renders from live `LocalProjectState.versions`, never stale props (design rule in `docs/architecture/daw-realtime-sync.md`).
 - [x] Tests: column assignment for a chain, a fork (two branch children), and a merge (merge child) matches expected columns; layout is deterministic.
@@ -110,8 +110,8 @@ column-assigned branches/merges, colored per branch.
 ## Phase E - OT Convergence (from realtime plan)
 
 Goal: safe concurrent edits converge without an unwanted branch; branching stays
-the unsafe-overlap fallback. (Tracks the phased
-[realtime collaboration plan](../../papers/realtime-collaboration-plan.md).)
+the unsafe-overlap fallback. This is grounded in the realtime-collaboration
+papers summarized in [docs/papers/README.md](../../papers/README.md).
 
 - [x] Add pure transform helpers for the timeline ops in `TIMELINE_EDIT_OPERATION_TYPES` (move, trim, split, merge, fade,  crossfade, rename) under `src/app/lib/daw/state/`.
 - [x] Rebase an incoming edit against intervening accepted operations in `commitDawProjectOperation` before finalizing; only fall back to `analyzeDawOperationConflict` branch/409 when a transform cannot preserve intent.
@@ -172,25 +172,25 @@ The following items are now verified by repo regression tests and should be trea
 
 ## Suggested Verification Commands
 
-Tests in this repo are `node:test` files (`*.test.ts` importing `node:test` and
-`node:assert/strict`); there is no configured `test` npm script yet. Run the
-relevant suites directly with Node's test runner and a TS loader, for example:
+Web tests use the Vitest harness from `src/package.json`; server-side unit tests
+commonly use Node's test runner with `tsx`. Run the suites closest to the files
+you touch, for example:
 
 ```bash
-# from repo root
-node --import tsx --test packages/server/app/lib/daw/server/command-api.test.ts
-node --import tsx --test src/app/pages/groups/demo/components/daw/version-history-tree.test.ts
-node --import tsx --test src/app/lib/daw/state/operation-reducer.test.ts
+# from repo root for web tests
+pnpm --filter @git-for-music/web test -- src/app/lib/daw/state/operation-reducer.test.ts
+pnpm --filter @git-for-music/web test -- src/app/pages/groups/demo/components/daw/version-history-tree.test.ts
+
+# from packages/server for server tests
+pnpm exec tsx --test app/lib/daw/server/command-api.test.ts
 ```
 
 Validation loop:
 
-1. Run the relevant `node --import tsx --test ...` suite for the code you
-   touched.
+1. Run the relevant Vitest or `tsx --test` suite for the code you touched.
 2. If a test fails, fix the implementation or fixture.
 3. Rerun the same test until it passes.
 4. Record the passing result in the daily log for the work date.
 
-New tests added by this work should follow the same `node:test` pattern and sit
-next to the code they cover (for example `versioning.test.ts`,
-`version-tree-layout.test.ts`).
+New tests should sit next to the code they cover and follow the local harness
+already used in that subtree.

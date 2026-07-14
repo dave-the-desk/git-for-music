@@ -4,8 +4,11 @@ Generated from `rg --files packages/server | sort`.
 
 ```text
 packages/server/app/lib/auth/current-user.ts
+packages/server/app/lib/auth/current-user.test.ts
+packages/server/app/lib/auth/default-provider.ts
 packages/server/app/lib/auth/index.ts
 packages/server/app/lib/auth/password.ts
+packages/server/app/lib/auth/provider.ts
 packages/server/app/lib/auth/session.ts
 packages/server/app/lib/daw/protocol/command-api.ts
 packages/server/app/lib/daw/protocol/index.ts
@@ -20,13 +23,15 @@ packages/server/app/lib/daw/server/commands/delete-segment.ts
 packages/server/app/lib/daw/server/commands/demo-commands.ts
 packages/server/app/lib/daw/server/commands/index.ts
 packages/server/app/lib/daw/server/commands/move-segment.ts
+packages/server/app/lib/daw/server/commands/rename-track.ts
 packages/server/app/lib/daw/server/commands/revert-version.test.ts
 packages/server/app/lib/daw/server/commands/revert-version.ts
-packages/server/app/lib/daw/server/commands/rename-track.ts
 packages/server/app/lib/daw/server/commands/split-segment.ts
 packages/server/app/lib/daw/server/commands/update-track-offset.ts
 packages/server/app/lib/daw/server/commands/update-version-timing.ts
+packages/server/app/lib/daw/server/commands/upload-track.test.ts
 packages/server/app/lib/daw/server/commands/upload-track.ts
+packages/server/app/lib/daw/server/conflict-rules.test.ts
 packages/server/app/lib/daw/server/conflict-rules.ts
 packages/server/app/lib/daw/server/demo-page-data.ts
 packages/server/app/lib/daw/server/demo-user-active-version.test.ts
@@ -41,9 +46,14 @@ packages/server/app/lib/daw/server/realtime.ts
 packages/server/app/lib/daw/server/snapshot-builder.test.ts
 packages/server/app/lib/daw/server/snapshot-builder.ts
 packages/server/app/lib/daw/server/storage.ts
+packages/server/app/lib/daw/server/track-duplicate-cleanup.test.ts
+packages/server/app/lib/daw/server/track-duplicate-cleanup.ts
 packages/server/app/lib/daw/server/versioning.test.ts
 packages/server/app/lib/daw/server/versioning.ts
 packages/server/app/lib/daw/server/versions/index.ts
+packages/server/app/lib/extensions/index.ts
+packages/server/app/lib/plugins/index.test.ts
+packages/server/app/lib/plugins/index.ts
 packages/server/app/lib/processing/index.ts
 packages/server/app/lib/processing/jobs.ts
 packages/server/app/lib/workspace-realtime.ts

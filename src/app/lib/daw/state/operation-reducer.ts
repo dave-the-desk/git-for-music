@@ -211,10 +211,6 @@ function shouldAutoAdvanceVersionOperation(
   versionParentId: string | null,
   branchMode?: 'continue' | 'fork',
 ) {
-  if (branchMode === 'fork') {
-    return false;
-  }
-
   return shouldAutoAdvanceActiveVersion(state, versionParentId);
 }
 
@@ -229,6 +225,7 @@ type VersionTreeNodeLike = {
   parentVersionId?: string | null;
   createdAt?: string;
   createdBy?: string | null;
+  createdByName?: string | null;
   kind?: DawVersion['kind'];
   operationSeq?: number;
   isCurrent?: boolean;
@@ -257,7 +254,8 @@ function normalizeVersionNode(
     name: node.name ?? label,
     branchName: node.branchName ?? label,
     operationSummary: node.operationSummary ?? node.description ?? existing?.operationSummary ?? existing?.description ?? null,
-    createdBy: node.createdBy ?? existing?.createdBy ?? null,
+    createdBy: existing?.createdBy ?? node.createdBy ?? null,
+    createdByName: existing?.createdByName ?? node.createdByName ?? null,
     description: node.description ?? existing?.description ?? null,
     parentId: parentVersionId,
     parentVersionId,
@@ -790,6 +788,7 @@ export function createLocalProjectStateFromBootstrap(
         currentVersionId?: string;
         activeVersionId?: string;
         isFollowingHead?: boolean;
+        userDisplayNamesById?: Record<string, string | null>;
         comments?: DemoComment[];
         annotations?: DemoAnnotation[];
         tempoMetadataByTrackVersionId?: Record<string, { recordedTempoBpm?: number | null; sourceTempoBpm?: number | null }>;
@@ -846,6 +845,7 @@ export function createLocalProjectStateFromBootstrap(
     versionTreeUpdatedAt: bootstrap?.latestSnapshot?.createdAt ?? null,
     lastVersionOperationSeq: bootstrap?.latestSnapshot?.operationSeq ?? 0,
     lastSeenOperationSeq: bootstrap?.latestSnapshot?.operationSeq ?? 0,
+    userDisplayNamesById: { ...(snapshot?.userDisplayNamesById ?? {}) },
     comments: normalizeComments(snapshot?.comments),
     annotations: normalizeAnnotations(snapshot?.annotations),
     tempoMetadataByTrackVersionId,
@@ -1237,6 +1237,7 @@ export function applyAcceptedProjectOperation(
         return state;
       }
       const versionParentId = getVersionParentId(version, payload);
+      const existingVersion = state.versions.find((candidate) => candidate.id === versionId);
       const versions = upsertVersionNode(
         state.versions,
         {
@@ -1249,7 +1250,13 @@ export function applyAcceptedProjectOperation(
           parentVersionId: version?.parentVersionId ?? payload.parentVersionId ?? payload.parentId ?? null,
           parentId: version?.parentId ?? payload.parentId ?? payload.parentVersionId ?? null,
           createdAt: version?.createdAt ?? payload.createdAt,
-          createdBy: version?.createdBy ?? payload.createdBy ?? null,
+          createdBy: existingVersion?.createdBy ?? version?.createdBy ?? payload.createdBy ?? null,
+          createdByName:
+            existingVersion?.createdByName ??
+            version?.createdByName ??
+            state.userDisplayNamesById?.[version?.createdBy ?? payload.createdBy ?? ''] ??
+            state.userDisplayNamesById?.[payload.createdBy ?? ''] ??
+            null,
           operationSeq: operation.operationSeq,
           isCurrent: version?.isCurrent,
           tempoBpm: version?.tempoBpm,
@@ -1274,15 +1281,14 @@ export function applyAcceptedProjectOperation(
         versionParentId,
         payload.branchMode,
       );
-      const nextActiveVersionId = shouldAdvanceActiveVersion
-        ? versionId
-        : state.activeVersionId ?? state.currentVersionId;
       return {
         ...state,
         ...touchVersionTree(state, operation),
         versions: setCurrentVersionFlags(versions, nextCurrentVersionId, operation.operationSeq),
         currentVersionId: nextCurrentVersionId,
-        activeVersionId: nextActiveVersionId,
+        activeVersionId: shouldAdvanceActiveVersion
+          ? versionId
+          : state.activeVersionId ?? state.currentVersionId,
       };
     }
     case 'VERSION_RENAMED': {
@@ -1343,6 +1349,8 @@ export function applyAcceptedProjectOperation(
         track?: DawTrack;
         operationSummary?: string | null;
         version?: VersionTreeNodeLike;
+        parentId?: string | null;
+        parentVersionId?: string | null;
       };
       const versionId = payload.versionId ?? payload.version?.id;
       if (!versionId) {

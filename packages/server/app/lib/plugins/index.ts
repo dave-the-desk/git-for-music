@@ -1,6 +1,7 @@
 import { randomUUID, createHmac } from 'node:crypto';
 import type { Prisma, PrismaClient } from '@git-for-music/db';
 import { prisma } from '@git-for-music/db';
+import { getConfig } from '@git-for-music/shared';
 import {
   assetObjectExists,
   createObjectUploadTarget,
@@ -92,11 +93,15 @@ type PluginGrantInput = {
   demoId: string;
 };
 
-const TOKEN_SECRET =
-  process.env.DAW_PLUGIN_UPLOAD_TOKEN_SECRET ??
-  process.env.DAW_ASSET_UPLOAD_TOKEN_SECRET ??
-  process.env.NEXTAUTH_SECRET ??
-  'dev-only-daw-plugin-token-secret';
+function getTokenSecret() {
+  const config = getConfig();
+  return (
+    config.secrets.dawPluginUploadTokenSecret ||
+    config.secrets.dawAssetUploadTokenSecret ||
+    config.secrets.nextAuthSecret ||
+    'dev-only-daw-plugin-token-secret'
+  );
+}
 
 function base64UrlEncode(value: string) {
   return Buffer.from(value, 'utf8').toString('base64url');
@@ -108,7 +113,7 @@ function base64UrlDecode(value: string) {
 
 function signToken(payload: PluginUploadToken) {
   const encodedPayload = base64UrlEncode(JSON.stringify(payload));
-  const signature = createHmac('sha256', TOKEN_SECRET).update(encodedPayload).digest('base64url');
+  const signature = createHmac('sha256', getTokenSecret()).update(encodedPayload).digest('base64url');
   return `${encodedPayload}.${signature}`;
 }
 
@@ -118,7 +123,7 @@ function verifyToken(token: string) {
     return null;
   }
 
-  const expected = createHmac('sha256', TOKEN_SECRET).update(encodedPayload).digest('base64url');
+  const expected = createHmac('sha256', getTokenSecret()).update(encodedPayload).digest('base64url');
   if (signature !== expected) {
     return null;
   }
@@ -192,6 +197,15 @@ function serializePluginDefinition(row: PluginDefinitionRow): SerializedPluginDe
   };
 }
 
+function buildPluginDescriptorUrl(pluginId: string, cacheBust?: Date | null) {
+  const url = `/api/plugins/${pluginId}/module`;
+  if (!cacheBust) {
+    return url;
+  }
+
+  return `${url}?v=${cacheBust.getTime()}`;
+}
+
 export async function listUserPlugins(db: PluginDb, userId: string) {
   const plugins = await db.pluginMetadata.findMany({
     where: {
@@ -221,7 +235,10 @@ export async function listUserPlugins(db: PluginDb, userId: string) {
     },
   });
 
-  return plugins.map(serializePluginDefinition);
+  return plugins.map((plugin) => ({
+    ...serializePluginDefinition(plugin),
+    descriptorUrl: buildPluginDescriptorUrl(plugin.id, plugin.updatedAt),
+  }));
 }
 
 export async function listPluginsForDemo(db: PluginDb, input: { demoId: string; userId: string }) {
@@ -261,15 +278,27 @@ export async function listPluginsForDemo(db: PluginDb, input: { demoId: string; 
       checksum: true,
       createdAt: true,
       updatedAt: true,
+      grants: {
+        where: {
+          demoId: input.demoId,
+        },
+        orderBy: {
+          createdAt: 'desc',
+        },
+        take: 1,
+        select: {
+          createdAt: true,
+        },
+      },
     },
   });
 
-  return pluginDefinitions.map((plugin) => ({
+  return pluginDefinitions.map(({ grants, ...plugin }) => ({
     ...plugin,
-    descriptorUrl: `/api/plugins/${plugin.id}/module`,
     sizeBytes: plugin.sizeBytes?.toString() ?? null,
     createdAt: plugin.createdAt.toISOString(),
     updatedAt: plugin.updatedAt.toISOString(),
+    descriptorUrl: buildPluginDescriptorUrl(plugin.id, grants[0]?.createdAt ?? plugin.updatedAt),
   }));
 }
 
