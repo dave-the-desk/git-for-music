@@ -105,3 +105,6 @@ multiple-user-test.sh
 
 .tmp/chrome-profiles
 
+
+.playwright-mcp
+
