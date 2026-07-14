@@ -61,10 +61,12 @@ Status: provider interfaces, default bindings, product branding, and their regre
 ## Phase 6 — CI
 
 - [x] Add `.github/workflows/ci.yml` with `lint`, `typecheck`, `unit`, `integration` (Postgres + MinIO services), and `build` jobs. ([plan §2.4](public-repo-architecture-plan.md#24-public-ci-workflow-github-actions))
-- [ ] Confirm all jobs pass on a PR and on `main`; note recommended branch protection in the README. ([plan §2.4](public-repo-architecture-plan.md#24-public-ci-workflow-github-actions))
+- [x] Confirm all jobs pass on a PR and on `main`; note recommended branch protection in the README. ([plan §2.4](public-repo-architecture-plan.md#24-public-ci-workflow-github-actions))
 
 ## Phase 7 — Release
 
-- [ ] Bump all workspace versions to `1.0.0`. ([plan §2.5](public-repo-architecture-plan.md#25-tag-the-stable-release))
-- [ ] Update README (releases note, downstream setup link, extension-point overview). ([plan §2.5](public-repo-architecture-plan.md#25-tag-the-stable-release))
-- [ ] Tag `v1.0.0`, push the tag, and create the GitHub Release. ([plan §2.5](public-repo-architecture-plan.md#25-tag-the-stable-release))
+- [x] Bump all workspace versions to `1.0.0`. ([plan §2.5](public-repo-architecture-plan.md#25-tag-the-stable-release))
+- [x] Update README (releases note, downstream setup link, extension-point overview). ([plan §2.5](public-repo-architecture-plan.md#25-tag-the-stable-release))
+- [x] Tag `v1.0.0`, push the tag, and create the GitHub Release. ([plan §2.5](public-repo-architecture-plan.md#25-tag-the-stable-release))
+
+Status: the stable public baseline has been tagged and released as `v1.0.0`.

@@ -181,6 +181,21 @@ GitHub Actions runs `lint`, `typecheck`, `unit`, `integration`, and `build`
 for this repo. If you enable branch protection, require those checks before
 merging to `main`.
 
+## Releases
+
+Stable public releases are tagged from `main`. The first stable baseline for
+this repo is `v1.0.0`.
+
+If you are setting up a private downstream fork, start with
+[docs/downstream-private-repo-setup.md](docs/downstream-private-repo-setup.md)
+and keep downstream-only customizations inside
+[docs/architecture/core-vs-product-boundaries.md](docs/architecture/core-vs-product-boundaries.md).
+
+The public extension points live in `packages/server/app/lib/extensions/` and
+`src/app/product/`. Core code resolves auth, storage, analytics, and billing
+through those bindings so downstream repos can swap implementations without
+forking the core model.
+
 ## Documentation Workflow
 
 The `docs/` directory is an Obsidian-friendly documentation vault. It uses
@@ -195,10 +210,6 @@ Start here:
 2. `docs/00_HOME.md`
 3. `docs/00_MAPS/git-for-music-context-index.md`
 4. `docs/01_PROTOCOLS/ai-start-here.md`
-
-If you are setting up a private downstream fork, start with
-[docs/downstream-private-repo-setup.md](docs/downstream-private-repo-setup.md)
-and keep customizations inside [docs/architecture/core-vs-product-boundaries.md](docs/architecture/core-vs-product-boundaries.md).
 
 For implementation work, trust order is:
 
