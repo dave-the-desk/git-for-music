@@ -166,15 +166,6 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
-      minio:
-        image: minio/minio:RELEASE.2025-06-13T11-33-47Z
-        env:
-          MINIO_ROOT_USER: minioadmin
-          MINIO_ROOT_PASSWORD: minioadmin123
-        ports:
-          - 9000:9000
-          - 9001:9001
-
     env:
       NODE_ENV: test
       RUN_INTEGRATION_TESTS: "1"
@@ -203,13 +194,33 @@ jobs:
       - name: Apply database migrations
         run: pnpm db:migrate:deploy
 
+      - name: Start MinIO
+        run: |
+          docker run --detach --name gfm-ci-minio \
+            --env MINIO_ROOT_USER=minioadmin \
+            --env MINIO_ROOT_PASSWORD=minioadmin123 \
+            --publish 9000:9000 \
+            --publish 9001:9001 \
+            minio/minio:RELEASE.2025-06-13T11-33-47Z \
+            server /data --console-address ":9001"
+
       - name: Wait for MinIO and create the bucket
         run: |
-          until curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null; do
+          for attempt in {1..60}; do
+            if curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null; then
+              break
+            fi
+
+            if ! docker inspect --format '{{.State.Running}}' gfm-ci-minio 2>/dev/null | grep -qx true; then
+              docker logs gfm-ci-minio
+              exit 1
+            fi
+
             sleep 1
           done
+          curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null
 
-          docker run --rm --network host minio/mc:latest sh -lc '
+          docker run --rm --network host --entrypoint /bin/sh minio/mc:latest -lc '
             until mc alias set local http://127.0.0.1:9000 minioadmin minioadmin123; do
               sleep 1
             done
