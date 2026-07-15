@@ -179,6 +179,15 @@ export class AudioPlaybackEngine {
     return track?.plugins ?? [];
   }
 
+  private getActiveSoloTrackVersionId() {
+    for (const [trackVersionId, mix] of this.trackMixByTrackVersionId.entries()) {
+      if (mix.solo) {
+        return trackVersionId;
+      }
+    }
+    return null;
+  }
+
   private snapshotTrackPlugins(trackVersionId: string) {
     return this.getTrackPlugins(trackVersionId)
       .slice()
@@ -271,8 +280,8 @@ export class AudioPlaybackEngine {
       pan: DEFAULT_PAN,
     };
 
-    const anySolo = Array.from(this.trackMixByTrackVersionId.values()).some((entry) => entry.solo);
-    const audible = !mix.muted && (!anySolo || mix.solo);
+    const activeSoloTrackVersionId = this.getActiveSoloTrackVersionId();
+    const audible = !mix.muted && (!activeSoloTrackVersionId || activeSoloTrackVersionId === trackVersionId);
     bus.gain.gain.value = audible ? clamp(mix.gain, 0, 8) : 0;
     bus.pan.pan.value = clamp(mix.pan, -1, 1);
   }
@@ -329,12 +338,14 @@ export class AudioPlaybackEngine {
 
   setProject(project: PlaybackProjectSnapshot) {
     this.project = project;
+    const activeSoloTrackVersionId =
+      project.tracks.find((track) => project.soloTrackVersionIds?.has(track.trackVersionId))?.trackVersionId ?? null;
 
     for (const track of project.tracks) {
       const currentMix = this.trackMixByTrackVersionId.get(track.trackVersionId);
       this.trackMixByTrackVersionId.set(track.trackVersionId, {
         muted: project.mutedTrackVersionIds.has(track.trackVersionId),
-        solo: project.soloTrackVersionIds?.has(track.trackVersionId) ?? false,
+        solo: activeSoloTrackVersionId === track.trackVersionId,
         gain: project.gainByTrackVersionId?.[track.trackVersionId] ?? currentMix?.gain ?? DEFAULT_GAIN,
         pan: project.panByTrackVersionId?.[track.trackVersionId] ?? currentMix?.pan ?? DEFAULT_PAN,
       });
@@ -418,6 +429,12 @@ export class AudioPlaybackEngine {
       pan: DEFAULT_PAN,
     };
     this.trackMixByTrackVersionId.set(trackVersionId, { ...existing, solo });
+    if (solo) {
+      for (const [otherTrackVersionId, mix] of this.trackMixByTrackVersionId.entries()) {
+        if (otherTrackVersionId === trackVersionId || !mix.solo) continue;
+        this.trackMixByTrackVersionId.set(otherTrackVersionId, { ...mix, solo: false });
+      }
+    }
     this.applyTrackMixes();
   }
 
@@ -580,8 +597,8 @@ export class AudioPlaybackEngine {
           gain: DEFAULT_GAIN,
           pan: DEFAULT_PAN,
         };
-        const anySolo = Array.from(this.trackMixByTrackVersionId.values()).some((entry) => entry.solo);
-        const trackAudible = !mix.muted && (!anySolo || mix.solo);
+        const activeSoloTrackVersionId = this.getActiveSoloTrackVersionId();
+        const trackAudible = !mix.muted && (!activeSoloTrackVersionId || activeSoloTrackVersionId === track.trackVersionId);
         const trackBaseGain = trackAudible ? clamp(mix.gain, 0, 8) : 0;
         const trackPan = clamp(mix.pan, -1, 1);
         const recordedTempoBpm = normalizeTempoBpm(

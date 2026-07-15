@@ -1977,6 +1977,52 @@ describe('DemoDawClient recording regression', () => {
     });
   });
 
+  it('keeps only one track soloed at a time in the DAW UI', async () => {
+    const initialVersion = makeVersion('version-1', ['Track 1', 'Track 2'], {
+      isCurrent: true,
+      operationSeq: 1,
+      createdAt: '2026-07-05T00:00:00.000Z',
+      tracks: [
+        makeTrack('Track 1', 'version-1-track-1', { trackId: 'track-1', trackPosition: 0 }),
+        makeTrack('Track 2', 'version-1-track-2', { trackId: 'track-2', trackPosition: 1 }),
+      ],
+    });
+
+    const user = userEvent.setup();
+    render(
+      <DemoDawClient
+        groupSlug="demo-group"
+        projectSlug="demo-project"
+        projectId="project-1"
+        demoId="demo-1"
+        currentUserId="user-1"
+        demoName="Demo"
+        demoDescription={null}
+        initialCurrentVersionId={initialVersion.id}
+        initialActiveVersionId={initialVersion.id}
+        initialIsFollowingHead={true}
+        initialVersions={[initialVersion]}
+      />,
+    );
+
+    expect(screen.getAllByTitle('Solo track')).toHaveLength(2);
+
+    const firstSoloButton = screen.getAllByTitle('Solo track')[0];
+    await user.click(firstSoloButton);
+
+    await waitFor(() => {
+      expect(screen.getAllByTitle('Unsolo track')).toHaveLength(1);
+      expect(screen.getAllByTitle('Solo track')).toHaveLength(1);
+    });
+
+    await user.click(screen.getByTitle('Solo track'));
+
+    await waitFor(() => {
+      expect(screen.getAllByTitle('Unsolo track')).toHaveLength(1);
+      expect(screen.getAllByTitle('Solo track')).toHaveLength(1);
+    });
+  });
+
   it('renders the right inspector with mirrored track controls and inline comments', async () => {
     const initialVersion = makeVersion('version-1', ['Track 1'], {
       isCurrent: true,

@@ -493,3 +493,52 @@ test('AudioPlaybackEngine disposes WAM nodes when tracks are removed or the engi
   assert.equal(graphFactory.disconnectCount, 2);
   assert.equal(graphFactory.destroyCount, 2);
 });
+
+test('AudioPlaybackEngine keeps only one track soloed at a time', () => {
+  const engine = new AudioPlaybackEngine();
+
+  engine.setProject(
+    makeProject({
+      tracks: [
+        {
+          trackId: 'track-1',
+          trackName: 'Track 1',
+          trackVersionId: 'track-version-1',
+          storageKey: '/audio/track-1.wav',
+          mimeType: 'audio/wav',
+          startOffsetMs: 0,
+          durationMs: 1000,
+          segments: [],
+          recordedTempoBpm: 120,
+          sourceTempoBpm: 120,
+          isMuted: false,
+          plugins: [],
+        },
+        {
+          trackId: 'track-2',
+          trackName: 'Track 2',
+          trackVersionId: 'track-version-2',
+          storageKey: '/audio/track-2.wav',
+          mimeType: 'audio/wav',
+          startOffsetMs: 0,
+          durationMs: 1000,
+          segments: [],
+          recordedTempoBpm: 120,
+          sourceTempoBpm: 120,
+          isMuted: false,
+          plugins: [],
+        },
+      ],
+      soloTrackVersionIds: new Set(['track-version-1', 'track-version-2']),
+    }),
+  );
+
+  const trackBuses = (engine as unknown as { trackBuses: Map<string, { gain: { gain: { value: number } } }> }).trackBuses;
+  assert.equal(trackBuses.get('track-version-1')?.gain.gain.value, 1);
+  assert.equal(trackBuses.get('track-version-2')?.gain.gain.value, 0);
+
+  engine.setTrackSolo('track-version-2', true);
+
+  assert.equal(trackBuses.get('track-version-1')?.gain.gain.value, 0);
+  assert.equal(trackBuses.get('track-version-2')?.gain.gain.value, 1);
+});

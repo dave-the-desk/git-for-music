@@ -2620,10 +2620,11 @@ export function DemoDawClient({
     const willSolo = !soloTrackVersionIds.has(trackVersionId);
     playbackEngine.setTrackSolo(trackVersionId, willSolo);
     setSoloTrackVersionIds((prev) => {
-      const next = new Set(prev);
-      if (willSolo) next.add(trackVersionId);
-      else next.delete(trackVersionId);
-      return next;
+      if (!willSolo) {
+        return new Set();
+      }
+
+      return new Set([trackVersionId]);
     });
   }
 
