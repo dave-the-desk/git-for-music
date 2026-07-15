@@ -85,14 +85,108 @@ Solution:
 - Updated the shared command API types to match.
 - Verified the server package typecheck did not report new errors for those paths.
 
+## 6. Renaming a track could make a later track replace it
+
+Problem:
+
+- After a track was renamed, adding another track could remove one of the two
+  lanes from the active version, making the newly added track appear to replace
+  the existing track.
+- A custom rename could also make the default label generator reuse `Track 1`,
+  even though the existing lane was still the first logical track.
+
+Verified cause:
+
+- The first investigation found two genuine identity hazards: blank-track
+  cleanup treated normalized `trackName` as a duplicate key, and default naming
+  derived its counter only from labels. Correcting those hazards changed the
+  reproduced new label from `Track 1` to `Track 2`, but did not stop the
+  replacement.
+- The follow-up database trace established the destructive sequence with high
+  confidence. A populated add-track branch was followed by an `AUTO` or
+  `SEMANTIC` child containing zero `TrackVersion` rows. The next add-track branch
+  used that empty checkpoint as its parent, copied zero existing tracks, and
+  therefore contained only the new `Track 2`.
+- `createAutoDemoVersion` explicitly passed `copyTracks: false`. That made an
+  automatic checkpoint a metadata-only node even though it became the user's
+  active source version.
+- Automatic checkpoints were announced only through the ephemeral
+  `version_created` event. They did not write a durable `VERSION_NODE_ADDED`
+  operation, so a client rebootstrap based on a persisted snapshot plus its
+  operation tail could omit the checkpoint node. A later branch then referenced
+  a parent absent from the rendered graph and appeared disconnected.
+
+Corrective behavior:
+
+- Duplicate placeholder cleanup now matches only stable logical `trackId`. It
+  may replace a blank `TrackVersion` with audio for that same track, but it must
+  preserve tracks with different IDs regardless of their names.
+- Default track numbering considers durable lane position as well as existing
+  generated labels. Renaming a lane changes neither its ID nor its place in the
+  creation sequence.
+- The upload branch builder appends when `existingTrackId` is null and replaces
+  only when an existing ID is supplied explicitly.
+- Automatic checkpoints now clone the source version's immutable track rows.
+  The logical `trackId`, renamed display name, placement, clips, and plugin
+  snapshot are preserved, while each checkpoint receives new `TrackVersion`
+  and segment IDs.
+- Each automatic checkpoint is recorded as a durable `VERSION_NODE_ADDED`
+  operation containing its parent and cloned tracks. The accepted operation is
+  emitted before the `version_created` refresh signal, so live replay,
+  reconnect, and snapshot-tail bootstrap all materialize the connected node.
+- Current-state bootstrap also reconciles version nodes from the durable
+  `DemoVersion` table. This restores parents created by the older event-only
+  implementation, while historical operation-sequence reads intentionally
+  remain isolated from later database nodes.
+
+Affected source:
+
+- `src/app/lib/daw/utils/track-duplicate-cleanup.ts`
+- `packages/server/app/lib/daw/server/track-duplicate-cleanup.ts`
+- `src/app/lib/daw/utils/track-names.ts`
+- `src/app/lib/daw/state/operation-reducer.ts` through its cleanup call
+- `packages/server/app/lib/daw/server/commands/upload-track.ts` and
+  `packages/server/app/lib/daw/server/assets/complete-upload.ts` through their
+  server cleanup calls
+- `packages/server/app/lib/daw/server/versioning.ts`
+- `packages/server/app/lib/daw/server/command-api.ts`
+- `packages/server/app/lib/daw/server/snapshot-builder.ts`
+
+Regression evidence:
+
+- `src/app/lib/daw/state/operation-reducer.test.ts` replays rename, branch, and
+  create operations and asserts the old and new logical IDs both remain.
+- `src/app/lib/daw/state/timeline-edit-transforms.test.ts` asserts rename keeps
+  both `trackId` and `trackVersionId` unchanged.
+- Client and server cleanup tests assert same-name, different-ID tracks survive
+  while same-ID blank/audio copies still reconcile.
+- `src/app/lib/daw/utils/track-names.test.ts` asserts a renamed first lane yields
+  `Track 2` for the next default label.
+- `packages/server/app/lib/daw/server/commands/upload-track.test.ts` asserts a
+  renamed source track and a newly created track keep distinct IDs.
+- `packages/server/app/lib/daw/server/versioning.test.ts` proves the automatic
+  checkpoint preserves the renamed logical `trackId`, creates a distinct
+  `TrackVersion`, retains the source parent, and supplies that track to the next
+  add-track branch clone.
+- `packages/server/app/lib/daw/server/command-api.test.ts` proves the automatic
+  node is durably recorded as `VERSION_NODE_ADDED` with its connected parent and
+  cloned track payload.
+- `packages/server/app/lib/daw/server/snapshot-builder.test.ts` proves current
+  bootstrap restores a durable node missing from an older operation tail while
+  retaining its parent, kind, and operation sequence.
+
 ## Validation Used
 
 - `pnpm --filter @git-for-music/web test -- src/app/lib/daw/engine/project-sync-engine.test.ts`
 - `pnpm --filter @git-for-music/web test -- src/app/lib/daw/state/operation-reducer.test.ts`
 - `pnpm --filter @git-for-music/web test -- src/app/pages/groups/demo/components/daw/DemoDawClient.interaction.test.tsx`
+- `pnpm --filter @git-for-music/web exec node --import tsx --test app/lib/daw/utils/track-duplicate-cleanup.test.ts app/lib/daw/utils/track-names.test.ts app/lib/daw/state/timeline-edit-transforms.test.ts app/lib/daw/state/operation-reducer.test.ts`
+- `pnpm --filter @git-for-music/server exec node --import tsx --test app/lib/daw/server/track-duplicate-cleanup.test.ts app/lib/daw/server/commands/upload-track.test.ts`
 - `git diff --check`
 
 ## Outcome
 
 - Collaborator edits now propagate through the live DAW without requiring refresh for the cases covered above.
 - The session left behind direct regression coverage for first open recovery, blank-demo track creation, and two-client alignment.
+- Track names are display metadata only; rename and creation reconciliation now
+  preserve distinct logical IDs.

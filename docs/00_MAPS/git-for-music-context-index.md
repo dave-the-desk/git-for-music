@@ -33,6 +33,7 @@ This is not just a DAW. It is a version-controlled collaborative music system.
 - [docs/architecture/codebase-architecture.md](../architecture/codebase-architecture.md)
 - [[40_FEATURES/domain-glossary]]
 - [[01_PROTOCOLS/agent-implementation-guide]]
+- [[01_PROTOCOLS/daw-version-state-debugging]]
 - [[01_PROTOCOLS/architecture-decision-log]]
 - [[40_FEATURES/realtime-system]]
 - [[40_FEATURES/storage-model]]

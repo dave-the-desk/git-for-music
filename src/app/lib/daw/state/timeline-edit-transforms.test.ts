@@ -64,6 +64,8 @@ test('applyTrackRename renames only the matching track', () => {
   const renamed = applyTrackRename(tracks, 'track-a', 'New name');
 
   assert.equal(renamed[0]?.trackName, 'New name');
+  assert.equal(renamed[0]?.trackId, 'track-a');
+  assert.equal(renamed[0]?.trackVersionId, 'track-version-1');
   assert.equal(renamed[1]?.trackName, 'Track B');
   assert.equal(tracks[0]?.trackName, 'Track A');
 });

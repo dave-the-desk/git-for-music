@@ -67,6 +67,7 @@ import type {
   DawOperationPayloadAnnotationDeleted,
   DawOperationPayloadVersionRenamed,
   DawOperationPayloadVersionTimingUpdated,
+  DawOperationPayloadVersionNodeAdded,
   DawOperationPayloadPluginAdded,
   DawOperationPayloadPluginRemoved,
   DawOperationPayloadPluginReordered,
@@ -271,6 +272,9 @@ export async function maybeCreateAutoDemoVersionAfterAcceptedOperation(
       createdAt: string;
     };
   },
+  deps: {
+    recordOperation?: typeof recordDemoDawOperation;
+  } = {},
 ) {
   if (!input.sourceVersionId) {
     return null;
@@ -325,12 +329,80 @@ export async function maybeCreateAutoDemoVersionAfterAcceptedOperation(
     return null;
   }
 
+  const createdByName = await loadUserDisplayName(tx, input.userId);
   const autoVersion = await createAutoDemoVersion(tx, {
     demoId: input.demoId,
     sourceVersionId: sourceVersion.id,
     operationSeq: currentOperation.operationSeq,
     kind: isSemanticAutoVersionOperation(currentOperation.operationType as DawOperationType) ? 'SEMANTIC' : 'AUTO',
+    createdByName,
   });
+
+  const versionNodePayload = {
+    version: serializeCreatedDemoVersionTreeNode({
+      id: autoVersion.id,
+      label: autoVersion.label,
+      description: autoVersion.description,
+      createdByName: autoVersion.createdByName,
+      parentId: autoVersion.parentId,
+      createdAt: autoVersion.createdAt,
+      operationSeq: autoVersion.operationSeq,
+      tempoBpm: autoVersion.tempoBpm,
+      timeSignatureNum: autoVersion.timeSignatureNum,
+      timeSignatureDen: autoVersion.timeSignatureDen,
+      musicalKey: autoVersion.musicalKey,
+      tempoSource: autoVersion.tempoSource,
+      keySource: autoVersion.keySource,
+      kind: autoVersion.kind,
+      isMerge: autoVersion.isMerge,
+      isCurrent: true,
+      tracks: autoVersion.tracks,
+    }),
+  } satisfies DawOperationPayloadVersionNodeAdded;
+  const recordOperation = deps.recordOperation ?? recordDemoDawOperation;
+  const versionNodeRecord = await recordOperation(
+    tx,
+    {
+      projectId: input.projectId,
+      demoId: input.demoId,
+      actorUserId: input.userId,
+      operationType: 'VERSION_NODE_ADDED',
+      payload: versionNodePayload,
+      idempotencyKey: `auto-version-node:${autoVersion.id}`,
+      clientOperationId: randomUUID(),
+    },
+    {
+      checkpointCreatedById: input.userId,
+    },
+  );
+
+  if (
+    !versionNodeRecord.createdAt ||
+    !versionNodeRecord.projectId ||
+    !versionNodeRecord.demoId ||
+    !versionNodeRecord.actorUserId ||
+    versionNodeRecord.baseSnapshotId === undefined ||
+    versionNodeRecord.baseOperationSeq === undefined ||
+    !versionNodeRecord.idempotencyKey ||
+    !versionNodeRecord.clientOperationId
+  ) {
+    throw new Error('Automatic version node operation was not fully materialized');
+  }
+
+  const versionNodeOperation: DawProjectOperationRecord = {
+    id: versionNodeRecord.id,
+    projectId: versionNodeRecord.projectId,
+    demoId: versionNodeRecord.demoId,
+    type: 'VERSION_NODE_ADDED',
+    createdAt: versionNodeRecord.createdAt,
+    actorUserId: versionNodeRecord.actorUserId,
+    baseSnapshotId: versionNodeRecord.baseSnapshotId,
+    baseOperationSeq: versionNodeRecord.baseOperationSeq,
+    operationSeq: versionNodeRecord.operationSeq,
+    payload: versionNodePayload,
+    idempotencyKey: versionNodeRecord.idempotencyKey,
+    clientOperationId: versionNodeRecord.clientOperationId,
+  };
 
   await setDemoUserActiveVersion(tx, {
     projectId: input.projectId,
@@ -340,7 +412,10 @@ export async function maybeCreateAutoDemoVersionAfterAcceptedOperation(
     isFollowingHead: true,
   });
 
-  return autoVersion;
+  return {
+    ...autoVersion,
+    versionNodeOperation,
+  };
 }
 
 function serializeAsset(row: {
@@ -3050,6 +3125,17 @@ export async function commitDawProjectOperation(
       projectId: workspace.project.id,
       demoId: workspace.demo.id,
       operation: result.operation,
+    });
+  }
+
+  const autoVersionNodeOperation = (
+    createdAutoVersion as { versionNodeOperation?: DawProjectOperationRecord } | null
+  )?.versionNodeOperation;
+  if (autoVersionNodeOperation) {
+    await emitAcceptedDawOperation({
+      projectId: workspace.project.id,
+      demoId: workspace.demo.id,
+      operation: autoVersionNodeOperation,
     });
   }
 

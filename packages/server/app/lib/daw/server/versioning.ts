@@ -404,6 +404,7 @@ export async function createAutoDemoVersion(
     kind?: 'AUTO' | 'SEMANTIC';
     label?: string | null;
     description?: string | null;
+    createdByName?: string | null;
   },
 ) {
   const checkpointKind = input.kind ?? 'AUTO';
@@ -416,9 +417,9 @@ export async function createAutoDemoVersion(
     parentId: input.sourceVersionId,
     kind: checkpointKind,
     operationSeq: input.operationSeq,
-    copyTracks: false,
     label: checkpointLabel,
     description: input.description ?? null,
+    createdByName: input.createdByName ?? null,
   });
 }
 

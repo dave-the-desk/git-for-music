@@ -1,14 +1,21 @@
 type TrackNameLike = {
   trackName: string;
+  trackPosition?: number;
 };
 
 function getHighestTrackNumber(tracks: TrackNameLike[]) {
   return tracks.reduce((maxTrackNumber, track) => {
+    const positionNumber =
+      typeof track.trackPosition === 'number' && Number.isFinite(track.trackPosition)
+        ? Math.max(0, Math.floor(track.trackPosition)) + 1
+        : 0;
     const match = /^Track (\d+)$/.exec(track.trackName.trim());
-    if (!match) return maxTrackNumber;
+    if (!match) return Math.max(maxTrackNumber, positionNumber);
 
     const trackNumber = Number(match[1]);
-    return Number.isFinite(trackNumber) ? Math.max(maxTrackNumber, trackNumber) : maxTrackNumber;
+    return Number.isFinite(trackNumber)
+      ? Math.max(maxTrackNumber, positionNumber, trackNumber)
+      : Math.max(maxTrackNumber, positionNumber);
   }, 0);
 }
 

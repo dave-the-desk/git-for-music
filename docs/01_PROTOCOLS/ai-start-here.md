@@ -25,10 +25,14 @@ read [Session Problems and Solutions](../60_BRANCHES/daw-realtime-collab/session
 before editing. The regressions documented there are required behavior, not
 historical trivia. Add newly discovered session failures and their verified
 solutions to the same note during the task that finds or resolves them.
+Use [[01_PROTOCOLS/daw-version-state-debugging]] when the symptom involves
+missing or replaced tracks, incorrect checkouts, operation replay, or
+disconnected version-history nodes.
 
 ## Related Context
 
 - [[00_MAPS/git-for-music-context-index]]
 - [[01_PROTOCOLS/agent-implementation-guide]]
+- [[01_PROTOCOLS/daw-version-state-debugging]]
 - [[40_FEATURES/what-good-looks-like]]
 - [Session Problems and Solutions](../60_BRANCHES/daw-realtime-collab/session-problems-and-solutions.md)

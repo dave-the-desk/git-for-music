@@ -285,17 +285,17 @@ test('createLocalProjectStateFromBootstrap preserves resolved actor display name
   assert.equal(state.userDisplayNamesById?.['user-a'], 'Avery Fox');
 });
 
-test('createLocalProjectStateFromBootstrap removes a blank duplicate track when the version already has audio for the same name', () => {
+test('createLocalProjectStateFromBootstrap removes a blank duplicate track when the version already has audio for the same identity', () => {
   const root = makeVersion('version-root', {
     isCurrent: true,
     tracks: [
       makeTrack('track-version-blank', {
-        trackId: 'track-blank',
+        trackId: 'track-1',
         trackName: 'Track 1',
         mimeType: 'application/x-git-for-music-empty-track',
       }),
       makeTrack('track-version-audio', {
-        trackId: 'track-audio',
+        trackId: 'track-1',
         trackName: 'Track 1',
         mimeType: 'audio/webm',
       }),
@@ -874,12 +874,81 @@ test('TRACK_VERSION_CREATED replaces the copied track entry when it targets an e
   assert.deepEqual(version?.tracks[0]?.plugins, [makePlugin(`plugin-${track.trackVersionId}`)]);
 });
 
-test('TRACK_VERSION_CREATED removes a blank duplicate track when the new track has audio and the same name', () => {
+test('renaming a track preserves its ID and adding a distinct same-name track keeps both identities', () => {
+  const rootTrack = makeTrack('track-version-root', {
+    trackId: 'track-existing',
+    trackName: 'Track 1',
+    trackPosition: 0,
+    mimeType: 'application/x-git-for-music-empty-track',
+    segments: [],
+  });
+  const root = makeVersion('version-root', {
+    isCurrent: true,
+    tracks: [rootTrack],
+  });
+  const initial = createLocalProjectStateFromBootstrap(makeBootstrap([root], root.id));
+  const renamed = applyAcceptedProjectOperation(
+    initial,
+    makeOperation('TRACK_RENAMED', 2, {
+      trackId: rootTrack.trackId,
+      trackName: 'Lead vocal',
+    }),
+  );
+
+  assert.equal(renamed.versions[0]?.tracks[0]?.trackId, 'track-existing');
+  assert.equal(renamed.versions[0]?.tracks[0]?.trackName, 'Lead vocal');
+
+  const branchVersion = makeVersion('version-branch', {
+    parentId: root.id,
+    parentVersionId: root.id,
+    isCurrent: true,
+    tracks: [
+      makeTrack('track-version-existing-copy', {
+        trackId: 'track-existing',
+        trackName: 'Lead vocal',
+        trackPosition: 0,
+        mimeType: 'application/x-git-for-music-empty-track',
+        segments: [],
+      }),
+    ],
+  });
+  const createdTrack = makeTrack('track-version-new', {
+    trackId: 'track-new',
+    trackName: 'Lead vocal',
+    trackPosition: 1,
+    mimeType: 'application/x-git-for-music-empty-track',
+    segments: [],
+  });
+  const applied = applyAcceptedProjectOperations(renamed, [
+    makeOperation('VERSION_BRANCH_CREATED', 3, {
+      versionId: branchVersion.id,
+      parentVersionId: root.id,
+      branchMode: 'continue',
+      version: branchVersion,
+    }),
+    makeOperation('TRACK_VERSION_CREATED', 4, {
+      versionId: branchVersion.id,
+      trackId: createdTrack.trackId,
+      trackVersionId: createdTrack.trackVersionId,
+      track: createdTrack,
+    }),
+  ]);
+  const createdVersion = applied.versions.find((version) => version.id === branchVersion.id);
+
+  assert.ok(createdVersion);
+  assert.deepEqual(
+    createdVersion.tracks.map((track) => track.trackId),
+    ['track-existing', 'track-new'],
+  );
+  assert.equal(new Set(createdVersion.tracks.map((track) => track.trackId)).size, 2);
+});
+
+test('TRACK_VERSION_CREATED removes a blank duplicate track when the new track has audio and the same identity', () => {
   const root = makeVersion('version-root', {
     isCurrent: true,
     tracks: [
       makeTrack('track-version-blank', {
-        trackId: 'track-blank',
+        trackId: 'track-1',
         trackName: 'Track 1',
         mimeType: 'application/x-git-for-music-empty-track',
       }),
@@ -888,7 +957,7 @@ test('TRACK_VERSION_CREATED removes a blank duplicate track when the new track h
   const initial = createLocalProjectStateFromBootstrap(makeBootstrap([root], root.id));
 
   const track = makeTrack('track-version-new', {
-    trackId: 'track-audio',
+    trackId: 'track-1',
     trackName: 'Track 1',
     mimeType: 'audio/webm',
   });
