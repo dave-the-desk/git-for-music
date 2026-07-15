@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 test('fake wam plugin exports a usable createInstance factory', async () => {
-  const moduleUrl = new URL('../../../../../docs/fake-wam-plugin.js', import.meta.url).href;
+  const moduleUrl = new URL('../../../../../docs/fixtures/wam/fake-wam-plugin.js', import.meta.url).href;
   const { createInstance } = await import(moduleUrl);
 
   const disconnect = () => undefined;
