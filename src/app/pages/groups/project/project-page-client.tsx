@@ -152,20 +152,6 @@ export function ProjectPageClient({
         )}
       </section>
 
-      <section>
-        <h2 className="text-lg font-semibold text-white">Recent Activity</h2>
-        <div className="mt-3 rounded-lg border border-gray-800 bg-gray-900 px-6 py-8 text-sm text-gray-400">
-          Activity feed placeholder.
-        </div>
-      </section>
-
-      <section>
-        <h2 className="text-lg font-semibold text-white">Equipment Requirements</h2>
-        <div className="mt-3 rounded-lg border border-gray-800 bg-gray-900 px-6 py-8 text-sm text-gray-400">
-          Equipment requirements placeholder.
-        </div>
-      </section>
-
       {isCreateDemoModalOpen ? (
         <div className="fixed inset-0 z-[60] flex items-center justify-center px-6">
           <button
