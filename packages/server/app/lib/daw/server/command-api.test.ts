@@ -55,6 +55,40 @@ function cloneSnapshot<T>(value: T): T {
   return structuredClone(value);
 }
 
+function makeAutoVersionNodeRecorder(
+  onRecord?: (input: { operationType: string; payload: unknown }) => void,
+) {
+  return async (
+    _tx: unknown,
+    input: {
+      projectId: string;
+      demoId: string;
+      actorUserId: string;
+      operationType: string;
+      payload: unknown;
+      idempotencyKey?: string;
+      clientOperationId?: string;
+    },
+  ) => {
+    onRecord?.(input);
+    return {
+      id: 'operation-auto-version-node',
+      operationSeq: 8,
+      created: true,
+      createdAt: '2025-01-02T00:00:03.000Z',
+      projectId: input.projectId,
+      demoId: input.demoId,
+      actorUserId: input.actorUserId,
+      operationType: input.operationType,
+      payload: input.payload,
+      baseSnapshotId: null,
+      baseOperationSeq: 0,
+      idempotencyKey: input.idempotencyKey,
+      clientOperationId: input.clientOperationId,
+    };
+  };
+}
+
 function findVersionTrack(snapshot: {
   versions: Array<{
     id: string;
@@ -1109,12 +1143,12 @@ test('version tree mutations and audio-tool edits broadcast a tree refresh while
 test('maybeCreateAutoDemoVersionAfterAcceptedOperation creates a semantic checkpoint after an accepted semantic op', async () => {
   let activeVersionUpsertArgs: unknown = null;
   let createdVersionArgs: unknown = null;
+  let recordedVersionNode: { operationType: string; payload: unknown } | null = null;
 
   const tx = {
     demo: {
-      findFirst: async () => ({
-        id: 'demo-1',
-      }),
+      findFirst: async (args: { select?: Record<string, unknown> }) =>
+        args.select && 'versions' in args.select ? null : { id: 'demo-1' },
     },
     demoVersion: {
       findFirst: async (args: { where: { id: string } }) => {
@@ -1182,24 +1216,58 @@ test('maybeCreateAutoDemoVersionAfterAcceptedOperation creates a semantic checkp
       },
     },
     trackVersion: {
-      findMany: async () => [],
+      findMany: async () => [
+        {
+          id: 'track-version-source',
+          trackId: 'track-existing',
+          storageKey: '/tracks/lead-vocal.wav',
+          sourceFileUrl: null,
+          startOffsetMs: 0,
+          durationMs: 2000,
+          sampleRate: 48000,
+          channels: 2,
+          mimeType: 'audio/wav',
+          sizeBytes: 1024,
+          checksum: 'checksum-lead-vocal',
+          isDerived: false,
+          operationType: 'ORIGINAL',
+          parentTrackVersionId: null,
+          track: {
+            name: 'Lead vocal',
+            position: 0,
+          },
+          segments: [],
+        },
+      ],
+      create: async () => ({
+        id: 'track-version-auto',
+        createdAt: new Date('2025-01-02T00:00:03.000Z'),
+      }),
     },
     segment: {
       create: async () => ({ id: 'segment-auto' }),
     },
   };
 
-  const created = await maybeCreateAutoDemoVersionAfterAcceptedOperation(tx as never, {
-    projectId: 'project-1',
-    demoId: 'demo-1',
-    userId: 'user-1',
-    sourceVersionId: 'version-head',
-    operation: {
-      type: 'TRACK_VERSION_CREATED',
-      operationSeq: 7,
-      createdAt: '2025-01-02T00:00:02.000Z',
+  const created = await maybeCreateAutoDemoVersionAfterAcceptedOperation(
+    tx as never,
+    {
+      projectId: 'project-1',
+      demoId: 'demo-1',
+      userId: 'user-1',
+      sourceVersionId: 'version-head',
+      operation: {
+        type: 'TRACK_VERSION_CREATED',
+        operationSeq: 7,
+        createdAt: '2025-01-02T00:00:02.000Z',
+      },
     },
-  });
+    {
+      recordOperation: makeAutoVersionNodeRecorder((input) => {
+        recordedVersionNode = input;
+      }) as never,
+    },
+  );
 
   assert.ok(created);
   assert.equal(created?.id, 'version-auto');
@@ -1208,6 +1276,30 @@ test('maybeCreateAutoDemoVersionAfterAcceptedOperation creates a semantic checkp
   assert.equal((createdVersionArgs as { kind?: string } | null)?.kind, 'SEMANTIC');
   assert.equal((createdVersionArgs as { operationSeq?: number } | null)?.operationSeq, 7);
   assert.equal((activeVersionUpsertArgs as { create?: { activeVersionId?: string } } | null)?.create?.activeVersionId, 'version-auto');
+  const durableVersionNode = recordedVersionNode as {
+    operationType: string;
+    payload: {
+      version?: {
+        id?: string;
+        parentId?: string;
+        tracks?: Array<{ trackId: string }>;
+      };
+    };
+  } | null;
+  assert.equal(durableVersionNode?.operationType, 'VERSION_NODE_ADDED');
+  assert.equal(
+    durableVersionNode?.payload.version?.id,
+    'version-auto',
+  );
+  assert.equal(
+    durableVersionNode?.payload.version?.parentId,
+    'version-head',
+  );
+  assert.deepEqual(
+    durableVersionNode?.payload.version?.tracks?.map((track) => track.trackId),
+    ['track-existing'],
+  );
+  assert.equal(created?.versionNodeOperation.type, 'VERSION_NODE_ADDED');
 });
 
 test('maybeCreateAutoDemoVersionAfterAcceptedOperation treats plugin adds as semantic checkpoints', async () => {
@@ -1284,17 +1376,21 @@ test('maybeCreateAutoDemoVersionAfterAcceptedOperation treats plugin adds as sem
     },
   };
 
-  const created = await maybeCreateAutoDemoVersionAfterAcceptedOperation(tx as never, {
-    projectId: 'project-1',
-    demoId: 'demo-1',
-    userId: 'user-1',
-    sourceVersionId: 'version-head',
-    operation: {
-      type: 'PLUGIN_ADDED',
-      operationSeq: 7,
-      createdAt: '2025-01-02T00:00:02.000Z',
+  const created = await maybeCreateAutoDemoVersionAfterAcceptedOperation(
+    tx as never,
+    {
+      projectId: 'project-1',
+      demoId: 'demo-1',
+      userId: 'user-1',
+      sourceVersionId: 'version-head',
+      operation: {
+        type: 'PLUGIN_ADDED',
+        operationSeq: 7,
+        createdAt: '2025-01-02T00:00:02.000Z',
+      },
     },
-  });
+    { recordOperation: makeAutoVersionNodeRecorder() as never },
+  );
 
   assert.ok(created);
   assert.equal(created?.kind, 'SEMANTIC');
@@ -1390,13 +1486,17 @@ test('maybeCreateAutoDemoVersionAfterAcceptedOperation creates exactly one check
       operationSeq: operation.operationSeq,
       createdAt: operation.createdAt,
     });
-    const created = await maybeCreateAutoDemoVersionAfterAcceptedOperation(tx as never, {
-      projectId: 'project-1',
-      demoId: 'demo-1',
-      userId: 'user-1',
-      sourceVersionId: activeSourceVersionId,
-      operation,
-    });
+    const created = await maybeCreateAutoDemoVersionAfterAcceptedOperation(
+      tx as never,
+      {
+        projectId: 'project-1',
+        demoId: 'demo-1',
+        userId: 'user-1',
+        sourceVersionId: activeSourceVersionId,
+        operation,
+      },
+      { recordOperation: makeAutoVersionNodeRecorder() as never },
+    );
     if (created) {
       activeSourceVersionId = created.id;
     }
@@ -1501,13 +1601,17 @@ test('maybeCreateAutoDemoVersionAfterAcceptedOperation creates a checkpoint when
       operationSeq: operation.operationSeq,
       createdAt: operation.createdAt,
     });
-    return maybeCreateAutoDemoVersionAfterAcceptedOperation(tx as never, {
-      projectId: 'project-1',
-      demoId: 'demo-1',
-      userId: 'user-1',
-      sourceVersionId: 'version-head',
-      operation,
-    });
+    return maybeCreateAutoDemoVersionAfterAcceptedOperation(
+      tx as never,
+      {
+        projectId: 'project-1',
+        demoId: 'demo-1',
+        userId: 'user-1',
+        sourceVersionId: 'version-head',
+        operation,
+      },
+      { recordOperation: makeAutoVersionNodeRecorder() as never },
+    );
   }
 
   for (let operationSeq = 6; operationSeq <= 17; operationSeq += 1) {

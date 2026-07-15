@@ -11,10 +11,6 @@ function isBlankTrack(track: TrackDuplicateLike) {
   return track.mimeType === EMPTY_TRACK_MIME_TYPE;
 }
 
-function normalizeTrackName(trackName: string) {
-  return trackName.trim();
-}
-
 function collectRemovalIdsByKey(
   tracks: TrackDuplicateLike[],
   getKey: (track: TrackDuplicateLike) => string,
@@ -54,15 +50,7 @@ function collectRemovalIdsByKey(
 }
 
 export function getDuplicateBlankTrackVersionIds(tracks: TrackDuplicateLike[]) {
-  const removalIds = new Set<string>();
-
-  for (const id of collectRemovalIdsByKey(tracks, (track) => track.trackId)) {
-    removalIds.add(id);
-  }
-
-  for (const id of collectRemovalIdsByKey(tracks, (track) => normalizeTrackName(track.trackName))) {
-    removalIds.add(id);
-  }
-
-  return [...removalIds];
+  // Names are mutable display metadata. Only a stable logical track ID can
+  // prove that a blank placeholder and an audio version represent one track.
+  return [...collectRemovalIdsByKey(tracks, (track) => track.trackId)];
 }

@@ -46,6 +46,8 @@ export interface DemoDawSnapshotVersion {
   label: string;
   description: string | null;
   createdByName?: string | null;
+  kind?: 'AUTO' | 'SEMANTIC' | 'EXPLICIT' | 'REVERT' | 'BRANCH' | 'MERGE';
+  operationSeq?: number | null;
   tempoBpm: number | null;
   timeSignatureNum: number;
   timeSignatureDen: number;
@@ -53,6 +55,7 @@ export interface DemoDawSnapshotVersion {
   tempoSource: DemoDawTimingSource;
   keySource: DemoDawTimingSource;
   parentId: string | null;
+  isMerge?: boolean;
   createdAt: string;
   tracks: DemoDawSnapshotTrack[];
 }
@@ -474,6 +477,8 @@ interface DemoSourceVersionRow {
   id: string;
   label: string;
   description: string | null;
+  kind?: 'AUTO' | 'SEMANTIC' | 'EXPLICIT' | 'REVERT' | 'BRANCH' | 'MERGE';
+  operationSeq?: number | null;
   tempoBpm: number | null;
   timeSignatureNum: number;
   timeSignatureDen: number;
@@ -481,6 +486,7 @@ interface DemoSourceVersionRow {
   tempoSource: DemoDawTimingSource;
   keySource: DemoDawTimingSource;
   parentId: string | null;
+  isMerge?: boolean;
   createdAt: Date;
   trackVersions: Array<{
     id: string;
@@ -601,6 +607,8 @@ function serializeVersion(version: DemoSourceVersionRow): DemoDawSnapshotVersion
     id: version.id,
     label: version.label,
     description: version.description,
+    kind: version.kind ?? 'EXPLICIT',
+    operationSeq: version.operationSeq ?? null,
     tempoBpm: version.tempoBpm,
     timeSignatureNum: version.timeSignatureNum,
     timeSignatureDen: version.timeSignatureDen,
@@ -608,6 +616,7 @@ function serializeVersion(version: DemoSourceVersionRow): DemoDawSnapshotVersion
     tempoSource: version.tempoSource,
     keySource: version.keySource,
     parentId: version.parentId,
+    isMerge: version.isMerge ?? false,
     createdAt: toIsoString(version.createdAt),
     tracks: version.trackVersions.map((trackVersion) => serializeTrackVersion(trackVersion)),
   };
@@ -697,20 +706,18 @@ function normalizeSnapshotTrackAudioUrls(snapshot: DemoDawSnapshotData) {
   }
 }
 
-async function hydrateEmptySnapshotVersionTracks(
+async function reconcileCurrentSnapshotVersions(
   client: DemoDawDatabaseClient,
   scope: DemoScope,
   snapshot: DemoDawSnapshotData,
 ) {
-  if (
-    !snapshot.versions.some((version) => version.tracks.length === 0) ||
-    typeof client.demo?.findFirst !== 'function'
-  ) {
+  if (typeof client.demo?.findFirst !== 'function') {
     return snapshot;
   }
 
-  // Older checkpoints can contain the version node without the immutable track rows.
-  // Rehydrate only versions already present in the checkpoint; do not add future nodes.
+  // Current bootstrap reconciles against the durable version table. Historical
+  // operation-sequence reads intentionally do not call this helper, so they
+  // cannot gain nodes that did not yet exist at the requested point in time.
   const source = await loadDemoSourceData(client, scope);
   const sourceVersionsById = new Map(source.versions.map((version) => [version.id, version]));
 
@@ -724,6 +731,16 @@ async function hydrateEmptySnapshotVersionTracks(
       .map((trackVersion) => serializeTrackVersion(trackVersion))
       .sort((left, right) => left.trackPosition - right.trackPosition);
   }
+
+  const snapshotVersionIds = new Set(snapshot.versions.map((version) => version.id));
+  for (const sourceVersion of source.versions) {
+    if (snapshotVersionIds.has(sourceVersion.id)) continue;
+    snapshot.versions.push(serializeVersion(sourceVersion));
+  }
+
+  snapshot.versions.sort(
+    (left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime(),
+  );
 
   return snapshot;
 }
@@ -1821,6 +1838,8 @@ async function loadDemoSourceData(
           id: true,
           label: true,
           description: true,
+          kind: true,
+          operationSeq: true,
           tempoBpm: true,
           timeSignatureNum: true,
           timeSignatureDen: true,
@@ -1828,6 +1847,7 @@ async function loadDemoSourceData(
           tempoSource: true,
           keySource: true,
           parentId: true,
+          isMerge: true,
           createdAt: true,
           trackVersions: {
             orderBy: {
@@ -2502,7 +2522,7 @@ export async function loadSnapshotStateForDemo(
     applyDemoOperation(result, operation);
   }
 
-  await hydrateEmptySnapshotVersionTracks(client, scope, result);
+  await reconcileCurrentSnapshotVersions(client, scope, result);
   reconcileCurrentVersion(result);
   await hydrateOperationActorNames(client, result);
   hydrateVersionCreatorNames(result);

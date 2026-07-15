@@ -36,6 +36,9 @@ It records regressions that the current sync design must continue to prevent.
 - Clicking a version node opens its details pop-up, and the checkout action in that pop-up updates the active checkout so the user can move back to any historical node from the tree.
 - Recording and audio-tool commits branch from the active checkout into a new `DemoVersion`, and the version tree refreshes so the new node appears immediately for every subscribed viewer.
 - UI actions that create new tracks should name them from the selected checkout, not from a stale history snapshot, or collaborators can generate duplicate `Track N` names.
+- Track reconciliation must use stable `trackId` values. `trackName` is mutable display metadata and must not be used to replace or prune a track during accepted-operation replay.
+- Automatic and semantic version checkpoints are full immutable snapshots: they clone the source version's track rows, preserve logical `trackId` values, and are recorded as durable `VERSION_NODE_ADDED` operations so snapshot-tail replay cannot omit their parent relationship.
+- Current bootstrap reconciles missing nodes from the durable `DemoVersion` table for compatibility with older event-only checkpoints. Historical operation-sequence bootstrap does not perform that reconciliation, preserving time-travel boundaries.
 - Recording previews should be cleared once the uploaded track is materialized so the preview lane does not linger beside the committed track.
 - The version tree does not expose separate branch or revert buttons inline on the node; the pop-up checkout action is the user-facing history action, and branch creation is an implementation detail of edits from that checkout.
 - Stale-base/conflict recovery still uses the server-side branch creation paths when needed.

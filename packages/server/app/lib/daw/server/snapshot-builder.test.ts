@@ -163,7 +163,7 @@ test('loadSnapshotStateForDemo materializes TRACK_VERSION_CREATED into a normal 
   assert.equal(snapshot.operationHistory[0]?.summary, 'Created track version for Recorded track');
 });
 
-test('loadSnapshotStateForDemo hydrates tracks omitted from a persisted version snapshot', async () => {
+test('loadSnapshotStateForDemo hydrates omitted tracks and restores durable version nodes missing from the operation tail', async () => {
   const latestSnapshot = {
     id: 'snapshot-1',
     projectId: 'project-1',
@@ -255,6 +255,23 @@ test('loadSnapshotStateForDemo hydrates tracks omitted from a persisted version 
                 },
               ],
             },
+            {
+              id: 'version-auto',
+              label: 'Semantic checkpoint',
+              description: null,
+              kind: 'SEMANTIC',
+              operationSeq: 2,
+              tempoBpm: 120,
+              timeSignatureNum: 4,
+              timeSignatureDen: 4,
+              musicalKey: null,
+              tempoSource: 'MANUAL',
+              keySource: 'MANUAL',
+              parentId: 'version-root',
+              isMerge: false,
+              createdAt: new Date('2025-01-02T00:00:00.000Z'),
+              trackVersions: [],
+            },
           ],
         }),
       },
@@ -265,9 +282,15 @@ test('loadSnapshotStateForDemo hydrates tracks omitted from a persisted version 
     },
   );
 
-  assert.equal(snapshot.versions[0]?.tracks[0]?.trackVersionId, 'track-version-1');
-  assert.equal(snapshot.versions[0]?.tracks[0]?.trackId, 'track-1');
-  assert.equal(snapshot.versions[0]?.tracks[0]?.storageKey, '/api/daw/track-versions/track-version-1/audio');
+  const root = snapshot.versions.find((version) => version.id === 'version-root');
+  const auto = snapshot.versions.find((version) => version.id === 'version-auto');
+
+  assert.equal(root?.tracks[0]?.trackVersionId, 'track-version-1');
+  assert.equal(root?.tracks[0]?.trackId, 'track-1');
+  assert.equal(root?.tracks[0]?.storageKey, '/api/daw/track-versions/track-version-1/audio');
+  assert.equal(auto?.parentId, 'version-root');
+  assert.equal(auto?.kind, 'SEMANTIC');
+  assert.equal(auto?.operationSeq, 2);
 });
 
 test('loadSnapshotStateForDemo keeps the original creator on the initial version node', async () => {

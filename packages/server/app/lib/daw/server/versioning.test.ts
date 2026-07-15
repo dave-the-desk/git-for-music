@@ -860,11 +860,36 @@ test('createDemoVersionWithCopiedTracks produces a DAG where every non-root vers
   assert.equal(createdVersions.filter((version) => version.parentId === null).length, 1);
 });
 
-test('createAutoDemoVersion snapshots the current head into an auto version', async () => {
+test('createAutoDemoVersion preserves a renamed track identity in the connected auto checkpoint', async () => {
   const createArgs: Array<Record<string, unknown>> = [];
+  const createdTrackVersions: Array<Record<string, unknown>> = [];
   let trackVersionFindManyCalled = 0;
   let segmentCreateCalled = 0;
+  const sourceTrackVersion = {
+    id: 'track-version-renamed-source',
+    trackId: 'track-existing',
+    storageKey: '/tracks/lead-vocal.wav',
+    sourceFileUrl: null,
+    startOffsetMs: 0,
+    durationMs: 2000,
+    sampleRate: 48000,
+    channels: 2,
+    mimeType: 'audio/wav',
+    sizeBytes: 1024,
+    checksum: 'checksum-lead-vocal',
+    isDerived: false,
+    operationType: 'ORIGINAL',
+    parentTrackVersionId: null,
+    track: {
+      name: 'Lead vocal',
+      position: 0,
+    },
+    segments: [],
+  };
   const tx = {
+    demo: {
+      findFirst: async () => null,
+    },
     demoVersion: {
       findFirst: async () => ({
         description: 'Source version',
@@ -877,8 +902,9 @@ test('createAutoDemoVersion snapshots the current head into an auto version', as
       }),
       create: async (args: { data: Record<string, unknown> }) => {
         createArgs.push(args.data);
+        const id = createArgs.length === 1 ? 'version-auto' : 'version-add-track-branch';
         return {
-          id: 'version-auto',
+          id,
           label: args.data.label,
           description: args.data.description,
           kind: args.data.kind ?? 'EXPLICIT',
@@ -895,9 +921,30 @@ test('createAutoDemoVersion snapshots the current head into an auto version', as
       },
     },
     trackVersion: {
-      findMany: async () => {
+      findMany: async (args: { where: { demoVersionId: string } }) => {
         trackVersionFindManyCalled += 1;
+        if (args.where.demoVersionId === 'version-root') {
+          return [sourceTrackVersion];
+        }
+        if (args.where.demoVersionId === 'version-auto') {
+          return [
+            {
+              ...sourceTrackVersion,
+              id: 'track-version-auto-clone',
+            },
+          ];
+        }
         return [];
+      },
+      create: async (args: { data: Record<string, unknown> }) => {
+        createdTrackVersions.push(args.data);
+        return {
+          id:
+            args.data.demoVersionId === 'version-auto'
+              ? 'track-version-auto-clone'
+              : 'track-version-add-track-branch-clone',
+          createdAt: new Date('2025-01-03T00:00:00.000Z'),
+        };
       },
     },
     segment: {
@@ -921,10 +968,37 @@ test('createAutoDemoVersion snapshots the current head into an auto version', as
   assert.equal(result.kind, 'SEMANTIC');
   assert.equal(result.operationSeq, 42);
   assert.equal(result.label, 'Semantic checkpoint');
-  assert.equal(result.tracks.length, 0);
+  assert.equal(result.tracks.length, 1);
+  assert.equal(result.tracks[0]?.trackId, 'track-existing');
+  assert.equal(result.tracks[0]?.trackName, 'Lead vocal');
+  assert.equal(result.tracks[0]?.trackVersionId, 'track-version-auto-clone');
+  assert.notEqual(result.tracks[0]?.trackVersionId, sourceTrackVersion.id);
+  assert.equal(createdTrackVersions[0]?.trackId, 'track-existing');
+  assert.equal(createdTrackVersions[0]?.demoVersionId, 'version-auto');
   assert.equal(createArgs[0]?.parentId, 'version-root');
   assert.equal(createArgs[0]?.kind, 'SEMANTIC');
   assert.equal(createArgs[0]?.operationSeq, 42);
-  assert.equal(trackVersionFindManyCalled, 0);
   assert.equal(segmentCreateCalled, 0);
+
+  const addTrackBranch = await createDemoVersionWithCopiedTracks(tx as never, {
+    demoId: 'demo-1',
+    sourceVersionId: result.id,
+    parentId: result.id,
+    kind: 'BRANCH',
+    label: 'Added audio track',
+  });
+
+  assert.equal(addTrackBranch.parentId, 'version-auto');
+  assert.equal(addTrackBranch.tracks.length, 1);
+  assert.equal(addTrackBranch.tracks[0]?.trackId, 'track-existing');
+  assert.equal(addTrackBranch.tracks[0]?.trackName, 'Lead vocal');
+  assert.equal(
+    addTrackBranch.tracks[0]?.trackVersionId,
+    'track-version-add-track-branch-clone',
+  );
+  assert.notEqual(
+    addTrackBranch.tracks[0]?.trackVersionId,
+    result.tracks[0]?.trackVersionId,
+  );
+  assert.equal(trackVersionFindManyCalled, 2);
 });

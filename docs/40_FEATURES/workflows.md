@@ -7,9 +7,10 @@ This note captures the main user- and agent-facing workflows that depend on vers
 - User uploads a file into a demo or track.
 - The upload should create or update track metadata without overwriting original audio.
 - Derived audio and processing status should be tracked separately.
-- When naming a newly added track, use the selected checkout the client knows about, not a stale historical view, so collaborators do not generate duplicate `Track N` labels.
+- When naming a newly added track, use the selected checkout the client knows about, not a stale historical view, and consider lane position so renaming a generated label does not reset the `Track N` sequence.
 - The upload branch source should follow the active checkout. Clicking a version node opens its details pop-up, and the checkout button in that pop-up makes the selected node and the active version stay aligned.
-- If the upload lands on a version that already contains a matching track by `trackId` or `trackName`, and one copy is the blank placeholder, silently remove the blank copy. Keep both only when both matching tracks contain real audio.
+- If the upload lands on a version that already contains multiple versions of the same `trackId`, and one copy is the blank placeholder, silently remove the blank copy. Never infer identity from `trackName`; different IDs must remain separate even when names match.
+- If an automatic checkpoint is created before the next upload, it must clone the active source tracks and enter the durable version-operation tail. A metadata-only or event-only checkpoint is not a valid branch source.
 
 ## Record Track Workflow
 
@@ -18,7 +19,7 @@ This note captures the main user- and agent-facing workflows that depend on vers
 - The recording should land as a new version so every project viewer sees the branch update immediately.
 - Recording uses the same source-version resolver as upload: it branches from the active checkout, which is updated when the user chooses the checkout action in a version pop-up, so a second recording after a recent save extends from the node the user actually checked out.
 - Once the server copy is live, clear the local recording preview so the committed track replaces the placeholder instead of showing a duplicate lane.
-- If recording creates or replays a version with the same track identity or name, remove any blank duplicate track entry on both the client and server so `Track 1` does not appear twice.
+- If recording creates or replays multiple versions of the same track identity, remove any blank duplicate track entry on both the client and server. A matching name alone must never trigger removal.
 - The resulting state should remain branchable and reversible.
 
 ## Move Segment Workflow

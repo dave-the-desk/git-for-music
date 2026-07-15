@@ -38,6 +38,43 @@ test('buildUploadedTrackBranchTracks appends a newly created track to the branch
   assert.equal(tracks[1]?.trackVersionId, 'track-version-b');
 });
 
+test('buildUploadedTrackBranchTracks keeps a renamed source track and appends a distinct track ID', () => {
+  const tracks = buildUploadedTrackBranchTracks({
+    sourceTracks: [
+      {
+        trackId: 'track-existing',
+        trackName: 'Lead vocal',
+        trackPosition: 0,
+        trackVersionId: 'track-version-existing',
+        storageKey: '/track-version-existing',
+        mimeType: 'application/x-git-for-music-empty-track',
+        durationMs: null,
+        startOffsetMs: 0,
+        createdAt: '2026-07-15T00:00:00.000Z',
+        isDerived: false,
+        operationType: 'ORIGINAL',
+        parentTrackVersionId: null,
+        segments: [],
+        plugins: [],
+      },
+    ],
+    trackId: 'track-new',
+    trackName: 'Track 2',
+    trackPosition: 1,
+    trackVersionId: 'track-version-new',
+    storageKey: '/track-version-new',
+    mimeType: 'application/x-git-for-music-empty-track',
+    createdAt: new Date('2026-07-15T00:00:01.000Z'),
+    existingTrackId: null,
+  });
+
+  assert.deepEqual(
+    tracks.map((track) => track.trackId),
+    ['track-existing', 'track-new'],
+  );
+  assert.equal(tracks[0]?.trackName, 'Lead vocal');
+});
+
 test('buildUploadedTrackBranchTracks replaces a reused blank track in place', () => {
   const tracks = buildUploadedTrackBranchTracks({
     sourceTracks: [

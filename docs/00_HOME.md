@@ -20,10 +20,12 @@ details in source.
 - [AI start here](01_PROTOCOLS/ai-start-here.md) gives the minimum context set.
 - [Non-negotiable rules](01_PROTOCOLS/non-negotiable-rules.md) defines product
   invariants.
+- [DAW version-state debugging](01_PROTOCOLS/daw-version-state-debugging.md)
+  provides the evidence-driven workflow for track, replay, and history failures.
 - [Workspace map](00_MAPS/workspace-map.md) and
   [generated inventories](20_GENERATED_INVENTORIES/README.md) locate source.
 - [Architecture](architecture/README.md) contains source-verified system design.
-- [Latest daily log](daily-logging/2026-07-14.md) records the most recent work.
+- [Latest daily log](daily-logging/2026-07-15.md) records the most recent work.
 
 ## Topic Routing
 
@@ -31,7 +33,7 @@ details in source.
 |---|---|
 | Web app and routes | [Web app](10_REPOS/web-app.md), [UI routing](30_UI/ui-routing.md) |
 | DAW editor | [DAW editor](40_FEATURES/daw-editor.md), [DAW UI layout](30_UI/daw-ui-layout-guide.md) |
-| Realtime sync and versioning | [Realtime architecture](architecture/daw-realtime-sync.md), [session regressions](60_BRANCHES/daw-realtime-collab/session-problems-and-solutions.md), [versioning model](40_FEATURES/versioning-mental-model.md) |
+| Realtime sync and versioning | [Debugging protocol](01_PROTOCOLS/daw-version-state-debugging.md), [realtime architecture](architecture/daw-realtime-sync.md), [session regressions](60_BRANCHES/daw-realtime-collab/session-problems-and-solutions.md), [versioning model](40_FEATURES/versioning-mental-model.md) |
 | Server | [Server package](10_REPOS/server.md) |
 | Database | [Database package](10_REPOS/db.md) |
 | Shared contracts | [Shared package](10_REPOS/shared.md) |
