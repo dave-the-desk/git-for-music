@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import type {
   DemoTimingMetadata,
@@ -369,7 +369,6 @@ export function DemoDawClient({
   const [addCommentError, setAddCommentError] = useState<string | null>(null);
   const [timelineCommentOpenId, setTimelineCommentOpenId] = useState<string | null>(null);
   const inspectorScrollRef = useRef<HTMLDivElement | null>(null);
-  const [inspectorScrollHeightPx, setInspectorScrollHeightPx] = useState<number | null>(null);
   const recordingPreviewUrlRef = useRef<string | null>(null);
   const isLiveRecordingRef = useRef(false);
   const recordingSessionRef = useRef<RecordingSession | null>(null);
@@ -383,9 +382,7 @@ export function DemoDawClient({
   const [isToolsBarStuck, setIsToolsBarStuck] = useState(false);
   const [isTopControlRowCollapsed, setIsTopControlRowCollapsed] = useState(false);
   const freshestCommittedVersionIdRef = useRef(initialActiveVersionId ?? initialCurrentVersionId);
-  const versionHistoryScrollResetSignal = `${isVersionTreeRailExpanded ? 'expanded' : 'collapsed'}:${
-    inspectorScrollHeightPx ?? -1
-  }`;
+  const versionHistoryScrollResetSignal = `${demoId}:${isVersionTreeRailExpanded ? 'expanded' : 'collapsed'}`;
 
   const [offsetOverrides, setOffsetOverrides] = useState<Record<string, number>>({});
   const [segmentLayoutOverrides, setSegmentLayoutOverrides] = useState<Record<string, TrackTimelineSegment[]>>({});
@@ -414,20 +411,6 @@ export function DemoDawClient({
 
     updateTopOffset();
     const observer = new ResizeObserver(updateTopOffset);
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, []);
-
-  useLayoutEffect(() => {
-    const element = inspectorScrollRef.current;
-    if (!element || typeof ResizeObserver === 'undefined') return undefined;
-
-    const updateInspectorScrollHeight = () => {
-      setInspectorScrollHeightPx(element.getBoundingClientRect().height);
-    };
-
-    updateInspectorScrollHeight();
-    const observer = new ResizeObserver(updateInspectorScrollHeight);
     observer.observe(element);
     return () => observer.disconnect();
   }, []);
@@ -473,7 +456,6 @@ export function DemoDawClient({
   const clockRef = useRef<number | null>(null);
   const lastAppliedTempoBpmRef = useRef<number>(0);
   const tracksScrollContainerRef = useRef<HTMLDivElement | null>(null);
-  const versionTreeRailRef = useRef<HTMLDivElement | null>(null);
   const hasHydratedVersionTreeRailRef = useRef(false);
   const versionTreeRailHydratedFromStorageRef = useRef(false);
   const versionTreeRailShouldPersistRef = useRef(false);
@@ -4466,11 +4448,13 @@ export function DemoDawClient({
               ) : null}
             </div>
           </aside>
-          <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-slate-800/80 bg-slate-950/80 shadow-[0_18px_60px_-36px_rgba(0,0,0,0.85)] backdrop-blur">
+          {/* Size containment keeps graph content out of the grid's intrinsic row sizing. */}
+          <div
+            className="flex h-[32rem] min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-slate-800/80 bg-slate-950/80 shadow-[0_18px_60px_-36px_rgba(0,0,0,0.85)] backdrop-blur lg:h-auto lg:[contain:size]"
+            data-testid="version-history-column"
+          >
             <section
-              ref={versionTreeRailRef}
               className="flex h-full min-h-0 flex-col overflow-hidden border-t border-slate-800/80 bg-slate-950/90 px-4 py-4"
-              style={inspectorScrollHeightPx ? { height: `${inspectorScrollHeightPx + 45}px` } : undefined}
               data-testid="version-tree-rail"
             >
               <div className="flex min-h-0 flex-col gap-3">
