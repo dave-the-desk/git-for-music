@@ -608,4 +608,68 @@ describe('VersionHistoryTree docked rail mode', () => {
       }
     }
   });
+
+  it('preserves the user viewport when graph data updates without changing graph identity', () => {
+    const root = makeVersion('version-root', {
+      isCurrent: true,
+      operationSeq: 1,
+      createdAt: '2025-01-01T00:00:00.000Z',
+    });
+    const head = makeVersion('version-head', {
+      parentId: root.id,
+      parentVersionId: root.id,
+      isCurrent: true,
+      operationSeq: 2,
+      createdAt: '2025-01-02T00:00:00.000Z',
+    });
+
+    const { rerender } = render(
+      createElement(VersionHistoryTree, {
+        projectId: 'project-1',
+        demoId: 'demo-1',
+        demoName: 'Sunset Session',
+        baseOperationSeq: 1,
+        liveVersions: [root],
+        operationHistory: [],
+        currentVersionId: root.id,
+        activeVersionId: root.id,
+        selectedVersionId: root.id,
+        zoomLevel: 1,
+        scrollResetSignal: 'demo-1:expanded',
+        isFollowingHead: true,
+        isHistoryViewActive: false,
+        highlightedVersionId: null,
+        highlightedVersionCreatedAt: null,
+        onSelectVersion: vi.fn(),
+      }),
+    );
+
+    const scrollContainer = screen.getByTestId('version-history-scroll-container');
+    scrollContainer.scrollTop = 180;
+    scrollContainer.scrollLeft = 24;
+
+    rerender(
+      createElement(VersionHistoryTree, {
+        projectId: 'project-1',
+        demoId: 'demo-1',
+        demoName: 'Sunset Session',
+        baseOperationSeq: 2,
+        liveVersions: [root, head],
+        operationHistory: [],
+        currentVersionId: head.id,
+        activeVersionId: head.id,
+        selectedVersionId: head.id,
+        zoomLevel: 1,
+        scrollResetSignal: 'demo-1:expanded',
+        isFollowingHead: true,
+        isHistoryViewActive: false,
+        highlightedVersionId: head.id,
+        highlightedVersionCreatedAt: head.createdAt,
+        onSelectVersion: vi.fn(),
+      }),
+    );
+
+    expect(scrollContainer.scrollTop).toBe(180);
+    expect(scrollContainer.scrollLeft).toBe(24);
+  });
 });

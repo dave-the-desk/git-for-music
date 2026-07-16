@@ -1,4 +1,4 @@
-import { createElement, forwardRef, useImperativeHandle } from 'react';
+import { createElement, forwardRef, StrictMode, useImperativeHandle } from 'react';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -919,35 +919,16 @@ describe('DemoDawClient recording regression', () => {
     }) as typeof fetch;
   });
 
-  it('sets the version history rail height on the first layout pass', () => {
-    const resizeObserver = class {
-      observe() {}
-      disconnect() {}
-      unobserve() {}
-    };
-    const rectSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(() => ({
-      x: 0,
-      y: 0,
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 500,
-      width: 800,
-      height: 500,
-      toJSON: () => ({}),
-    } as DOMRect));
+  it('constrains the version history viewport on the initial Strict Mode render without a measured height update', () => {
+    const initialVersion = makeVersion('version-1', ['Track 1'], {
+      isCurrent: true,
+      operationSeq: 1,
+      createdAt: '2026-07-05T00:00:00.000Z',
+      tracks: [makeTrack('Track 1', 'version-1-track-1', { trackId: 'track-1', trackPosition: 0 })],
+    });
 
-    vi.stubGlobal('ResizeObserver', resizeObserver);
-
-    try {
-      const initialVersion = makeVersion('version-1', ['Track 1'], {
-        isCurrent: true,
-        operationSeq: 1,
-        createdAt: '2026-07-05T00:00:00.000Z',
-        tracks: [makeTrack('Track 1', 'version-1-track-1', { trackId: 'track-1', trackPosition: 0 })],
-      });
-
-      render(
+    render(
+      <StrictMode>
         <DemoDawClient
           groupSlug="demo-group"
           projectSlug="demo-project"
@@ -960,15 +941,13 @@ describe('DemoDawClient recording regression', () => {
           initialActiveVersionId={initialVersion.id}
           initialIsFollowingHead={true}
           initialVersions={[initialVersion]}
-        />,
-      );
+        />
+      </StrictMode>,
+    );
 
-      expect(screen.getByTestId('version-tree-rail').style.height).toBe('545px');
-      expect(String(mockVersionHistoryTree.lastProps?.scrollResetSignal)).toMatch(/:500$/);
-    } finally {
-      rectSpy.mockRestore();
-      vi.unstubAllGlobals();
-    }
+    expect(screen.getByTestId('version-history-column').className).toContain('lg:[contain:size]');
+    expect(screen.getByTestId('version-tree-rail').style.height).toBe('');
+    expect(String(mockVersionHistoryTree.lastProps?.scrollResetSignal)).toMatch(/^demo-1:(expanded|collapsed)$/);
   });
 
   it('does not auto-scroll the version history rail on the initial mount', () => {

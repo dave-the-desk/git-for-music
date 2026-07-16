@@ -5,6 +5,79 @@ inner version-history scroll container in `VersionHistoryTree.tsx`, a rail
 layout reset signal from `DemoDawClient.tsx`, and interaction coverage that
 resets `scrollTop` when that layout signal changes.
 
+## 2026-07-15 follow-up: initial full-height graph then shrinking viewport
+
+Status: resolved.
+
+This was a separate viewport-height initialization bug in the same rail. The
+graph is a custom DOM/SVG visualization, not a graph-library canvas: node
+coordinates come from `buildGraphLayout`, edges are SVG paths, zoom is a CSS
+`scale()`, and pan is native scrolling. There are no `fitView`, `setViewport`,
+`setCenter`, `zoomTo`, or bounds-to-viewport calls.
+
+### Observed failure and verified cause
+
+`DemoDawClient` initially rendered the graph column without a height. A
+`useLayoutEffect` then measured `inspectorScrollRef` and wrote
+`measurement + 45px` as an inline height on `version-tree-rail`. A
+`ResizeObserver` repeated that write whenever the inspector changed size.
+
+The measured inspector and the graph rail occupy the same auto-sized CSS Grid
+row. Changing the graph height therefore changed the grid row, which changed
+the inspector measurement, which produced the next graph height. The graph's
+full intrinsic height participated in the first row calculation, and the
+observer feedback then converged through multiple browser frames toward the
+smaller side-rail height. This was the visible full-graph viewport followed by
+slow shrinking. React Strict Mode could repeat observer setup, but it was not
+the primary cause. No transform transition or graph zoom animation was
+involved.
+
+### Corrective behavior
+
+- Removed `inspectorScrollHeightPx`, its layout effect and `ResizeObserver`,
+  the arbitrary `+45px`, and the rail's post-render inline height.
+- Applied desktop CSS size containment to the graph grid item. Its graph
+  contents can no longer contribute their full intrinsic height to grid-row
+  sizing, while normal grid stretch gives it the final sibling-established
+  height during the browser's first layout.
+- Gave the single-column/narrow layout an explicit 32rem viewport because size
+  containment is only appropriate when the three desktop columns share a row.
+- Scoped scroll reset identity to `demoId` plus expanded/collapsed state.
+  Ordinary live graph-data changes no longer reset a user's viewport; opening a
+  different demo or reopening the rail still resets it deliberately.
+- Preserved header zoom controls and node attention animations. Zoom continues
+  to update only the inner graph's CSS scale.
+
+Affected source:
+
+- `src/app/pages/groups/demo/components/daw/DemoDawClient.tsx`
+- `src/app/pages/groups/demo/components/daw/DemoDawClient.interaction.test.tsx`
+- `src/app/pages/groups/demo/components/daw/VersionHistoryTree.interaction.test.tsx`
+
+### Regression and browser evidence
+
+- Strict Mode interaction coverage asserts the graph is size-constrained on
+  the initial render and never receives a measured inline height.
+- Live-data coverage adds a version to an open graph and verifies the user's
+  scroll viewport is preserved when graph identity is unchanged.
+- Production Chromium sampling recorded the rail on every animation frame:
+  - 27-version graph hard navigation: one unique height (`511px`) across 42
+    samples; first sample at 10ms; graph content height `4352px` inside a
+    `355px` scroller.
+  - 1-version graph hard navigation: one unique height (`511px`); first sample
+    at 7ms.
+  - client-side navigation into the 27-version graph: one unique height
+    (`511px`) across 70 samples; first visible sample at 271ms after navigation.
+  - switching from a 2-version demo to the 27-version demo: each graph had one
+    unique `511px` height from its first visible sample.
+  - resizing to a narrow viewport produced one stable `512px` viewport with
+    containment disabled; resizing back produced the desktop contained
+    viewport without an inline height.
+  - collapse/expand preserved the stable viewport; user zoom still changed the
+    inner transform to `scale(0.875)`.
+
+No temporary diagnostics remain in the product source.
+
 Investigation of why the version-history graph in the demo DAW right-hand rail does **not**
 start at its natural top on first render, and instead appears pre-scrolled to a lower part of
 the tree before the user interacts with it.
