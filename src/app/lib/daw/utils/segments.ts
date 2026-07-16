@@ -2,6 +2,8 @@
 export const MIN_SPLIT_DISTANCE_MS = 1;
 
 export type SegmentLike = {
+  sourceTrackVersionId?: string | null;
+  sourceStorageKey?: string | null;
   startMs: number;
   endMs: number;
   timelineStartMs?: number | null;

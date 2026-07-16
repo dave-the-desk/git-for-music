@@ -24,6 +24,7 @@ const TRACK_VERSION_FIELDS = {
   isDerived: true,
   operationType: true,
   parentTrackVersionId: true,
+  segmentsInitialized: true,
   track: {
     select: {
       name: true,
@@ -33,6 +34,7 @@ const TRACK_VERSION_FIELDS = {
   segments: {
     select: {
       id: true,
+      sourceTrackVersionId: true,
       startMs: true,
       endMs: true,
       timelineStartMs: true,
@@ -212,6 +214,7 @@ export async function cloneTrackVersionsToDemoVersion(
         mimeType: sourceTrackVersion.mimeType,
         sizeBytes: sourceTrackVersion.sizeBytes,
         checksum: sourceTrackVersion.checksum,
+        segmentsInitialized: sourceTrackVersion.segmentsInitialized,
         isDerived: sourceTrackVersion.isDerived,
         operationType: sourceTrackVersion.operationType,
         parentTrackVersionId: sourceTrackVersion.parentTrackVersionId,
@@ -228,6 +231,7 @@ export async function cloneTrackVersionsToDemoVersion(
       const createdSegment = await tx.segment.create({
         data: {
           trackVersionId: createdTrackVersion.id,
+          sourceTrackVersionId: segment.sourceTrackVersionId,
           startMs: segment.startMs,
           endMs: segment.endMs,
           timelineStartMs: segment.timelineStartMs,
@@ -259,9 +263,12 @@ export async function cloneTrackVersionsToDemoVersion(
         isDerived: sourceTrackVersion.isDerived,
         operationType: sourceTrackVersion.operationType,
         parentTrackVersionId: sourceTrackVersion.parentTrackVersionId,
+        segmentsInitialized: sourceTrackVersion.segmentsInitialized,
         segments: sourceTrackVersion.segments.map((segment) => ({
           id: segmentIdMap.get(segment.id) ?? segment.id,
           trackVersionId: createdTrackVersion.id,
+          sourceTrackVersionId: segment.sourceTrackVersionId ?? createdTrackVersion.id,
+          sourceStorageKey: buildTrackVersionAudioUrl(segment.sourceTrackVersionId ?? createdTrackVersion.id),
           startMs: segment.startMs,
           endMs: segment.endMs,
           timelineStartMs: segment.timelineStartMs,
@@ -499,6 +506,7 @@ export function serializeCreatedDemoTrackVersionTreeTrack(input: {
   isDerived?: boolean;
   operationType?: 'ORIGINAL' | 'TIME_STRETCH';
   parentTrackVersionId?: string | null;
+  segmentsInitialized?: boolean;
   segments?: DawVersionTreeTrackSnapshot['segments'];
   plugins?: HostedPluginInstanceState[];
 }): DawVersionTreeTrackSnapshot {
@@ -518,6 +526,7 @@ export function serializeCreatedDemoTrackVersionTreeTrack(input: {
     isDerived: input.isDerived ?? false,
     operationType: input.operationType ?? 'ORIGINAL',
     parentTrackVersionId: input.parentTrackVersionId ?? null,
+    segmentsInitialized: input.segmentsInitialized ?? (input.segments?.length ?? 0) > 0,
     segments: input.segments ?? [],
     plugins: input.plugins ?? [],
   };

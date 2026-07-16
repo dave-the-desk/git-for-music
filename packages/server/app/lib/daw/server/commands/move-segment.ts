@@ -10,6 +10,7 @@ function parseFiniteNumber(value: unknown) {
 export async function moveSegmentCommand(input: {
   userId: string;
   trackVersionId: string;
+  toTrackVersionId?: string;
   segmentId: string;
   timelineStartMs: unknown;
 }) {
@@ -71,6 +72,7 @@ export async function moveSegmentCommand(input: {
   }
 
   const durationMs = segment.endMs - segment.startMs;
+  const toTrackVersionId = input.toTrackVersionId ?? input.trackVersionId;
   const fromTimelineStartMs = segment.timelineStartMs ?? segment.trackVersion.startOffsetMs + segment.startMs;
   const fromTimelineEndMs = fromTimelineStartMs + durationMs;
 
@@ -83,7 +85,7 @@ export async function moveSegmentCommand(input: {
       payload: {
         segmentId: segment.id,
         fromTrackVersionId: input.trackVersionId,
-        toTrackVersionId: input.trackVersionId,
+        toTrackVersionId,
         fromTimelineStartMs,
         fromTimelineEndMs,
         toTimelineStartMs: timelineStartMs,
@@ -131,6 +133,7 @@ export async function moveSegmentCommand(input: {
     select: {
       id: true,
       trackVersionId: true,
+      sourceTrackVersionId: true,
       startMs: true,
       endMs: true,
       timelineStartMs: true,
@@ -154,6 +157,7 @@ export async function moveSegmentCommand(input: {
     segment: {
       id: updatedSegment.id,
       trackVersionId: updatedSegment.trackVersionId,
+      sourceTrackVersionId: updatedSegment.sourceTrackVersionId ?? updatedSegment.trackVersionId,
       startMs: updatedSegment.startMs,
       endMs: updatedSegment.endMs,
       sourceStartMs: updatedSegment.startMs,

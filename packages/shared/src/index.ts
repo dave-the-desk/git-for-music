@@ -135,6 +135,7 @@ export interface SplitSegmentRequest {
 export interface SegmentTimelineData {
   id: string;
   trackVersionId: string;
+  sourceTrackVersionId?: string | null;
   startMs: number;
   endMs: number;
   sourceStartMs: number;
@@ -244,7 +245,7 @@ export interface DawAssetUploadRequest {
   trackVersionId?: string;
   name?: string;
   sourceVersionId?: string;
-  sourceType?: 'recording' | 'upload';
+  sourceType?: 'recording' | 'upload' | 'empty-track';
   timingChoice?: UploadTimingChoice;
   fileName: string;
   contentType: string;

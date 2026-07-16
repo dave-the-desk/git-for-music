@@ -76,7 +76,7 @@ import type {
   DawOperationPayloadPluginStateSet,
 } from '@/app/lib/daw/protocol';
 import type { JsonValue, TimingSource } from '@git-for-music/shared';
-import { getConfig } from '@git-for-music/shared';
+import { buildTrackVersionAudioUrl, getConfig } from '@git-for-music/shared';
 
 interface DawProjectWorkspace {
   project: {
@@ -490,6 +490,8 @@ function serializeSegmentSnapshot(
   trackVersionId: string,
   segment: {
     id: string;
+    sourceTrackVersionId?: string | null;
+    sourceStorageKey?: string | null;
     startMs: number;
     endMs: number;
     timelineStartMs: number | null;
@@ -510,6 +512,9 @@ function serializeSegmentSnapshot(
   return {
     id: segment.id,
     trackVersionId,
+    sourceTrackVersionId: segment.sourceTrackVersionId ?? trackVersionId,
+    sourceStorageKey:
+      segment.sourceStorageKey ?? buildTrackVersionAudioUrl(segment.sourceTrackVersionId ?? trackVersionId),
     startMs: segment.startMs,
     endMs: segment.endMs,
     timelineStartMs,
@@ -1087,7 +1092,7 @@ async function loadOperationByClientOperationId(
   return serializeProjectOperation(operationRow);
 }
 
-async function executeOperationMutation(
+export async function executeOperationMutation(
   client: DawDatabaseClient,
   workspace: DawProjectWorkspace,
   request: DawOperationCommitRequest,
@@ -1361,6 +1366,7 @@ async function executeOperationMutation(
     case 'SEGMENT_MOVED': {
       const {
         segmentId,
+        isImplicit,
         fromTrackVersionId,
         toTrackVersionId,
         fromTimelineStartMs,
@@ -1408,6 +1414,8 @@ async function executeOperationMutation(
           },
           select: {
             id: true,
+            startOffsetMs: true,
+            segmentsInitialized: true,
           },
         }),
         client.trackVersion.findFirst({
@@ -1448,6 +1456,7 @@ async function executeOperationMutation(
           startMs: true,
           endMs: true,
           timelineStartMs: true,
+          sourceTrackVersionId: true,
           position: true,
           trackVersion: {
             select: {
@@ -1458,7 +1467,75 @@ async function executeOperationMutation(
       });
 
       if (!segment) {
-        throw new Error('Segment not found');
+        const sourceSegmentCount = await client.segment.count({
+          where: { trackVersionId: fromTrackVersionId },
+        });
+        const isValidImplicitSource =
+          isImplicit === true &&
+          segmentId === `implicit:${fromTrackVersionId}` &&
+          sourceSegmentCount === 0 &&
+          sourceTrackVersion.segmentsInitialized !== true;
+
+        if (!isValidImplicitSource) {
+          throw new Error('Segment not found');
+        }
+
+        const sourceDurationMs = fromTimelineEndMs - fromTimelineStartMs;
+        if (sourceDurationMs <= 0) {
+          throw new Error('Implicit segment duration must be greater than zero');
+        }
+
+        const targetPosition = await client.segment.count({
+          where: { trackVersionId: toTrackVersionId },
+        });
+        const createdSegment = await client.segment.create({
+          data: {
+            trackVersionId: toTrackVersionId,
+            sourceTrackVersionId:
+              fromTrackVersionId === toTrackVersionId ? null : fromTrackVersionId,
+            startMs: 0,
+            endMs: sourceDurationMs,
+            timelineStartMs: toTimelineStartMs,
+            gainDb: 0,
+            fadeInMs: 0,
+            fadeOutMs: 0,
+            isMuted: false,
+            position: targetPosition,
+          },
+          select: {
+            id: true,
+            sourceTrackVersionId: true,
+            startMs: true,
+            endMs: true,
+            timelineStartMs: true,
+            gainDb: true,
+            fadeInMs: true,
+            fadeOutMs: true,
+            isMuted: true,
+            position: true,
+          },
+        });
+
+        await client.trackVersion.updateMany({
+          where: {
+            id: { in: [...new Set([fromTrackVersionId, toTrackVersionId])] },
+          },
+          data: { segmentsInitialized: true },
+        });
+
+        return {
+          logPayload: {
+            segmentId: createdSegment.id,
+            previousSegmentId: segmentId,
+            fromTrackVersionId,
+            toTrackVersionId,
+            fromTimelineStartMs,
+            fromTimelineEndMs,
+            toTimelineStartMs,
+            toTimelineEndMs,
+            segment: serializeSegmentSnapshot(toTrackVersionId, createdSegment),
+          },
+        };
       }
 
       const sourceDurationMs = segment.endMs - segment.startMs;
@@ -1492,6 +1569,7 @@ async function executeOperationMutation(
           },
           data: {
             trackVersionId: toTrackVersionId,
+            sourceTrackVersionId: segment.sourceTrackVersionId ?? fromTrackVersionId,
             timelineStartMs: toTimelineStartMs,
             position: await client.segment.count({
               where: {
@@ -1516,6 +1594,13 @@ async function executeOperationMutation(
           },
         });
       }
+
+      await client.trackVersion.updateMany({
+        where: {
+          id: { in: [...new Set([fromTrackVersionId, toTrackVersionId])] },
+        },
+        data: { segmentsInitialized: true },
+      });
 
       return {
         logPayload: {
@@ -1574,6 +1659,10 @@ async function executeOperationMutation(
             decrement: 1,
           },
         },
+      });
+      await client.trackVersion.updateMany({
+        where: { id: trackVersionId },
+        data: { segmentsInitialized: true },
       });
 
       return {
@@ -1992,6 +2081,11 @@ async function executeOperationMutation(
         throw new Error('Track version not found');
       }
 
+      await client.trackVersion.updateMany({
+        where: { id: trackVersion.id },
+        data: { segmentsInitialized: true },
+      });
+
       const existingSegmentsCount = await client.segment.count({
         where: {
           trackVersionId: trackVersion.id,
@@ -2009,6 +2103,7 @@ async function executeOperationMutation(
               startMs: true,
               endMs: true,
               timelineStartMs: true,
+              sourceTrackVersionId: true,
               gainDb: true,
               fadeInMs: true,
               fadeOutMs: true,
@@ -2083,6 +2178,7 @@ async function executeOperationMutation(
         const right = await client.segment.create({
           data: {
             trackVersionId: trackVersion.id,
+            sourceTrackVersionId: existingSegment.sourceTrackVersionId,
             startMs: rightSegment.startMs,
             endMs: rightSegment.endMs,
             timelineStartMs: rightSegment.timelineStartMs,
@@ -2110,6 +2206,7 @@ async function executeOperationMutation(
             }),
             rightSegment: serializeSegmentSnapshot(trackVersion.id, {
               id: right.id,
+              sourceTrackVersionId: existingSegment.sourceTrackVersionId,
               startMs: rightSegment.startMs,
               endMs: rightSegment.endMs,
               timelineStartMs:
@@ -2127,6 +2224,7 @@ async function executeOperationMutation(
       const left = await client.segment.create({
         data: {
           trackVersionId: trackVersion.id,
+          sourceTrackVersionId: null,
           startMs: leftSegment.startMs,
           endMs: leftSegment.endMs,
           timelineStartMs: leftSegment.timelineStartMs,
@@ -2144,6 +2242,7 @@ async function executeOperationMutation(
       const right = await client.segment.create({
         data: {
           trackVersionId: trackVersion.id,
+          sourceTrackVersionId: null,
           startMs: rightSegment.startMs,
           endMs: rightSegment.endMs,
           timelineStartMs: rightSegment.timelineStartMs,
@@ -2164,6 +2263,7 @@ async function executeOperationMutation(
           sourceSegmentId: null,
           leftSegment: serializeSegmentSnapshot(trackVersion.id, {
             id: left.id,
+            sourceTrackVersionId: trackVersion.id,
             startMs: leftSegment.startMs,
             endMs: leftSegment.endMs,
             timelineStartMs:
@@ -2176,6 +2276,7 @@ async function executeOperationMutation(
           }),
           rightSegment: serializeSegmentSnapshot(trackVersion.id, {
             id: right.id,
+            sourceTrackVersionId: trackVersion.id,
             startMs: rightSegment.startMs,
             endMs: rightSegment.endMs,
             timelineStartMs:
@@ -2464,16 +2565,22 @@ function translateRequestForBranch(
           segmentId: translateSegmentId(request.payload.segmentId) ?? request.payload.segmentId,
         },
       } as DawOperationCommitRequest & { clientOperationId: string };
-    case 'SEGMENT_MOVED':
+    case 'SEGMENT_MOVED': {
+      const translatedFromTrackVersionId = translateTrackVersionId(
+        request.payload.fromTrackVersionId,
+      );
       return {
         ...request,
         payload: {
           ...request.payload,
-          fromTrackVersionId: translateTrackVersionId(request.payload.fromTrackVersionId),
+          fromTrackVersionId: translatedFromTrackVersionId,
           toTrackVersionId: translateTrackVersionId(request.payload.toTrackVersionId),
-          segmentId: translateSegmentId(request.payload.segmentId) ?? request.payload.segmentId,
+          segmentId: request.payload.isImplicit
+            ? `implicit:${translatedFromTrackVersionId}`
+            : translateSegmentId(request.payload.segmentId) ?? request.payload.segmentId,
         },
       } as DawOperationCommitRequest & { clientOperationId: string };
+    }
     case 'SEGMENT_DELETED':
       return {
         ...request,

@@ -51,6 +51,7 @@ export default async function DemoPage({
             isDerived: trackVersion.isDerived,
             operationType: trackVersion.operationType,
             parentTrackVersionId: trackVersion.parentTrackVersionId,
+            segmentsInitialized: trackVersion.segmentsInitialized,
             plugins: trackVersion.plugins.map((plugin) => ({
               ...plugin,
               params: { ...plugin.params },
@@ -62,6 +63,8 @@ export default async function DemoPage({
             segments: trackVersion.segments.map((segment) => ({
               id: segment.id,
               trackVersionId: trackVersion.trackVersionId,
+              sourceTrackVersionId: segment.sourceTrackVersionId,
+              sourceStorageKey: segment.sourceStorageKey,
               sourceStartMs: segment.startMs,
               sourceEndMs: segment.endMs,
               timelineStartMs: segment.timelineStartMs ?? trackVersion.startOffsetMs + segment.startMs,

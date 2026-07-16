@@ -252,3 +252,67 @@ test('analyzeDawOperationConflict allows adjacent edits on the same track and fl
   assert.deepEqual(overlapConflict?.conflictingOperationIds, ['op-2']);
   assert.deepEqual(overlapConflict?.conflictingOperationSeqs, [2]);
 });
+
+test('analyzeDawOperationConflict includes move destinations when detecting concurrent clip edits', async () => {
+  const workspace = {
+    project: { id: 'project-1' },
+    demo: { id: 'demo-1', currentVersionId: 'version-root' },
+  };
+  const client = {
+    projectOperationLog: {
+      findMany: async () => [
+        {
+          id: 'op-2',
+          operationSeq: 2,
+          operationType: 'SEGMENT_MOVED',
+          payload: {
+            segmentId: 'segment-a',
+            fromTrackVersionId: 'track-version-a',
+            toTrackVersionId: 'track-version-b',
+            fromTimelineStartMs: 0,
+            fromTimelineEndMs: 800,
+            toTimelineStartMs: 2000,
+            toTimelineEndMs: 2800,
+          },
+        },
+      ],
+    },
+    trackVersion: {
+      findFirst: async ({ where }: { where: { id: string } }) => ({
+        id: where.id,
+        trackId: where.id.replace('track-version', 'track'),
+      }),
+    },
+    segment: {
+      findFirst: async ({ where }: { where: { id: string; trackVersionId: string } }) => ({
+        id: where.id,
+        startMs: 0,
+        endMs: 800,
+        timelineStartMs: where.trackVersionId === 'track-version-c' ? 2100 : 0,
+        trackVersion: { startOffsetMs: 0 },
+      }),
+    },
+  };
+
+  const conflict = await analyzeDawOperationConflict(client as never, workspace, {
+    demoId: 'demo-1',
+    operationType: 'SEGMENT_MOVED',
+    baseSnapshotId: 'snapshot-1',
+    baseOperationSeq: 1,
+    payload: {
+      segmentId: 'segment-c',
+      fromTrackVersionId: 'track-version-c',
+      toTrackVersionId: 'track-version-b',
+      fromTimelineStartMs: 2100,
+      fromTimelineEndMs: 2900,
+      toTimelineStartMs: 2200,
+      toTimelineEndMs: 3000,
+    },
+    idempotencyKey: 'idempotency-3',
+    clientOperationId: 'client-3',
+  });
+
+  assert.ok(conflict);
+  assert.equal(conflict?.reason, 'Overlapping timeline edits on the same track');
+  assert.deepEqual(conflict?.conflictingOperationIds, ['op-2']);
+});

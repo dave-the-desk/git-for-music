@@ -4,6 +4,8 @@ import type { DawOperationType } from '@git-for-music/server/app/lib/daw/protoco
 export type TrackTimelineSegment = {
   id: string;
   trackVersionId: string;
+  sourceTrackVersionId?: string | null;
+  sourceStorageKey?: string | null;
   sourceStartMs: number;
   sourceEndMs: number;
   timelineStartMs: number;
@@ -48,6 +50,7 @@ export type DawTrack = {
   isDerived: boolean;
   operationType: 'ORIGINAL' | 'TIME_STRETCH';
   parentTrackVersionId: string | null;
+  segmentsInitialized?: boolean;
   segments: TrackTimelineSegment[];
   plugins: HostedPluginInstanceState[];
 };

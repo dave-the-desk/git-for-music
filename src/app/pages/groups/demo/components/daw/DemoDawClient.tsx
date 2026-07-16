@@ -88,7 +88,9 @@ import type {
 } from '@/app/lib/daw/state/local-project-state';
 import type { TimelineHistoryEntry } from '@/app/lib/daw/state/operation-reducer';
 import {
+  buildSameTrackSegmentMoveUndoInput,
   getSegmentDragCommitTimelineStartMs,
+  getSegmentDragOriginalSegments,
   getTrackDragCommitOffset,
   type TimelineDragState,
   updateSegmentDragState,
@@ -102,6 +104,7 @@ import {
   isBlankTrack,
   groupCommentsByTrackId,
   selectTracks,
+  selectSegmentAudioSource,
   selectVersionById,
   selectTotalDurationMs,
 } from '@/app/lib/daw/state/selectors';
@@ -1767,20 +1770,20 @@ export function DemoDawClient({
               }
             : segment,
         );
+        const currentSegment = currentSegments.find((segment) => segment.id === lastEntry.segmentId);
         setTrackSegmentLayout(lastEntry.trackVersionId, nextSegments);
-        await commitEditingOperation(
-          audioEditingEngine.moveSegment({
-            segmentId: lastEntry.segmentId,
-            fromTrackVersionId: lastEntry.trackVersionId,
-            toTrackVersionId: lastEntry.trackVersionId,
-            fromTimelineStartMs: lastEntry.previousTimelineStartMs,
-            fromTimelineEndMs:
-              lastEntry.previousTimelineStartMs +
-              (currentSegments.find((segment) => segment.id === lastEntry.segmentId)?.durationMs ?? 0),
-            toTimelineStartMs: lastEntry.previousTimelineStartMs,
-            toTimelineEndMs: lastEntry.previousTimelineStartMs + (currentSegments.find((segment) => segment.id === lastEntry.segmentId)?.durationMs ?? 0),
-          }),
-        );
+        if (currentSegment) {
+          await commitEditingOperation(
+            audioEditingEngine.moveSegment(
+              buildSameTrackSegmentMoveUndoInput({
+                segmentId: lastEntry.segmentId,
+                trackVersionId: lastEntry.trackVersionId,
+                previousTimelineStartMs: lastEntry.previousTimelineStartMs,
+                currentSegment,
+              }),
+            ),
+          );
+        }
       } else if (lastEntry.kind === 'move-segment-track') {
         const movedSegment =
           lastEntry.nextTargetSegments.find((candidate) => candidate.id === lastEntry.segmentId) ??
@@ -1795,16 +1798,17 @@ export function DemoDawClient({
         setSelectedSegmentId(lastEntry.previousSelectedSegmentId);
         if (movedSegment && sourceSegment) {
           await commitEditingOperation(
-          audioEditingEngine.moveSegment({
-            segmentId: lastEntry.segmentId,
-            fromTrackVersionId: lastEntry.targetTrackVersionId,
-            toTrackVersionId: lastEntry.sourceTrackVersionId,
-            fromTimelineStartMs: movedSegment.timelineStartMs,
-            fromTimelineEndMs: movedSegment.timelineEndMs,
-            toTimelineStartMs: sourceSegment.timelineStartMs,
-            toTimelineEndMs: sourceSegment.timelineEndMs ?? sourceSegment.timelineStartMs + sourceSegment.durationMs,
-          }),
-        );
+            audioEditingEngine.moveSegment({
+              segmentId: lastEntry.segmentId,
+              fromTrackVersionId: lastEntry.targetTrackVersionId,
+              toTrackVersionId: lastEntry.sourceTrackVersionId,
+              fromTimelineStartMs: movedSegment.timelineStartMs,
+              fromTimelineEndMs: movedSegment.timelineEndMs,
+              toTimelineStartMs: sourceSegment.timelineStartMs,
+              toTimelineEndMs:
+                sourceSegment.timelineEndMs ?? sourceSegment.timelineStartMs + sourceSegment.durationMs,
+            }),
+          );
         }
       } else if (lastEntry.kind === 'cut') {
         setTrackSegmentLayout(lastEntry.trackVersionId, lastEntry.previousSegments);
@@ -3101,7 +3105,11 @@ export function DemoDawClient({
       originalTimelineStartMs: segment.timelineStartMs,
       originalTimelineEndMs: segment.timelineEndMs,
       currentTimelineStartMs: segment.timelineStartMs,
-      originalSegments: getDisplayedTrackSegments(track),
+      originalSegments: getSegmentDragOriginalSegments(
+        segment,
+        getDisplayedTrackSegments(track),
+        getRenderableTrackSegments(track),
+      ),
       startX,
     };
   }
@@ -3206,9 +3214,11 @@ export function DemoDawClient({
     if (!isCrossTrackMove && previewTimelineStartMs === drag.originalTimelineStartMs) return;
 
     try {
-      await commitEditingOperation(
+      const acceptedOperation = await commitEditingOperation(
         audioEditingEngine.moveSegment({
           segmentId: drag.segmentId,
+          isImplicit:
+            previousSourceSegments.find((candidate) => candidate.id === drag.segmentId)?.isImplicit === true,
           fromTrackVersionId: track.trackVersionId,
           toTrackVersionId: dropTrackVersionId,
           fromTimelineStartMs: drag.originalTimelineStartMs,
@@ -3217,10 +3227,17 @@ export function DemoDawClient({
           toTimelineEndMs: previewTimelineStartMs + durationMs,
         }),
       );
+      const committedSegmentId = (acceptedOperation.payload as { segmentId: string }).segmentId;
+      setSelectedSegmentId(committedSegmentId);
 
       if (isCrossTrackMove) {
         const movedSegment = previousSourceSegments.find((candidate) => candidate.id === drag.segmentId) ?? null;
         if (movedSegment) {
+          const historySourceSegments = previousSourceSegments.map((candidate) =>
+            candidate.id === drag.segmentId
+              ? { ...candidate, id: committedSegmentId, isImplicit: false }
+              : candidate,
+          );
           const nextSourceSegments = previousSourceSegments
             .filter((candidate) => candidate.id !== drag.segmentId)
             .map((candidate, index) => ({ ...candidate, position: index }));
@@ -3228,6 +3245,8 @@ export function DemoDawClient({
             ...previousTargetSegments.filter((candidate) => candidate.id !== drag.segmentId),
             {
               ...movedSegment,
+              id: committedSegmentId,
+              isImplicit: false,
               trackVersionId: dropTrackVersionId,
               timelineStartMs: previewTimelineStartMs,
               timelineEndMs: previewTimelineStartMs + durationMs,
@@ -3239,20 +3258,23 @@ export function DemoDawClient({
             kind: 'move-segment-track',
             sourceTrackVersionId: drag.trackVersionId,
             targetTrackVersionId: dropTrackVersionId,
-            segmentId: drag.segmentId,
-            previousSourceSegments,
+            segmentId: committedSegmentId,
+            previousSourceSegments: historySourceSegments,
             previousTargetSegments,
             nextSourceSegments,
             nextTargetSegments,
             previousSelectedTrackVersionId,
-            previousSelectedSegmentId,
+            previousSelectedSegmentId:
+              previousSelectedSegmentId === drag.segmentId
+                ? committedSegmentId
+                : previousSelectedSegmentId,
           });
         }
       } else {
         pushTimelineHistory({
           kind: 'move-segment',
           trackVersionId: track.trackVersionId,
-          segmentId: drag.segmentId,
+          segmentId: committedSegmentId,
           previousTimelineStartMs: drag.originalTimelineStartMs,
           nextTimelineStartMs: previewTimelineStartMs,
         });
@@ -3397,11 +3419,7 @@ export function DemoDawClient({
     e.currentTarget.setPointerCapture(e.pointerId);
     setSelectedSegmentId(segment.id);
     setSplitError(null);
-    if (segment.isImplicit) {
-      beginTrackDrag(track, e.clientX);
-    } else {
-      beginSegmentDrag(track, segment, e.clientX);
-    }
+    beginSegmentDrag(track, segment, e.clientX);
     setDragError(null);
   }
 
@@ -3731,6 +3749,7 @@ export function DemoDawClient({
         selectedTracks,
       }),
       'uploadUnchanged',
+      'empty-track',
     );
   }
 
@@ -4005,7 +4024,12 @@ export function DemoDawClient({
     }
   }
 
-  async function performUpload(file: File, name: string, timingChoice: UploadTimingChoice) {
+  async function performUpload(
+    file: File,
+    name: string,
+    timingChoice: UploadTimingChoice,
+    sourceType: 'upload' | 'empty-track' = 'upload',
+  ) {
     setIsUploading(true);
     setUploadError(null);
     setProcessingMessage(null);
@@ -4024,6 +4048,7 @@ export function DemoDawClient({
         recordedTempoBpm: uploadTempoBpm,
         sourceTempoBpm: uploadTempoBpm,
         timingChoice,
+        sourceType,
         file,
       })) as Awaited<ReturnType<typeof ingestEngine.uploadRecordedBlob>>;
       await projectSyncEngine.setTrackTempoMetadata(data.trackVersionId, {
@@ -5287,14 +5312,19 @@ export function DemoDawClient({
                           dragRef.current?.kind === 'segment' && dragRef.current.segmentId === segment.id;
                         const isDraggingImplicitTrack =
                           dragRef.current?.kind === 'track' && dragRef.current.trackVersionId === track.trackVersionId;
+                        const segmentAudioSource = selectSegmentAudioSource(
+                          track,
+                          segment,
+                          selectedTracks,
+                        );
 
                         return (
                           <TrackSegmentClip
                             key={segment.id}
                             trackVersionId={track.trackVersionId}
                             segment={segment}
-                            storageKey={track.storageKey}
-                            mimeType={track.mimeType}
+                            storageKey={segmentAudioSource.storageKey}
+                            mimeType={segmentAudioSource.mimeType}
                             isSelected={isSelected}
                             isPendingMerge={isPendingMerge}
                             isFadeSelected={isFadeSelected}

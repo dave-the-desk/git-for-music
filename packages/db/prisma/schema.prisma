@@ -18,16 +18,16 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  groupMemberships GroupMember[]
-  comments         Comment[]
-  annotations      Annotation[]
-  processingJobs   ProcessingJob[]
-  notifications    Notification[]
+  groupMemberships     GroupMember[]
+  comments             Comment[]
+  annotations          Annotation[]
+  processingJobs       ProcessingJob[]
+  notifications        Notification[]
   projectOperationLogs ProjectOperationLog[]
   projectSnapshots     ProjectSnapshot[]
   demoActiveVersions   DemoUserActiveVersion[]
-  ownedPlugins         PluginMetadata[] @relation("PluginOwner")
-  pluginGrants         PluginGrant[]    @relation("PluginGrantRecipient")
+  ownedPlugins         PluginMetadata[]        @relation("PluginOwner")
+  pluginGrants         PluginGrant[]           @relation("PluginGrantRecipient")
 }
 
 // ─── Group ───────────────────────────────────────────────────────────────────
@@ -88,51 +88,51 @@ model Project {
 // ─── Demo ────────────────────────────────────────────────────────────────────
 
 model Demo {
-  id          String   @id @default(cuid())
-  name        String
-  description String?
+  id               String   @id @default(cuid())
+  name             String
+  description      String?
   currentVersionId String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
   project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   projectId String
 
-  versions       DemoVersion[] @relation("DemoVersions")
-  currentVersion DemoVersion?  @relation("CurrentDemoVersion", fields: [currentVersionId], references: [id])
-  tracks   Track[]
-  comments Comment[]
-  operationLogs ProjectOperationLog[]
-  snapshots     ProjectSnapshot[]
-  audioAssets   AudioAssetMetadata[]
+  versions           DemoVersion[]           @relation("DemoVersions")
+  currentVersion     DemoVersion?            @relation("CurrentDemoVersion", fields: [currentVersionId], references: [id])
+  tracks             Track[]
+  comments           Comment[]
+  operationLogs      ProjectOperationLog[]
+  snapshots          ProjectSnapshot[]
+  audioAssets        AudioAssetMetadata[]
   userActiveVersions DemoUserActiveVersion[]
-  pluginGrants   PluginGrant[]
+  pluginGrants       PluginGrant[]
 }
 
 // DemoVersion is the git-like snapshot/branch node.
 // parentId=null means it is the root commit of that branch.
 model DemoVersion {
-  id          String   @id @default(cuid())
-  label       String
-  description String?
-  kind        DemoVersionKind @default(EXPLICIT)
-  operationSeq Int?
-  tempoBpm    Float?
-  timeSignatureNum Int @default(4)
-  timeSignatureDen Int @default(4)
-  musicalKey  String?
-  tempoSource TempoSource @default(MANUAL)
-  keySource   KeySource @default(MANUAL)
-  parentId    String?
-  isMerge     Boolean  @default(false)
-  createdAt   DateTime @default(now())
+  id               String          @id @default(cuid())
+  label            String
+  description      String?
+  kind             DemoVersionKind @default(EXPLICIT)
+  operationSeq     Int?
+  tempoBpm         Float?
+  timeSignatureNum Int             @default(4)
+  timeSignatureDen Int             @default(4)
+  musicalKey       String?
+  tempoSource      TempoSource     @default(MANUAL)
+  keySource        KeySource       @default(MANUAL)
+  parentId         String?
+  isMerge          Boolean         @default(false)
+  createdAt        DateTime        @default(now())
 
-  demo   Demo   @relation("DemoVersions", fields: [demoId], references: [id], onDelete: Cascade)
-  demoId String
-  currentForDemos Demo[] @relation("CurrentDemoVersion")
+  demo                Demo                    @relation("DemoVersions", fields: [demoId], references: [id], onDelete: Cascade)
+  demoId              String
+  currentForDemos     Demo[]                  @relation("CurrentDemoVersion")
   activeVersionStates DemoUserActiveVersion[]
-  parentLinks  DemoVersionParent[] @relation("DemoVersionAsVersion")
-  childLinks   DemoVersionParent[] @relation("DemoVersionAsParent")
+  parentLinks         DemoVersionParent[]     @relation("DemoVersionAsVersion")
+  childLinks          DemoVersionParent[]     @relation("DemoVersionAsParent")
 
   parent   DemoVersion?  @relation("VersionTree", fields: [parentId], references: [id])
   children DemoVersion[] @relation("VersionTree")
@@ -142,8 +142,8 @@ model DemoVersion {
 
 model DemoVersionParent {
   versionId String
-  parentId String
-  order    Int
+  parentId  String
+  order     Int
 
   version DemoVersion @relation("DemoVersionAsVersion", fields: [versionId], references: [id], onDelete: Cascade)
   parent  DemoVersion @relation("DemoVersionAsParent", fields: [parentId], references: [id], onDelete: Cascade)
@@ -165,27 +165,28 @@ model Track {
   demo   Demo   @relation(fields: [demoId], references: [id], onDelete: Cascade)
   demoId String
 
-  versions TrackVersion[]
-  comments Comment[]
+  versions    TrackVersion[]
+  comments    Comment[]
   audioAssets AudioAssetMetadata[]
 }
 
 // TrackVersion is immutable — original audio is never overwritten.
 // Audio edits and reverts produce new TrackVersions.
 model TrackVersion {
-  id            String   @id @default(cuid())
-  storageKey    String
-  sourceFileUrl String?
-  startOffsetMs Float    @default(0)
-  durationMs    Int?
-  sampleRate    Int?
-  channels      Int?
-  mimeType      String?
-  sizeBytes     BigInt?
-  checksum      String?
-  isDerived     Boolean  @default(false)
-  operationType TrackVersionOperationType @default(ORIGINAL)
-  createdAt     DateTime @default(now())
+  id                  String                    @id @default(cuid())
+  storageKey          String
+  sourceFileUrl       String?
+  startOffsetMs       Float                     @default(0)
+  durationMs          Int?
+  sampleRate          Int?
+  channels            Int?
+  mimeType            String?
+  sizeBytes           BigInt?
+  checksum            String?
+  segmentsInitialized Boolean                   @default(false)
+  isDerived           Boolean                   @default(false)
+  operationType       TrackVersionOperationType @default(ORIGINAL)
+  createdAt           DateTime                  @default(now())
 
   parentTrackVersion   TrackVersion?  @relation("TrackVersionTree", fields: [parentTrackVersionId], references: [id])
   parentTrackVersionId String?
@@ -199,27 +200,32 @@ model TrackVersion {
   demoVersion   DemoVersion @relation(fields: [demoVersionId], references: [id])
   demoVersionId String
 
-  segments       Segment[]
-  processingJobs ProcessingJob[]
-  annotations    Annotation[]
-  lyricSegments  LyricSegment[]
-  audioAssets    AudioAssetMetadata[]
+  segments        Segment[]            @relation("SegmentDestinationTrackVersion")
+  sourcedSegments Segment[]            @relation("SegmentSourceTrackVersion")
+  processingJobs  ProcessingJob[]
+  annotations     Annotation[]
+  lyricSegments   LyricSegment[]
+  audioAssets     AudioAssetMetadata[]
 }
 
 // Segment is a timeline edit region within a TrackVersion.
 model Segment {
-  id        String  @id @default(cuid())
-  startMs   Float
-  endMs     Float
+  id              String  @id @default(cuid())
+  startMs         Float
+  endMs           Float
   timelineStartMs Float?
-  gainDb    Float   @default(0)
-  fadeInMs  Float   @default(0)
-  fadeOutMs Float   @default(0)
-  isMuted   Boolean @default(false)
-  position  Int     @default(0)
+  gainDb          Float   @default(0)
+  fadeInMs        Float   @default(0)
+  fadeOutMs       Float   @default(0)
+  isMuted         Boolean @default(false)
+  position        Int     @default(0)
 
-  trackVersion   TrackVersion @relation(fields: [trackVersionId], references: [id], onDelete: Cascade)
-  trackVersionId String
+  trackVersion         TrackVersion  @relation("SegmentDestinationTrackVersion", fields: [trackVersionId], references: [id], onDelete: Cascade)
+  trackVersionId       String
+  sourceTrackVersion   TrackVersion? @relation("SegmentSourceTrackVersion", fields: [sourceTrackVersionId], references: [id], onDelete: Restrict)
+  sourceTrackVersionId String?
+
+  @@index([sourceTrackVersionId])
 }
 
 // ─── Processing ──────────────────────────────────────────────────────────────
@@ -302,19 +308,19 @@ model DemoUserActiveVersion {
   activeVersion   DemoVersion @relation(fields: [activeVersionId], references: [id])
   activeVersionId String
 
-  isFollowingHead Boolean   @default(true)
-  updatedAt       DateTime  @updatedAt
+  isFollowingHead Boolean  @default(true)
+  updatedAt       DateTime @updatedAt
 
   @@unique([demoId, userId])
 }
 
 model Comment {
-  id        String   @id @default(cuid())
-  body      String
-  isResolved Boolean  @default(false)
+  id          String   @id @default(cuid())
+  body        String
+  isResolved  Boolean  @default(false)
   timestampMs Float?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   demo   Demo   @relation(fields: [demoId], references: [id], onDelete: Cascade)
   demoId String
@@ -419,25 +425,25 @@ model ProjectOperationLog {
   actorUser   User   @relation(fields: [actorUserId], references: [id])
   actorUserId String
 
-  baseSnapshot   ProjectSnapshot? @relation("ProjectOperationLogBaseSnapshot", fields: [baseSnapshotId], references: [id])
-  baseSnapshotId String?
-  baseOperationSeq Int
-  operationSeq   Int
-  operationType  String
-  payload        Json
-  createdAt      DateTime @default(now())
-  idempotencyKey String
+  baseSnapshot      ProjectSnapshot? @relation("ProjectOperationLogBaseSnapshot", fields: [baseSnapshotId], references: [id])
+  baseSnapshotId    String?
+  baseOperationSeq  Int
+  operationSeq      Int
+  operationType     String
+  payload           Json
+  createdAt         DateTime         @default(now())
+  idempotencyKey    String
   clientOperationId String
 
+  @@unique([demoId, operationSeq])
+  @@unique([demoId, idempotencyKey])
+  @@unique([demoId, clientOperationId])
   @@index([projectId, operationSeq])
   @@index([demoId, operationSeq])
   @@index([actorUserId, createdAt])
   @@index([baseSnapshotId])
   @@index([idempotencyKey])
   @@index([clientOperationId])
-  @@unique([demoId, operationSeq])
-  @@unique([demoId, idempotencyKey])
-  @@unique([demoId, clientOperationId])
 }
 
 model ProjectSnapshot {
@@ -451,7 +457,7 @@ model ProjectSnapshot {
   operationSeq Int
   snapshot     Json
 
-  createdBy   User   @relation(fields: [createdById], references: [id])
+  createdBy   User     @relation(fields: [createdById], references: [id])
   createdById String
   createdAt   DateTime @default(now())
 
@@ -477,24 +483,24 @@ model AudioAssetMetadata {
   demo      Demo    @relation(fields: [demoId], references: [id], onDelete: Cascade)
   demoId    String
 
-  track   Track? @relation(fields: [trackId], references: [id], onDelete: Cascade)
-  trackId String?
+  track          Track?        @relation(fields: [trackId], references: [id], onDelete: Cascade)
+  trackId        String?
   trackVersion   TrackVersion? @relation(fields: [trackVersionId], references: [id], onDelete: Cascade)
   trackVersionId String?
 
-  assetKind AudioAssetKind
-  storageKey String @unique
-  mimeType   String
-  sampleRate Int
-  bitDepth   Int
+  assetKind    AudioAssetKind
+  storageKey   String         @unique
+  mimeType     String
+  sampleRate   Int
+  bitDepth     Int
   channelCount Int
-  durationMs Int
-  sizeBytes  BigInt
-  checksum   String
+  durationMs   Int
+  sizeBytes    BigInt
+  checksum     String
 
   parentAsset   AudioAssetMetadata? @relation("AudioAssetParent", fields: [parentAssetId], references: [id], onDelete: SetNull)
   parentAssetId String?
-  createdAt     DateTime @default(now())
+  createdAt     DateTime            @default(now())
 
   derivedAssets AudioAssetMetadata[] @relation("AudioAssetParent")
 
@@ -507,25 +513,25 @@ model AudioAssetMetadata {
 }
 
 model PluginMetadata {
-  id String @id @default(cuid())
-  pluginKey String
-  name String
-  displayName String?
-  description String?
-  version String
-  manufacturer String?
+  id              String            @id @default(cuid())
+  pluginKey       String
+  name            String
+  displayName     String?
+  description     String?
+  version         String
+  manufacturer    String?
   parameterSchema Json
-  ownerId String?
-  owner User? @relation("PluginOwner", fields: [ownerId], references: [id], onDelete: Cascade)
-  visibility PluginVisibility @default(PRIVATE)
+  ownerId         String?
+  owner           User?             @relation("PluginOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  visibility      PluginVisibility  @default(PRIVATE)
   moduleObjectKey String?
-  bundlePrefix String?
-  bundleKind PluginBundleKind?
-  sizeBytes BigInt?
-  checksum String?
-  grants PluginGrant[]
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  bundlePrefix    String?
+  bundleKind      PluginBundleKind?
+  sizeBytes       BigInt?
+  checksum        String?
+  grants          PluginGrant[]
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
 
   @@unique([pluginKey, version])
   @@index([pluginKey])
@@ -533,14 +539,14 @@ model PluginMetadata {
 }
 
 model PluginGrant {
-  id String @id @default(cuid())
-  plugin PluginMetadata @relation(fields: [pluginId], references: [id], onDelete: Cascade)
-  pluginId String
-  demo Demo @relation(fields: [demoId], references: [id], onDelete: Cascade)
-  demoId String
-  grantedBy User @relation("PluginGrantRecipient", fields: [grantedById], references: [id])
+  id          String         @id @default(cuid())
+  plugin      PluginMetadata @relation(fields: [pluginId], references: [id], onDelete: Cascade)
+  pluginId    String
+  demo        Demo           @relation(fields: [demoId], references: [id], onDelete: Cascade)
+  demoId      String
+  grantedBy   User           @relation("PluginGrantRecipient", fields: [grantedById], references: [id])
   grantedById String
-  createdAt DateTime @default(now())
+  createdAt   DateTime       @default(now())
 
   @@unique([pluginId, demoId])
   @@index([demoId])

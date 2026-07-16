@@ -832,6 +832,8 @@ test('loadSnapshotStateForDemo replays SEGMENT_MOVED across track versions with 
   assert.equal(targetTrack?.segments[0]?.timelineStartMs, 3500);
   assert.equal(targetTrack?.segments[0]?.timelineEndMs, 4300);
   assert.equal(targetTrack?.segments[0]?.trackVersionId, 'track-version-b');
+  assert.equal(targetTrack?.segments[0]?.sourceTrackVersionId, 'track-version-a');
+  assert.equal(targetTrack?.segments[0]?.sourceStorageKey, '/tracks/a.wav');
 });
 
 test('loadSnapshotStateForDemo replays SEGMENT_MERGED into a single persisted clip', async () => {

@@ -73,6 +73,7 @@ export class AudioEditingEngine {
 
   moveSegment(input: {
     segmentId: string;
+    isImplicit?: boolean;
     fromTrackVersionId: string;
     toTrackVersionId: string;
     fromTimelineStartMs: number;

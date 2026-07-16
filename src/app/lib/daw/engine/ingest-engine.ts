@@ -39,7 +39,7 @@ export type IngestUploadInput = {
   fadeOutMs?: number;
   isMuted?: boolean;
   position?: number;
-  sourceType?: 'recording' | 'upload';
+  sourceType?: 'recording' | 'upload' | 'empty-track';
   recordedTempoBpm?: number | null;
   sourceTempoBpm?: number | null;
   timingChoice: UploadTimingChoice;

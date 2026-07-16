@@ -39,6 +39,8 @@ export type DawOperationType =
 export interface DawSegmentSnapshot {
   id: string;
   trackVersionId: string;
+  sourceTrackVersionId?: string | null;
+  sourceStorageKey?: string | null;
   startMs: number;
   endMs: number;
   timelineStartMs: number | null;
@@ -117,6 +119,9 @@ export interface DawOperationPayloadSegmentMoved {
   fromTrackVersionId: string;
   toTrackVersionId: string;
   segmentId: string;
+  isImplicit?: boolean;
+  previousSegmentId?: string;
+  segment?: DawSegmentSnapshot;
   fromTimelineStartMs: number;
   fromTimelineEndMs: number;
   toTimelineStartMs: number;
@@ -178,6 +183,7 @@ export interface DawVersionTreeTrackSnapshot {
   isDerived: boolean;
   operationType: 'ORIGINAL' | 'TIME_STRETCH';
   parentTrackVersionId: string | null;
+  segmentsInitialized?: boolean;
   segments: DawSegmentSnapshot[];
   plugins: HostedPluginInstanceState[];
 }

@@ -57,6 +57,7 @@ test('createDemoVersionWithCopiedTracks preserves moved segment placement when c
     segments: [
       {
         id: 'segment-1',
+        sourceTrackVersionId: 'track-version-original-source',
         startMs: 100,
         endMs: 900,
         timelineStartMs: 3500,
@@ -155,9 +156,15 @@ test('createDemoVersionWithCopiedTracks preserves moved segment placement when c
   assert.equal(result.tracks[0]?.segments[0]?.startMs, 100);
   assert.equal(result.tracks[0]?.segments[0]?.endMs, 900);
   assert.equal(result.tracks[0]?.segments[0]?.position, 0);
+  assert.equal(result.tracks[0]?.segments[0]?.sourceTrackVersionId, 'track-version-original-source');
+  assert.equal(
+    result.tracks[0]?.segments[0]?.sourceStorageKey,
+    '/api/daw/track-versions/track-version-original-source/audio',
+  );
   assert.deepEqual(result.tracks[0]?.plugins, []);
   assert.equal(createdSegments[0]?.timelineStartMs, 3500);
   assert.equal(createdSegments[0]?.position, 0);
+  assert.equal(createdSegments[0]?.sourceTrackVersionId, 'track-version-original-source');
 });
 
 test('createDemoVersionWithCopiedTracks preserves the creator name on the new version node', async () => {

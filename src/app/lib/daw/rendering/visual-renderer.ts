@@ -71,6 +71,7 @@ export type BuildDawVisualProjectionInput = {
     startOffsetMs: number;
     durationMs: number | null;
     isMuted: boolean;
+    segmentsInitialized?: boolean;
     segments: TrackTimelineSegment[];
   }>;
   currentTimeMs: number;
@@ -114,7 +115,8 @@ export function buildDawVisualProjection(input: BuildDawVisualProjectionInput): 
       trackStartOffsetMs,
       segments: displayedSegments as Array<{ id: string } & SegmentLike>,
       fallbackDurationMs: durationMs,
-      allowImplicitSegment: track.mimeType !== EMPTY_TRACK_MIME_TYPE,
+      allowImplicitSegment:
+        track.mimeType !== EMPTY_TRACK_MIME_TYPE && track.segmentsInitialized !== true,
     });
 
     const segments: TrackLaneVisualSegment[] = renderableSegments.map((segment) => {

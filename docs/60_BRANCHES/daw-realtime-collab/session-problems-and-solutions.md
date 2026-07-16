@@ -190,3 +190,129 @@ Regression evidence:
 - The session left behind direct regression coverage for first open recovery, blank-demo track creation, and two-client alignment.
 - Track names are display metadata only; rename and creation reconciliation now
   preserve distinct logical IDs.
+
+## 7. Moving a clip to another track changed its audio source
+
+Problem:
+
+- Cross-track `SEGMENT_MOVED` replay already transferred one stable segment ID
+  between lanes, but the durable segment row identified only its destination
+  `TrackVersion`.
+- Playback consequently loaded the destination track version's audio file, so
+  a moved clip kept its trim numbers while playing samples from the wrong asset.
+- The legacy segment-position route could not name a destination track, and
+  same-track undo submitted the old placement as both the current and restored
+  bounds, causing authoritative stale-bound validation to reject it.
+
+Verified cause:
+
+- `Segment.trackVersionId` served two incompatible roles: timeline ownership
+  and audio-source identity. Reassigning it was sufficient for lane rendering
+  and collaboration replay but necessarily changed the buffer selected by the
+  playback engine.
+- Move conflict scopes named only the source track version, so overlapping
+  concurrent moves into the same destination lane could avoid destination
+  overlap detection.
+
+Corrective behavior:
+
+- `Segment.sourceTrackVersionId` now pins the immutable audio origin. Legacy
+  null values resolve to the owning track; the first cross-track move records
+  the source before changing destination ownership.
+- Snapshot, accepted-operation, split, clone, optimistic replay, and reconnect
+  paths preserve the source identity and playback URL. A move still updates the
+  existing segment row and never creates a duplicate.
+- Playback fetches the segment source buffer but connects it to the destination
+  track bus, so destination mute, solo, gain, pan, and effects remain
+  authoritative.
+- Move conflict scopes include source and destination track versions. Invalid
+  or deleted destinations are rejected before mutation.
+- The legacy position route accepts `toTrackVersionId`, and same-track undo now
+  validates from the clip's current placement before restoring the prior one.
+
+Affected source:
+
+- `packages/db/prisma/schema.prisma` and
+  `packages/db/prisma/migrations/20260715120000_add_segment_audio_source/migration.sql`
+- `packages/server/app/lib/daw/server/command-api.ts`
+- `packages/server/app/lib/daw/server/conflict-rules.ts`
+- `packages/server/app/lib/daw/server/snapshot-builder.ts`
+- `packages/server/app/lib/daw/server/versioning.ts`
+- `src/app/lib/daw/state/timeline-edit-transforms.ts`
+- `src/app/lib/daw/engine/playback-engine.ts`
+- `src/app/pages/groups/demo/components/daw/DemoDawClient.tsx`
+
+Regression evidence:
+
+- Server mutation tests prove an empty-lane move retains one segment ID, trim,
+  fades, gain, and source; reject an invalid destination; and reverse the move.
+- Snapshot and version-clone tests prove source identity survives replay and
+  version boundaries.
+- Conflict tests prove concurrent moves consider their shared destination.
+- Reducer and project-sync tests prove remote clients rehome the clip once and
+  preserve identity without duplicates.
+- Playback tests prove source-buffer selection and destination gain, mute,
+  solo, and plugin routing.
+- Timeline-drag tests prove undo uses the current bounds as its authoritative
+  `from` placement and the previous bounds as its destination.
+
+### Follow-up: implicit clips duplicated and loaded destination placeholder audio
+
+Observed failure:
+
+- A newly recorded or uploaded track with no persisted `Segment` rendered one
+  implicit full-track clip. Dragging that clip still entered whole-track offset
+  mode, so it could not be moved into another lane.
+- An empty destination was backed by a generated placeholder WAV that had been
+  classified as ordinary `audio/wav`. It therefore rendered as another clip.
+- Timeline waveform rendering always passed the destination track's audio URL
+  and MIME type to `TrackSegmentClip`, producing a duplicate-looking clip and
+  the browser unsupported-format message even though the playback engine used
+  the segment source.
+
+Verified cause:
+
+- Segment absence overloaded two states: an untouched track whose whole audio
+  should be implicit, and an explicitly edited lane that legitimately contains
+  zero clips. Moving the only implicit clip left the source with zero rows, so
+  reload recreated it.
+- The lane component did not resolve `sourceTrackVersionId` and
+  `sourceStorageKey` when constructing its waveform player.
+
+Corrective behavior:
+
+- `TrackVersion.segmentsInitialized` now distinguishes untouched implicit audio
+  from explicit clip mode. It is persisted, cloned, serialized, replayed, and
+  set by move, split, and delete operations.
+- Moving an implicit clip atomically creates exactly one persisted destination
+  segment, records the original track as its audio source, publishes the new
+  stable ID plus segment snapshot, and initializes both lanes. Reducers replace
+  the implicit ID and keep the source lane empty after reconnect.
+- Segment pointer-down now starts clip movement for implicit clips. Waveform
+  rendering resolves the segment source URL and MIME instead of the destination
+  placeholder.
+- Empty-track uploads use an explicit source type, and narrow migrations repair
+  existing generated placeholders that were stored as ordinary WAV tracks.
+
+Affected source:
+
+- `packages/db/prisma/schema.prisma` and the `20260715143000`,
+  `20260715144500`, and `20260715145500` migrations
+- `packages/server/app/lib/daw/server/command-api.ts`
+- `packages/server/app/lib/daw/server/snapshot-builder.ts`
+- `packages/server/app/lib/daw/server/versioning.ts`
+- `src/app/lib/daw/state/timeline-edit-transforms.ts`
+- `src/app/lib/daw/state/selectors.ts`
+- `src/app/pages/groups/demo/components/daw/DemoDawClient.tsx`
+- `src/app/pages/api/daw/assets/sign-upload/index.ts`
+
+Regression evidence:
+
+- Server mutation coverage proves an implicit source becomes one stable segment
+  on the destination and both lanes enter explicit mode.
+- Timeline transform coverage proves accepted replay replaces the implicit ID,
+  preserves the source URL, and leaves the source empty.
+- Selector coverage proves initialized zero-segment lanes remain empty after
+  reload and moved waveforms resolve the source track's URL and MIME.
+- The latest `newOne` database state was verified as a WebM source plus a custom
+  empty-track destination with zero segments.
