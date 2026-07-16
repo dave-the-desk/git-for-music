@@ -78,6 +78,11 @@ export async function POST(req: NextRequest) {
   }
 
   const trackVersionId = body.trackVersionId?.trim() || randomUUID();
+  const sourceType = body.sourceType ?? 'upload';
+  const contentType =
+    sourceType === 'empty-track'
+      ? 'application/x-git-for-music-empty-track'
+      : body.contentType;
 
   const target = await createAssetUploadTarget({
     userId: user.id,
@@ -88,11 +93,11 @@ export async function POST(req: NextRequest) {
     trackVersionId,
     name: body.name ?? null,
     sourceVersionId: body.sourceVersionId ?? null,
-    sourceType: body.sourceType ?? 'upload',
+    sourceType,
     timingChoice: body.timingChoice ?? null,
     createTrack,
     fileName: body.fileName,
-    contentType: body.contentType,
+    contentType,
     sizeBytes: body.sizeBytes,
   });
 

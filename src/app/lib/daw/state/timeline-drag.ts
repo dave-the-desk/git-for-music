@@ -45,3 +45,28 @@ export function getTrackDragCommitOffset(drag: TrackDragState) {
 export function getSegmentDragCommitTimelineStartMs(drag: SegmentDragState) {
   return drag.currentTimelineStartMs;
 }
+
+export function getSegmentDragOriginalSegments(
+  segment: Pick<TrackTimelineSegment, 'isImplicit'>,
+  displayedSegments: TrackTimelineSegment[],
+  renderableSegments: TrackTimelineSegment[],
+) {
+  return segment.isImplicit ? renderableSegments : displayedSegments;
+}
+
+export function buildSameTrackSegmentMoveUndoInput(input: {
+  trackVersionId: string;
+  segmentId: string;
+  previousTimelineStartMs: number;
+  currentSegment: Pick<TrackTimelineSegment, 'timelineStartMs' | 'timelineEndMs' | 'durationMs'>;
+}) {
+  return {
+    segmentId: input.segmentId,
+    fromTrackVersionId: input.trackVersionId,
+    toTrackVersionId: input.trackVersionId,
+    fromTimelineStartMs: input.currentSegment.timelineStartMs,
+    fromTimelineEndMs: input.currentSegment.timelineEndMs,
+    toTimelineStartMs: input.previousTimelineStartMs,
+    toTimelineEndMs: input.previousTimelineStartMs + input.currentSegment.durationMs,
+  };
+}

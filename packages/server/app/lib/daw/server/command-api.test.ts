@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   commitDawProjectOperation,
+  executeOperationMutation,
   maybeCreateAutoDemoVersionAfterAcceptedOperation,
   getTimelineEditBranchLabel,
   isTimelineEditOperation,
@@ -913,6 +914,222 @@ test('safe concurrent edits on the same branch head converge without creating an
   assert.equal(findVersionSegment(mergedState, 'segment-a')?.segment.endMs, 900);
   assert.equal(findVersionSegment(mergedState, 'segment-b')?.segment.startMs, 1300);
   assert.equal(findVersionSegment(mergedState, 'segment-b')?.segment.endMs, 2100);
+});
+
+function createSegmentMoveMutationHarness() {
+  const trackVersionIds = new Set(['track-version-a', 'track-version-b']);
+  const segments = [
+    {
+      id: 'segment-1',
+      trackVersionId: 'track-version-a',
+      sourceTrackVersionId: null as string | null,
+      startMs: 100,
+      endMs: 900,
+      timelineStartMs: 1200,
+      gainDb: -1,
+      fadeInMs: 25,
+      fadeOutMs: 50,
+      isMuted: false,
+      position: 0,
+    },
+  ];
+
+  const client = {
+    trackVersion: {
+      findFirst: async (args: { where: { id: string } }) =>
+        trackVersionIds.has(args.where.id)
+          ? { id: args.where.id, startOffsetMs: 0, segmentsInitialized: true }
+          : null,
+      updateMany: async () => ({ count: 2 }),
+    },
+    segment: {
+      findFirst: async (args: { where: { id: string; trackVersionId: string } }) => {
+        const segment = segments.find(
+          (candidate) =>
+            candidate.id === args.where.id && candidate.trackVersionId === args.where.trackVersionId,
+        );
+        return segment ? { ...segment, trackVersion: { startOffsetMs: 0 } } : null;
+      },
+      updateMany: async (args: {
+        where: { trackVersionId: string; position: { gt: number } };
+        data: { position: { decrement: number } };
+      }) => {
+        for (const segment of segments) {
+          if (
+            segment.trackVersionId === args.where.trackVersionId &&
+            segment.position > args.where.position.gt
+          ) {
+            segment.position -= args.data.position.decrement;
+          }
+        }
+        return { count: 0 };
+      },
+      count: async (args: { where: { trackVersionId: string } }) =>
+        segments.filter((segment) => segment.trackVersionId === args.where.trackVersionId).length,
+      update: async (args: {
+        where: { id: string };
+        data: {
+          trackVersionId?: string;
+          sourceTrackVersionId?: string;
+          timelineStartMs?: number;
+          position?: number;
+        };
+      }) => {
+        const segment = segments.find((candidate) => candidate.id === args.where.id);
+        if (!segment) throw new Error('missing test segment');
+        Object.assign(segment, args.data);
+        return { id: segment.id };
+      },
+    },
+  };
+
+  const workspace = {
+    project: { id: 'project-1', slug: 'project', name: 'Project', description: null },
+    demo: { id: 'demo-1', name: 'Demo', description: null, currentVersionId: 'version-1' },
+    permissions: {
+      role: 'MEMBER' as const,
+      canEdit: true,
+      canComment: true,
+      canManage: false,
+    },
+  };
+
+  const move = (fromTrackVersionId: string, toTrackVersionId: string, fromStart: number, toStart: number) =>
+    executeOperationMutation(
+      client as never,
+      workspace as never,
+      {
+        demoId: 'demo-1',
+        operationType: 'SEGMENT_MOVED',
+        payload: {
+          segmentId: 'segment-1',
+          fromTrackVersionId,
+          toTrackVersionId,
+          fromTimelineStartMs: fromStart,
+          fromTimelineEndMs: fromStart + 800,
+          toTimelineStartMs: toStart,
+          toTimelineEndMs: toStart + 800,
+        },
+      },
+      'user-1',
+    );
+
+  return { move, segments, trackVersionIds };
+}
+
+test('SEGMENT_MOVED persists one stable clip row into an empty destination and preserves its audio source', async () => {
+  const harness = createSegmentMoveMutationHarness();
+
+  const result = await harness.move('track-version-a', 'track-version-b', 1200, 3500);
+  const moved = harness.segments[0];
+
+  assert.equal(result.logPayload && 'segmentId' in result.logPayload ? result.logPayload.segmentId : null, 'segment-1');
+  assert.equal(harness.segments.length, 1);
+  assert.equal(moved?.id, 'segment-1');
+  assert.equal(moved?.trackVersionId, 'track-version-b');
+  assert.equal(moved?.sourceTrackVersionId, 'track-version-a');
+  assert.equal(moved?.timelineStartMs, 3500);
+  assert.equal(moved?.startMs, 100);
+  assert.equal(moved?.endMs, 900);
+  assert.equal(moved?.gainDb, -1);
+  assert.equal(moved?.fadeInMs, 25);
+  assert.equal(moved?.fadeOutMs, 50);
+  assert.equal(moved?.position, 0);
+});
+
+test('SEGMENT_MOVED rejects an invalid or deleted destination track version', async () => {
+  const harness = createSegmentMoveMutationHarness();
+
+  await assert.rejects(
+    harness.move('track-version-a', 'track-version-deleted', 1200, 3500),
+    /Track version not found/,
+  );
+  assert.equal(harness.segments[0]?.trackVersionId, 'track-version-a');
+});
+
+test('SEGMENT_MOVED can reverse a cross-track move without changing clip identity or source bounds', async () => {
+  const harness = createSegmentMoveMutationHarness();
+
+  await harness.move('track-version-a', 'track-version-b', 1200, 3500);
+  await harness.move('track-version-b', 'track-version-a', 3500, 1200);
+
+  const restored = harness.segments[0];
+  assert.equal(restored?.id, 'segment-1');
+  assert.equal(restored?.trackVersionId, 'track-version-a');
+  assert.equal(restored?.sourceTrackVersionId, 'track-version-a');
+  assert.equal(restored?.timelineStartMs, 1200);
+  assert.equal(restored?.startMs, 100);
+  assert.equal(restored?.endMs, 900);
+});
+
+test('SEGMENT_MOVED materializes an implicit source clip once and initializes both lanes', async () => {
+  const initializedTrackVersionIds: string[] = [];
+  const createdSegments: Array<Record<string, unknown>> = [];
+  const client = {
+    trackVersion: {
+      findFirst: async (args: { where: { id: string } }) => ({
+        id: args.where.id,
+        startOffsetMs: 0,
+        segmentsInitialized: false,
+      }),
+      updateMany: async (args: { where: { id: { in: string[] } } }) => {
+        initializedTrackVersionIds.push(...args.where.id.in);
+        return { count: args.where.id.in.length };
+      },
+    },
+    segment: {
+      findFirst: async () => null,
+      count: async () => 0,
+      create: async (args: { data: Record<string, unknown> }) => {
+        const created = { id: 'segment-materialized', ...args.data };
+        createdSegments.push(created);
+        return created;
+      },
+    },
+  };
+  const workspace = {
+    project: { id: 'project-1' },
+    demo: { id: 'demo-1' },
+  };
+
+  const result = await executeOperationMutation(
+    client as never,
+    workspace as never,
+    {
+      demoId: 'demo-1',
+      operationType: 'SEGMENT_MOVED',
+      payload: {
+        segmentId: 'implicit:track-version-a',
+        isImplicit: true,
+        fromTrackVersionId: 'track-version-a',
+        toTrackVersionId: 'track-version-b',
+        fromTimelineStartMs: 0,
+        fromTimelineEndMs: 2400,
+        toTimelineStartMs: 800,
+        toTimelineEndMs: 3200,
+      },
+    },
+    'user-1',
+  );
+
+  assert.equal(createdSegments.length, 1);
+  assert.equal(createdSegments[0]?.trackVersionId, 'track-version-b');
+  assert.equal(createdSegments[0]?.sourceTrackVersionId, 'track-version-a');
+  assert.equal(createdSegments[0]?.startMs, 0);
+  assert.equal(createdSegments[0]?.endMs, 2400);
+  assert.deepEqual(initializedTrackVersionIds.sort(), ['track-version-a', 'track-version-b']);
+  const logPayload = result.logPayload as {
+    segmentId: string;
+    previousSegmentId: string;
+    segment: { sourceTrackVersionId?: string | null; sourceStorageKey?: string | null };
+  };
+  assert.equal(logPayload.segmentId, 'segment-materialized');
+  assert.equal(logPayload.previousSegmentId, 'implicit:track-version-a');
+  assert.equal(logPayload.segment.sourceTrackVersionId, 'track-version-a');
+  assert.equal(
+    logPayload.segment.sourceStorageKey,
+    '/api/daw/track-versions/track-version-a/audio',
+  );
 });
 
 test('validateSegmentFadeSelection accepts valid fades and rejects invalid durations', () => {

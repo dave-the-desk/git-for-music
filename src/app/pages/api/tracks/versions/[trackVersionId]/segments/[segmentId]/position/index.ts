@@ -13,10 +13,14 @@ export async function PATCH(
   }
 
   const { trackVersionId, segmentId } = await params;
-  const body = (await req.json()) as { timelineStartMs?: unknown };
+  const body = (await req.json()) as { timelineStartMs?: unknown; toTrackVersionId?: unknown };
+  if (body.toTrackVersionId !== undefined && typeof body.toTrackVersionId !== 'string') {
+    return NextResponse.json<ApiError>({ error: 'toTrackVersionId must be a string' }, { status: 400 });
+  }
   return moveSegmentCommand({
     userId: user.id,
     trackVersionId,
+    toTrackVersionId: body.toTrackVersionId,
     segmentId,
     timelineStartMs: body.timelineStartMs,
   });

@@ -1272,6 +1272,8 @@ test('SEGMENT_MOVED across tracks rehomes the segment without changing its sourc
           {
             id: 'segment-1',
             trackVersionId: 'track-version-a',
+            sourceTrackVersionId: 'track-version-a',
+            sourceStorageKey: '/tracks/track-version-a.wav',
             sourceStartMs: 100,
             sourceEndMs: 900,
             timelineStartMs: 1200,
@@ -1335,6 +1337,8 @@ test('SEGMENT_MOVED across tracks rehomes the segment without changing its sourc
   assert.equal(sourceTrack?.segments[0]?.position, 0);
   assert.ok(movedSegment);
   assert.equal(movedSegment?.trackVersionId, 'track-version-b');
+  assert.equal(movedSegment?.sourceTrackVersionId, 'track-version-a');
+  assert.equal(movedSegment?.sourceStorageKey, '/tracks/track-version-a.wav');
   assert.equal(movedSegment?.timelineStartMs, 3500);
   assert.equal(movedSegment?.timelineEndMs, 4300);
   assert.equal(movedSegment?.startMs, 100);

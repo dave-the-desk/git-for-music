@@ -21,7 +21,7 @@ type AssetUploadIntent = AudioStorageContext & {
   trackVersionId?: string | null;
   name?: string | null;
   sourceVersionId?: string | null;
-  sourceType?: 'recording' | 'upload';
+  sourceType?: 'recording' | 'upload' | 'empty-track';
   timingChoice?: 'keepProjectTempo' | 'updateProjectTempoFromUpload' | 'uploadUnchanged' | null;
   createTrack?: boolean;
   fileName: string;

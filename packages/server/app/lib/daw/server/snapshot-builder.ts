@@ -10,6 +10,8 @@ export type DemoDawTimingSource = 'MANUAL' | 'ANALYZED' | 'IMPORTED';
 export interface DemoDawSnapshotSegment {
   id: string;
   trackVersionId: string;
+  sourceTrackVersionId?: string | null;
+  sourceStorageKey?: string | null;
   startMs: number;
   endMs: number;
   timelineStartMs: number | null;
@@ -37,6 +39,7 @@ export interface DemoDawSnapshotTrack {
   isDerived: boolean;
   operationType: 'ORIGINAL' | 'TIME_STRETCH';
   parentTrackVersionId: string | null;
+  segmentsInitialized?: boolean;
   segments: DemoDawSnapshotSegment[];
   plugins: HostedPluginInstanceState[];
 }
@@ -498,6 +501,7 @@ interface DemoSourceVersionRow {
     isDerived: boolean;
     operationType: 'ORIGINAL' | 'TIME_STRETCH';
     parentTrackVersionId: string | null;
+    segmentsInitialized: boolean;
     track: {
       id: string;
       name: string;
@@ -505,6 +509,7 @@ interface DemoSourceVersionRow {
     };
     segments: Array<{
       id: string;
+      sourceTrackVersionId: string | null;
       startMs: number;
       endMs: number;
       timelineStartMs: number | null;
@@ -573,6 +578,7 @@ function serializeTrackVersion(trackVersion: DemoSourceVersionRow['trackVersions
     isDerived: trackVersion.isDerived,
     operationType: trackVersion.operationType,
     parentTrackVersionId: trackVersion.parentTrackVersionId,
+    segmentsInitialized: trackVersion.segmentsInitialized,
     segments: trackVersion.segments.map((segment) => serializeSegment(trackVersion.id, segment)),
     plugins: [],
   };
@@ -587,6 +593,8 @@ function serializeSegment(
   return {
     id: segment.id,
     trackVersionId,
+    sourceTrackVersionId: segment.sourceTrackVersionId ?? trackVersionId,
+    sourceStorageKey: buildTrackVersionAudioUrl(segment.sourceTrackVersionId ?? trackVersionId),
     startMs: segment.startMs,
     endMs: segment.endMs,
     timelineStartMs,
@@ -999,6 +1007,8 @@ function moveSegment(
   snapshot: DemoDawSnapshotData,
   payload: {
     segmentId: string;
+    previousSegmentId?: string;
+    segment?: DemoDawSnapshotSegment;
     fromTrackVersionId: string;
     toTrackVersionId: string;
     fromTimelineStartMs: number;
@@ -1017,18 +1027,21 @@ function moveSegment(
     const targetTrack = version.tracks[targetTrackIndex] ?? null;
     if (!targetTrack) continue;
 
+    const segmentIds = new Set(
+      [payload.segmentId, payload.previousSegmentId].filter((id): id is string => Boolean(id)),
+    );
     const occurrences = version.tracks.flatMap((track) =>
       track.segments
-        .filter((segment) => segment.id === payload.segmentId)
+        .filter((segment) => segmentIds.has(segment.id))
         .map((segment) => ({
           track,
           segment,
         })),
     );
 
-    const sourceSegment = sourceTrack?.segments.find((segment) => segment.id === payload.segmentId) ?? null;
+    const sourceSegment = sourceTrack?.segments.find((segment) => segmentIds.has(segment.id)) ?? null;
     const targetSegment = targetTrack.segments.find((segment) => segment.id === payload.segmentId) ?? null;
-    const existingSegment = sourceSegment ?? targetSegment ?? occurrences[0]?.segment ?? null;
+    const existingSegment = sourceSegment ?? targetSegment ?? occurrences[0]?.segment ?? payload.segment ?? null;
 
     if (!existingSegment) continue;
 
@@ -1044,7 +1057,13 @@ function moveSegment(
 
     const cleanedTracks = version.tracks.map((track) => ({
       ...track,
-      segments: normalizeSnapshotTrackSegments(track.segments.filter((segment) => segment.id !== payload.segmentId)),
+      segmentsInitialized:
+        track.trackVersionId === payload.fromTrackVersionId || track.trackVersionId === payload.toTrackVersionId
+          ? true
+          : track.segmentsInitialized,
+      segments: normalizeSnapshotTrackSegments(
+        track.segments.filter((segment) => !segmentIds.has(segment.id)),
+      ),
     }));
     const cleanedTargetTrack = cleanedTracks.find((track) => track.trackVersionId === payload.toTrackVersionId);
     if (!cleanedTargetTrack) continue;
@@ -1057,6 +1076,11 @@ function moveSegment(
     const movedSegment: DemoDawSnapshotSegment = {
       ...existingSegment,
       trackVersionId: payload.toTrackVersionId,
+      sourceTrackVersionId: existingSegment.sourceTrackVersionId ?? payload.fromTrackVersionId,
+      sourceStorageKey:
+        existingSegment.sourceStorageKey ??
+        sourceTrack?.storageKey ??
+        buildTrackVersionAudioUrl(payload.fromTrackVersionId),
       timelineStartMs: payload.toTimelineStartMs,
       timelineEndMs: payload.toTimelineEndMs,
       position: insertionIndex,
@@ -1097,6 +1121,7 @@ function removeSegment(snapshot: DemoDawSnapshotData, trackVersionId: string, se
         position: index,
       }));
     track.segments = nextSegments;
+    track.segmentsInitialized = true;
     return;
   }
 }
@@ -1316,6 +1341,7 @@ function upsertSplitSegments(
       .sort((left, right) => left.position - right.position);
 
     track.segments = nextSegments;
+    track.segmentsInitialized = true;
     return;
   }
 }
@@ -1863,12 +1889,14 @@ async function loadDemoSourceData(
               isDerived: true,
               operationType: true,
               parentTrackVersionId: true,
+              segmentsInitialized: true,
               segments: {
                 orderBy: {
                   position: 'asc',
                 },
                 select: {
                   id: true,
+                  sourceTrackVersionId: true,
                   startMs: true,
                   endMs: true,
                   timelineStartMs: true,

@@ -115,6 +115,56 @@ test('applySegmentMove rehomes a clip and stays idempotent on replay', () => {
   assert.equal(movedSegment?.timelineEndMs, 4300);
 });
 
+test('applySegmentMove replaces an implicit clip with its accepted stable ID and leaves the source empty', () => {
+  const tracks = [
+    makeTrack('track-version-a', {
+      segments: [],
+      segmentsInitialized: false,
+      storageKey: '/api/daw/track-versions/track-version-a/audio',
+    }),
+    makeTrack('track-version-b', {
+      segments: [],
+      segmentsInitialized: false,
+    }),
+  ];
+
+  const moved = applySegmentMove(tracks, {
+    segmentId: 'segment-materialized',
+    previousSegmentId: 'implicit:track-version-a',
+    fromTrackVersionId: 'track-version-a',
+    toTrackVersionId: 'track-version-b',
+    fromTimelineStartMs: 0,
+    fromTimelineEndMs: 2400,
+    toTimelineStartMs: 800,
+    toTimelineEndMs: 3200,
+    segment: {
+      id: 'segment-materialized',
+      trackVersionId: 'track-version-b',
+      sourceTrackVersionId: 'track-version-a',
+      sourceStorageKey: '/api/daw/track-versions/track-version-a/audio',
+      startMs: 0,
+      endMs: 2400,
+      timelineStartMs: 800,
+      timelineEndMs: 3200,
+      gainDb: 0,
+      fadeInMs: 0,
+      fadeOutMs: 0,
+      isMuted: false,
+      position: 0,
+    },
+  });
+
+  assert.equal(moved[0]?.segmentsInitialized, true);
+  assert.deepEqual(moved[0]?.segments, []);
+  assert.equal(moved[1]?.segmentsInitialized, true);
+  assert.equal(moved[1]?.segments[0]?.id, 'segment-materialized');
+  assert.equal(moved[1]?.segments[0]?.sourceTrackVersionId, 'track-version-a');
+  assert.equal(
+    moved[1]?.segments[0]?.sourceStorageKey,
+    '/api/daw/track-versions/track-version-a/audio',
+  );
+});
+
 test('applySegmentTrim and applySegmentFadeSet update only the target clip', () => {
   const segmentA = makeSegment('segment-a', {
     trackVersionId: 'track-version-1',

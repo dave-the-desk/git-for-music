@@ -12,6 +12,7 @@ export type DawExportTrack = Pick<
   | 'startOffsetMs'
   | 'durationMs'
   | 'segments'
+  | 'segmentsInitialized'
   | 'recordedTempoBpm'
   | 'sourceTempoBpm'
   | 'plugins'
@@ -182,7 +183,8 @@ function buildRenderableSegments(track: DawExportTrack, fallbackDurationMs: numb
     trackStartOffsetMs: track.startOffsetMs,
     segments: track.segments,
     fallbackDurationMs,
-    allowImplicitSegment: track.mimeType !== EMPTY_TRACK_MIME_TYPE,
+    allowImplicitSegment:
+      track.mimeType !== EMPTY_TRACK_MIME_TYPE && track.segmentsInitialized !== true,
   });
 }
 

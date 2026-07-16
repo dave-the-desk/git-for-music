@@ -18,6 +18,8 @@ type TimelineSegmentSnapshot = Pick<
   DawSegmentSnapshot,
   | 'id'
   | 'trackVersionId'
+  | 'sourceTrackVersionId'
+  | 'sourceStorageKey'
   | 'startMs'
   | 'endMs'
   | 'timelineStartMs'
@@ -88,6 +90,12 @@ function materializeTimelineSegment(
   return {
     id: segment.id,
     trackVersionId,
+    ...(segment.sourceTrackVersionId !== undefined
+      ? { sourceTrackVersionId: segment.sourceTrackVersionId ?? trackVersionId }
+      : {}),
+    ...(segment.sourceStorageKey !== undefined
+      ? { sourceStorageKey: segment.sourceStorageKey }
+      : {}),
     startMs: segment.startMs,
     endMs: segment.endMs,
     timelineStartMs,
@@ -129,6 +137,8 @@ export function applySegmentMove(
   tracks: DawTrack[],
   payload: {
     segmentId: string;
+    previousSegmentId?: string;
+    segment?: TimelineSegmentSnapshot;
     fromTrackVersionId: string;
     toTrackVersionId: string;
     fromTimelineStartMs: number;
@@ -150,18 +160,24 @@ export function applySegmentMove(
     return tracks;
   }
 
+  const segmentIds = new Set(
+    [payload.segmentId, payload.previousSegmentId].filter((id): id is string => Boolean(id)),
+  );
   const occurrences = tracks.flatMap((track) =>
     track.segments
-      .filter((segment) => segment.id === payload.segmentId)
+      .filter((segment) => segmentIds.has(segment.id))
       .map((segment) => ({
         track,
         segment,
       })),
   );
 
-  const sourceSegment = sourceTrack?.segments.find((segment) => segment.id === payload.segmentId) ?? null;
+  const sourceSegment = sourceTrack?.segments.find((segment) => segmentIds.has(segment.id)) ?? null;
   const targetSegment = targetTrack.segments.find((segment) => segment.id === payload.segmentId) ?? null;
-  const existingSegment = sourceSegment ?? targetSegment ?? occurrences[0]?.segment ?? null;
+  const materializedSegment = payload.segment
+    ? materializeTimelineSegment(payload.toTrackVersionId, targetTrack.startOffsetMs, payload.segment)
+    : null;
+  const existingSegment = sourceSegment ?? targetSegment ?? occurrences[0]?.segment ?? materializedSegment;
 
   if (!existingSegment) {
     return tracks;
@@ -179,7 +195,11 @@ export function applySegmentMove(
 
   const cleanedTracks = tracks.map((track) => ({
     ...track,
-    segments: normalizeTrackSegments(track.segments.filter((segment) => segment.id !== payload.segmentId)),
+    segmentsInitialized:
+      track.trackVersionId === payload.fromTrackVersionId || track.trackVersionId === payload.toTrackVersionId
+        ? true
+        : track.segmentsInitialized,
+    segments: normalizeTrackSegments(track.segments.filter((segment) => !segmentIds.has(segment.id))),
   }));
   const cleanedTargetTrack = cleanedTracks.find((track) => track.trackVersionId === payload.toTrackVersionId);
   if (!cleanedTargetTrack) {
@@ -194,6 +214,8 @@ export function applySegmentMove(
   const movedSegment: TrackTimelineSegment = {
     ...existingSegment,
     trackVersionId: payload.toTrackVersionId,
+    sourceTrackVersionId: existingSegment.sourceTrackVersionId ?? payload.fromTrackVersionId,
+    sourceStorageKey: existingSegment.sourceStorageKey ?? sourceTrack?.storageKey ?? null,
     timelineStartMs: payload.toTimelineStartMs,
     timelineEndMs: payload.toTimelineEndMs,
     position: insertionIndex,
@@ -244,14 +266,17 @@ export function applySegmentMoveLegacy(
 export function applySegmentDelete(tracks: DawTrack[], trackVersionId: string, segmentId: string) {
   return tracks.map((track) => {
     if (track.trackVersionId !== trackVersionId) return track;
-    return updateSegments(track, (segments) =>
-      segments
-        .filter((segment) => segment.id !== segmentId)
-        .map((segment, index) => ({
-          ...segment,
-          position: index,
-        })),
-    );
+    return {
+      ...updateSegments(track, (segments) =>
+        segments
+          .filter((segment) => segment.id !== segmentId)
+          .map((segment, index) => ({
+            ...segment,
+            position: index,
+          })),
+      ),
+      segmentsInitialized: true,
+    };
   });
 }
 
@@ -367,16 +392,19 @@ export function applySegmentSplit(
 ) {
   return tracks.map((track) => {
     if (track.trackVersionId !== trackVersionId) return track;
-    return updateSegments(track, (segments) =>
-      segments
-        .filter((segment) => segment.id !== sourceSegmentId)
-        .filter((segment) => segment.id !== leftSegment.id && segment.id !== rightSegment.id)
-        .concat([
-          materializeTimelineSegment(trackVersionId, track.startOffsetMs, leftSegment),
-          materializeTimelineSegment(trackVersionId, track.startOffsetMs, rightSegment),
-        ])
-        .sort((left, right) => left.position - right.position),
-    );
+    return {
+      ...updateSegments(track, (segments) =>
+        segments
+          .filter((segment) => segment.id !== sourceSegmentId)
+          .filter((segment) => segment.id !== leftSegment.id && segment.id !== rightSegment.id)
+          .concat([
+            materializeTimelineSegment(trackVersionId, track.startOffsetMs, leftSegment),
+            materializeTimelineSegment(trackVersionId, track.startOffsetMs, rightSegment),
+          ])
+          .sort((left, right) => left.position - right.position),
+      ),
+      segmentsInitialized: true,
+    };
   });
 }
 

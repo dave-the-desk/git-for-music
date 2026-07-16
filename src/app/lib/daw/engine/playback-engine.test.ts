@@ -5,7 +5,9 @@ import { AudioPlaybackEngine } from '@/app/lib/daw/engine/playback-engine';
 import type { PlaybackPluginGraph } from '@/app/lib/daw/engine/wam-host';
 import type { PlaybackProjectSnapshot } from '@/app/lib/daw/engine/playback-engine';
 
-type NodeLogEntry = { from: string; to: string };
+const createdBufferSources: Array<
+  AudioBufferSourceNode & { connections: AudioNode[]; startCalls: unknown[][] }
+> = [];
 
 function createFakeNode(id: string) {
   const connections: AudioNode[] = [];
@@ -57,28 +59,21 @@ function createFakePannerNode(id: string) {
   return node;
 }
 
-function createFakeAudioContext() {
-  const destination = createFakeNode('destination');
-  return {
-    state: 'running',
-    currentTime: 0,
-    destination,
-    createGain() {
-      return createFakeGainNode(`gain-${Math.random().toString(16).slice(2)}`);
-    },
-    createStereoPanner() {
-      return createFakePannerNode(`pan-${Math.random().toString(16).slice(2)}`);
-    },
-    decodeAudioData() {
-      throw new Error('not used in playback-engine tests');
-    },
-    resume() {
-      return Promise.resolve();
-    },
-    close() {
-      return Promise.resolve();
-    },
-  } as unknown as AudioContext;
+function createFakeBufferSource() {
+  const node = createFakeNode(`source-${createdBufferSources.length}`) as unknown as AudioBufferSourceNode & {
+    connections: AudioNode[];
+    startCalls: unknown[][];
+  };
+  node.buffer = null;
+  Object.assign(node, { playbackRate: { value: 1 } as AudioParam });
+  node.startCalls = [];
+  node.start = (...args: unknown[]) => {
+    node.startCalls.push(args);
+  };
+  node.stop = () => {};
+  node.onended = null;
+  createdBufferSources.push(node);
+  return node;
 }
 
 function createTrackPluginGraphFactory() {
@@ -170,8 +165,16 @@ function makeProject(overrides: Partial<PlaybackProjectSnapshot> = {}) {
 }
 
 const originalAudioContext = globalThis.AudioContext;
+const originalAudioBuffer = globalThis.AudioBuffer;
 
 test.beforeEach(() => {
+  createdBufferSources.length = 0;
+  (globalThis as Record<string, unknown>).AudioBuffer = class FakeAudioBuffer {
+    duration: number;
+    constructor(options: { length: number; sampleRate: number }) {
+      this.duration = options.length / options.sampleRate;
+    }
+  } as unknown as typeof AudioBuffer;
   (globalThis as Record<string, unknown>).AudioContext = class FakeAudioContext {
     state = 'running';
     currentTime = 0;
@@ -181,6 +184,9 @@ test.beforeEach(() => {
     }
     createStereoPanner() {
       return createFakePannerNode(`pan-${Math.random().toString(16).slice(2)}`);
+    }
+    createBufferSource() {
+      return createFakeBufferSource();
     }
     decodeAudioData() {
       throw new Error('not used');
@@ -196,6 +202,7 @@ test.beforeEach(() => {
 
 test.afterEach(() => {
   (globalThis as Record<string, unknown>).AudioContext = originalAudioContext;
+  (globalThis as Record<string, unknown>).AudioBuffer = originalAudioBuffer;
 });
 
 test('AudioPlaybackEngine updates plugin params live and rebuilds on chain changes', () => {
@@ -541,4 +548,108 @@ test('AudioPlaybackEngine keeps only one track soloed at a time', () => {
 
   assert.equal(trackBuses.get('track-version-1')?.gain.gain.value, 0);
   assert.equal(trackBuses.get('track-version-2')?.gain.gain.value, 1);
+});
+
+test('AudioPlaybackEngine plays a moved clip from its source buffer through the destination mix and effects', async () => {
+  const graphFactory = createTrackPluginGraphFactory();
+  const engine = new AudioPlaybackEngine({ pluginGraphFactory: graphFactory.factory });
+  const sourceBuffer = new AudioBuffer({ length: 96_000, sampleRate: 48_000 });
+  const destinationBuffer = new AudioBuffer({ length: 96_000, sampleRate: 48_000 });
+
+  engine.setProject(
+    makeProject({
+      tracks: [
+        {
+          trackId: 'track-source',
+          trackName: 'Source',
+          trackVersionId: 'track-version-source',
+          storageKey: '/audio/source.wav',
+          mimeType: 'audio/wav',
+          startOffsetMs: 0,
+          durationMs: 2000,
+          segments: [],
+          recordedTempoBpm: 120,
+          sourceTempoBpm: 120,
+          isMuted: false,
+          plugins: [],
+        },
+        {
+          trackId: 'track-destination',
+          trackName: 'Destination',
+          trackVersionId: 'track-version-destination',
+          storageKey: '/audio/destination.wav',
+          mimeType: 'audio/wav',
+          startOffsetMs: 0,
+          durationMs: 2000,
+          segments: [
+            {
+              id: 'segment-moved',
+              trackVersionId: 'track-version-destination',
+              sourceTrackVersionId: 'track-version-source',
+              sourceStorageKey: '/audio/source.wav',
+              sourceStartMs: 100,
+              sourceEndMs: 900,
+              timelineStartMs: 0,
+              timelineEndMs: 800,
+              durationMs: 800,
+              startMs: 100,
+              endMs: 900,
+              gainDb: 0,
+              fadeInMs: 0,
+              fadeOutMs: 0,
+              isMuted: false,
+              position: 0,
+              isImplicit: false,
+            },
+          ],
+          recordedTempoBpm: 120,
+          sourceTempoBpm: 120,
+          isMuted: false,
+          plugins: [
+            {
+              instanceId: 'plugin-1',
+              pluginKey: 'com.example.destination-effect',
+              version: '1.0.0',
+              backend: 'wam',
+              position: 0,
+              bypassed: false,
+              params: { mix: 1 },
+            },
+          ],
+        },
+      ],
+      gainByTrackVersionId: { 'track-version-destination': 0.25 },
+    }),
+  );
+
+  const internals = engine as unknown as {
+    bufferCache: Map<string, AudioBuffer>;
+    trackBuses: Map<string, { input: AudioNode; gain: { gain: { value: number } } }>;
+    scheduledSources: Set<{ source: AudioBufferSourceNode; trackVersionId: string }>;
+  };
+  internals.bufferCache.set('/audio/source.wav', sourceBuffer);
+  internals.bufferCache.set('/audio/destination.wav', destinationBuffer);
+
+  await engine.play(0);
+
+  const scheduled = [...internals.scheduledSources].find(
+    (entry) => entry.trackVersionId === 'track-version-destination',
+  );
+  const destinationBus = internals.trackBuses.get('track-version-destination');
+  const sourceNode = scheduled?.source as (AudioBufferSourceNode & { connections: AudioNode[] }) | undefined;
+  const segmentGain = sourceNode?.connections[0] as (AudioNode & { connections: AudioNode[] }) | undefined;
+
+  assert.ok(scheduled);
+  assert.equal(scheduled?.source.buffer, sourceBuffer);
+  assert.equal(segmentGain?.connections[0], destinationBus?.input);
+  assert.equal(destinationBus?.gain.gain.value, 0.25);
+  assert.equal(graphFactory.rebuildCount, 2);
+
+  engine.setTrackMuted('track-version-destination', true);
+  assert.equal(destinationBus?.gain.gain.value, 0);
+  engine.setTrackMuted('track-version-destination', false);
+  engine.setTrackSolo('track-version-source', true);
+  assert.equal(destinationBus?.gain.gain.value, 0);
+  engine.setTrackSolo('track-version-destination', true);
+  assert.equal(destinationBus?.gain.gain.value, 0.25);
 });

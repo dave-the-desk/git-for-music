@@ -77,6 +77,26 @@ export function getDisplayedTrackSegments(
   return segmentLayoutOverrides[track.trackVersionId] ?? track.segments;
 }
 
+export function selectSegmentAudioSource(
+  destinationTrack: DawTrack,
+  segment: TrackTimelineSegment,
+  tracks: DawTrack[],
+) {
+  const sourceTrack = segment.sourceTrackVersionId
+    ? tracks.find((track) => track.trackVersionId === segment.sourceTrackVersionId) ?? null
+    : null;
+
+  return {
+    storageKey: segment.sourceStorageKey ?? sourceTrack?.storageKey ?? destinationTrack.storageKey,
+    mimeType:
+      sourceTrack?.mimeType ??
+      (segment.sourceTrackVersionId &&
+      segment.sourceTrackVersionId !== destinationTrack.trackVersionId
+        ? null
+        : destinationTrack.mimeType),
+  };
+}
+
 export function getRenderableTrackSegments(input: {
   track: DawTrack;
   offsetOverrides: Record<string, number>;
@@ -93,7 +113,8 @@ export function getRenderableTrackSegments(input: {
     trackStartOffsetMs: getTrackStartOffsetMs(input.track, input.offsetOverrides),
     segments: displayedSegments,
     fallbackDurationMs: getTrackDurationMs(input.track, input.durationByTrackVersionId),
-    allowImplicitSegment: !isBlankTrack(input.track) && !hasLocalBlankOverride,
+    allowImplicitSegment:
+      !isBlankTrack(input.track) && input.track.segmentsInitialized !== true && !hasLocalBlankOverride,
   });
 }
 

@@ -14,6 +14,7 @@ export type DawOperationConflictScope =
       kind: 'track-timeline';
       trackId: string | null;
       trackVersionId: string;
+      trackVersionIds?: string[];
       segmentId: string | null;
       range: { startMs: number; endMs: number } | null;
       payloadSignature: string;
@@ -256,6 +257,7 @@ async function resolveRequestScope(
       return {
         kind: 'track-timeline',
         ...scope,
+        trackVersionIds: [request.payload.fromTrackVersionId, request.payload.toTrackVersionId],
         range: scope.range ? rangeFrom(Math.min(scope.range.startMs, moveRange.startMs), Math.max(scope.range.endMs, moveRange.endMs)) : moveRange,
         payloadSignature: stableSignature(request.payload),
       };
@@ -461,6 +463,7 @@ async function resolveExistingOperationScope(
       return {
         kind: 'track-timeline',
         ...scope,
+        trackVersionIds: [payload.fromTrackVersionId, payload.toTrackVersionId],
         range: scope.range ? rangeFrom(Math.min(scope.range.startMs, moveRange.startMs), Math.max(scope.range.endMs, moveRange.endMs)) : moveRange,
         payloadSignature: stableSignature(payload),
       };
@@ -665,7 +668,13 @@ function conflictReasonForScopes(left: DawOperationConflictScope, right: DawOper
     return left.payloadSignature === right.payloadSignature ? null : 'Track metadata conflict';
   }
 
-  if (left.kind === 'track-timeline' && right.kind === 'track-timeline' && left.trackVersionId === right.trackVersionId) {
+  if (left.kind === 'track-timeline' && right.kind === 'track-timeline') {
+    const leftTrackVersionIds = new Set(left.trackVersionIds ?? [left.trackVersionId]);
+    const sharesTrackVersion = (right.trackVersionIds ?? [right.trackVersionId]).some((trackVersionId) =>
+      leftTrackVersionIds.has(trackVersionId),
+    );
+    if (!sharesTrackVersion) return null;
+
     if (left.segmentId && right.segmentId && left.segmentId === right.segmentId) {
       return left.payloadSignature === right.payloadSignature ? null : 'Same segment edited differently from the same base';
     }

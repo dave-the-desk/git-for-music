@@ -24,6 +24,7 @@ type PlaybackProjectTrack = Pick<
   | 'startOffsetMs'
   | 'durationMs'
   | 'segments'
+  | 'segmentsInitialized'
   | 'recordedTempoBpm'
   | 'sourceTempoBpm'
   | 'plugins'
@@ -324,9 +325,20 @@ export class AudioPlaybackEngine {
     }
   }
 
-  async preloadTracks(tracks: Pick<DawTrack, 'storageKey'>[]) {
+  async preloadTracks(
+    tracks: Array<Pick<DawTrack, 'storageKey'> & Partial<Pick<DawTrack, 'segments'>>>,
+  ) {
     await Promise.all(
-      [...new Set(tracks.map((track) => track.storageKey))].map(async (storageKey) => {
+      [
+        ...new Set(
+          tracks.flatMap((track) => [
+            track.storageKey,
+            ...(Array.isArray(track.segments)
+              ? track.segments.flatMap((segment) => segment.sourceStorageKey ?? [])
+              : []),
+          ]),
+        ),
+      ].map(async (storageKey) => {
         try {
           await this.loadBuffer(storageKey);
         } catch {
@@ -579,15 +591,18 @@ export class AudioPlaybackEngine {
 
     await Promise.all(
       this.project.tracks.map(async (track) => {
-        const buffer = await this.loadBuffer(track.storageKey).catch(() => null);
-        if (!buffer) return;
+        const defaultBuffer = await this.loadBuffer(track.storageKey).catch(() => null);
 
         const segments = buildRenderableTrackSegments({
           trackVersionId: track.trackVersionId,
           trackStartOffsetMs: track.startOffsetMs,
           segments: track.segments,
-          fallbackDurationMs: Math.max(0, Math.max(track.durationMs ?? 0, Math.round(buffer.duration * 1000))),
-          allowImplicitSegment: track.mimeType !== EMPTY_TRACK_MIME_TYPE,
+          fallbackDurationMs: Math.max(
+            0,
+            Math.max(track.durationMs ?? 0, Math.round((defaultBuffer?.duration ?? 0) * 1000)),
+          ),
+          allowImplicitSegment:
+            track.mimeType !== EMPTY_TRACK_MIME_TYPE && track.segmentsInitialized !== true,
         });
 
         const bus = this.ensureTrackBus(track.trackVersionId);
@@ -611,6 +626,13 @@ export class AudioPlaybackEngine {
 
         for (const segment of segments) {
           if (segment.timelineEndMs <= timeMs) continue;
+
+          const sourceStorageKey = segment.sourceStorageKey ?? track.storageKey;
+          const buffer =
+            sourceStorageKey === track.storageKey
+              ? defaultBuffer
+              : await this.loadBuffer(sourceStorageKey).catch(() => null);
+          if (!buffer) continue;
 
           const segmentStartTimelineMs = Math.max(timeMs, segment.timelineStartMs);
           const elapsedInSegmentMs = Math.max(0, segmentStartTimelineMs - segment.timelineStartMs);
