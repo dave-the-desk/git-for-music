@@ -1,7 +1,7 @@
 {
   "name": "git-for-music",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.0.1",
   "packageManager": "pnpm@10.33.0",
   "scripts": {
     "postinstall": "pnpm db:generate",

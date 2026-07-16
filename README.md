@@ -183,8 +183,8 @@ merging to `main`.
 
 ## Releases
 
-Stable public releases are tagged from `main`. The first stable baseline for
-this repo is `v1.0.0`.
+Stable public releases are tagged from `main`. The current stable release is
+`v1.0.1`; `v1.0.0` remains the first stable public baseline.
 
 If you are setting up a private downstream fork, start with
 [docs/guides/downstream-private-repo-setup.md](docs/guides/downstream-private-repo-setup.md)
